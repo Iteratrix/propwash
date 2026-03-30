@@ -476,3 +476,78 @@ fn golden_time_deltas_are_sane() {
         );
     }
 }
+
+/// Regression: STRAIGHT_LINE predictor doubled time values when
+/// prev2 was zero (I-frame didn't reset both history slots).
+/// Fixed in commit b40cc1a.
+#[test]
+fn regression_time_not_doubling() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let bf = get_bf(&log.sessions[1]);
+    let time_idx = bf.main_field_defs.index_of("time").unwrap();
+
+    let t0 = bf.frames[0].values[time_idx];
+    let t1 = bf.frames[1].values[time_idx];
+    assert!(
+        t1 < t0 * 2,
+        "P-frame time should be close to I-frame time, not doubled: t0={t0} t1={t1}"
+    );
+    assert!(
+        (t1 - t0) < 10_000,
+        "first time delta should be <10ms, got {}us",
+        t1 - t0
+    );
+}
+
+/// Regression: AVERAGE_2 predictor used (p1>>1)+(p2>>1) which
+/// rounds differently from firmware's (p1+p2)/2 when both are odd.
+/// Caused off-by-one on motor values.
+/// Fixed in commit c1ef151.
+#[test]
+fn regression_average2_rounding() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let bf = get_bf(&log.sessions[1]);
+
+    assert_eq!(field_val(bf, 1, "motor[0]"), 172);
+    assert_eq!(field_val(bf, 1, "motor[2]"), 183);
+
+    let log2 = parse_fixture("gimbal-ghost/btfl_001.bbl");
+    let bf2 = get_bf(&log2.sessions[0]);
+    assert_eq!(field_val(bf2, 1, "motor[0]"), 195);
+    assert_eq!(field_val(bf2, 1, "motor[1]"), 157);
+}
+
+/// Regression: INCREMENT predictor added 1 per frame instead of
+/// (skipped_frames + 1). With P_ratio=16, loopIteration should
+/// jump by 16 per logged frame, not by 1.
+/// Fixed in commit c2f443a.
+#[test]
+fn regression_loop_iteration_uses_p_ratio() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let bf = get_bf(&log.sessions[1]);
+    let iter_idx = bf.main_field_defs.index_of("loopIteration").unwrap();
+
+    let delta = bf.frames[1].values[iter_idx] - bf.frames[0].values[iter_idx];
+    assert!(
+        delta > 1,
+        "loopIteration should increment by P_ratio (not 1), got delta={delta}"
+    );
+}
+
+/// Regression: LOG_END event accepted any 0xFF byte without verifying
+/// the "End of log\0" string, causing false clean-end detection on
+/// corrupt data.
+/// Fixed in commit 0236bdc.
+#[test]
+fn regression_log_end_requires_marker_string() {
+    let log = parse_fixture("fc-blackbox/crashing-LOG00002.BFL");
+    match log.sessions[0].analyzed() {
+        Analyzed::Betaflight(bf) => {
+            assert!(
+                bf.stats().corrupt_bytes > 0,
+                "crash log should have corruption"
+            );
+        }
+        _ => panic!("expected Betaflight"),
+    }
+}
