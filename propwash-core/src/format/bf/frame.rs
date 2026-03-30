@@ -1,13 +1,12 @@
-use crate::encoding::{
+use super::encoding::{
     read_neg_14bit, read_signed_vb, read_tag2_3s32, read_tag2_3svariable, read_tag8_4s16,
     read_tag8_8svb, read_unsigned_vb, ENC_NEG_14BIT, ENC_NULL, ENC_TAG2_3S32, ENC_TAG2_3SVARIABLE,
     ENC_TAG8_4S16, ENC_TAG8_8SVB, ENC_UNSIGNED_VB,
 };
-use crate::predictor::{apply_i_predictor, apply_p_predictor};
+use super::predictor::{apply_i_predictor, apply_p_predictor};
+use super::types::{BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession};
 use crate::reader::{InternalError, Reader};
-use crate::types::{
-    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Warning,
-};
+use crate::types::Warning;
 
 // Frame marker bytes
 const MARKER_I: u8 = b'I';

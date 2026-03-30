@@ -1,4 +1,4 @@
-use crate::types::BfRawSession;
+use super::types::BfRawSession;
 
 // Predictor IDs from the blackbox format spec.
 const MINTHROTTLE: u8 = 4;

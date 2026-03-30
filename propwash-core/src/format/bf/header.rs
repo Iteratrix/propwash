@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use crate::types::{BfFieldDef, BfFrameDefs, BfHeaderValue, Warning};
+use super::types::{BfFieldDef, BfFrameDefs, BfHeaderValue};
+use crate::types::Warning;
 
 /// The exact marker string that begins every Betaflight-family blackbox log session.
 const LOG_START_MARKER: &[u8] = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
