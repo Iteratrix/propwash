@@ -12,21 +12,42 @@ const STRAIGHT_LINE: u8 = 2;
 const AVERAGE_2: u8 = 3;
 const INCREMENT: u8 = 6;
 
-/// Frame scheduling: how loopIteration advances between logged frames.
+/// Frame scheduling: determines which PID loop iterations are logged.
+/// Mirrors the firmware's `shouldHaveFrame()` logic.
 #[derive(Debug, Clone)]
 pub(crate) struct FrameSchedule {
-    p_ratio: u32,
+    i_interval: u32,
+    p_num: u32,
+    p_denom: u32,
 }
 
 impl FrameSchedule {
     pub fn from_headers(session: &BfRawSession) -> Self {
         #[allow(clippy::cast_sign_loss)]
-        let p_ratio = session.get_header_int("P ratio", 1).max(1) as u32;
-        Self { p_ratio }
+        Self {
+            i_interval: session.get_header_int("I interval", 1).max(1) as u32,
+            p_num: session.get_header_int("P interval", 1).max(1) as u32,
+            p_denom: session.get_header_int("P ratio", 1).max(1) as u32,
+        }
     }
 
-    fn skipped_frames(&self) -> u32 {
-        self.p_ratio - 1
+    fn should_have_frame(&self, iteration: u32) -> bool {
+        (iteration % self.i_interval + self.p_num - 1) % self.p_denom < self.p_num
+    }
+
+    /// Counts iterations skipped between `last_iteration` and the next
+    /// frame that should be logged.
+    fn skipped_after(&self, last_iteration: u32) -> u32 {
+        let mut count = 0;
+        let mut idx = last_iteration.wrapping_add(1);
+        while !self.should_have_frame(idx) {
+            count += 1;
+            idx = idx.wrapping_add(1);
+            if count > self.i_interval {
+                break;
+            }
+        }
+        count
     }
 }
 
@@ -74,7 +95,7 @@ impl DecodeContext {
                 iteration,
                 schedule,
             } => {
-                let skipped = schedule.skipped_frames();
+                let skipped = schedule.skipped_after(*iteration);
                 *iteration = iteration.wrapping_add(skipped + 1);
                 prev2.copy_from_slice(prev1);
                 prev1.copy_from_slice(values);
@@ -105,9 +126,16 @@ impl DecodeContext {
         }
     }
 
-    /// Returns the current `skipped_frames` count for the INCREMENT predictor.
+    /// Returns the number of intentionally skipped iterations since the last frame.
     pub fn skipped_frames(&self) -> u32 {
-        self.schedule().skipped_frames()
+        match self {
+            Self::Empty { .. } => 0,
+            Self::Ready {
+                iteration,
+                schedule,
+                ..
+            } => schedule.skipped_after(*iteration),
+        }
     }
 
     fn schedule(&self) -> &FrameSchedule {
@@ -249,12 +277,11 @@ mod tests {
     }
 
     #[test]
-    fn context_advance_shifts_and_returns_skipped() {
-        let mut ctx = make_test_context_with_ratio(8);
+    fn context_advance_shifts() {
+        let mut ctx = make_test_context();
         ctx.reset_from_i_frame(&[100, 200], 0);
-        let skipped = ctx.advance_from_p_frame(&[110, 210]);
+        let _skipped = ctx.advance_from_p_frame(&[110, 210]);
 
-        assert_eq!(skipped, 7); // p_ratio=8, so 7 skipped
         let (p1, p2) = ctx.slices();
         assert_eq!(p1, &[110, 210]);
         assert_eq!(p2, &[100, 200]);
@@ -270,30 +297,56 @@ mod tests {
     }
 
     #[test]
-    fn increment_with_p_ratio_1() {
-        let schedule = FrameSchedule { p_ratio: 1 };
-        assert_eq!(schedule.skipped_frames(), 0);
+    fn should_have_frame_every_iteration() {
+        let schedule = FrameSchedule {
+            i_interval: 256,
+            p_num: 16,
+            p_denom: 16,
+        };
+        assert_eq!(schedule.skipped_after(0), 0);
+        assert_eq!(schedule.skipped_after(1), 0);
+        assert_eq!(schedule.skipped_after(100), 0);
     }
 
     #[test]
-    fn increment_with_p_ratio_8() {
-        let schedule = FrameSchedule { p_ratio: 8 };
-        assert_eq!(schedule.skipped_frames(), 7);
+    fn should_have_frame_every_other() {
+        let schedule = FrameSchedule {
+            i_interval: 32,
+            p_num: 1,
+            p_denom: 2,
+        };
+        assert!(schedule.should_have_frame(0));
+        assert!(!schedule.should_have_frame(1));
+        assert!(schedule.should_have_frame(2));
+        assert_eq!(schedule.skipped_after(0), 1);
+        assert_eq!(schedule.skipped_after(2), 1);
     }
 
     #[test]
-    fn increment_with_p_ratio_16() {
-        let schedule = FrameSchedule { p_ratio: 16 };
-        assert_eq!(schedule.skipped_frames(), 15);
+    fn should_have_frame_every_eighth() {
+        let schedule = FrameSchedule {
+            i_interval: 128,
+            p_num: 1,
+            p_denom: 8,
+        };
+        assert!(schedule.should_have_frame(0));
+        for i in 1..8 {
+            assert!(
+                !schedule.should_have_frame(i),
+                "frame {i} should be skipped"
+            );
+        }
+        assert!(schedule.should_have_frame(8));
+        assert_eq!(schedule.skipped_after(0), 7);
     }
 
     fn make_test_context() -> DecodeContext {
-        make_test_context_with_ratio(1)
-    }
-
-    fn make_test_context_with_ratio(p_ratio: u32) -> DecodeContext {
         DecodeContext::Empty {
-            schedule: FrameSchedule { p_ratio },
+            schedule: FrameSchedule {
+                i_interval: 256,
+                p_num: 16,
+                p_denom: 16,
+            },
         }
     }
 }
