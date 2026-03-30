@@ -99,8 +99,8 @@ pub(crate) fn parse_session_frames(
                 match result {
                     Ok(frame) => {
                         if validate_next_marker(&reader) {
-                            prev2.copy_from_slice(&prev1);
                             prev1.copy_from_slice(&frame.values);
+                            prev2.copy_from_slice(&frame.values);
                             main_frames.push(frame);
                             have_i_frame = true;
                             frame_index += 1;
