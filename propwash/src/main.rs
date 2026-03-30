@@ -164,6 +164,7 @@ fn cmd_info(path: &str, json: bool) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn cmd_compare(path_a: &str, path_b: &str) {
     let log_a = load_log(path_a);
     let log_b = load_log(path_b);
@@ -181,7 +182,7 @@ fn cmd_compare(path_a: &str, path_b: &str) {
     let ea = episodes::consolidate(&aa.events);
     let eb = episodes::consolidate(&ab.events);
 
-    println!("                        {:>20}  {:>20}", path_a, path_b);
+    println!("                        {path_a:>20}  {path_b:>20}");
     println!("  ─────────────────────────────────────────────────────────────");
 
     compare_line(
@@ -285,6 +286,7 @@ fn compare_line(label: &str, a: &str, b: &str) {
 }
 
 fn compare_val(label: &str, a: usize, b: usize) {
+    #[allow(clippy::cast_possible_wrap)]
     let diff = b as i64 - a as i64;
     let arrow = match diff.cmp(&0) {
         std::cmp::Ordering::Less => format!(" (▼{diff})"),
