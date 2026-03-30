@@ -31,6 +31,12 @@ enum Command {
         #[arg(long, default_value = "summary")]
         output: String,
     },
+    /// Scan multiple log files and surface the worst diagnostics.
+    Scan {
+        /// Log files to scan.
+        #[arg(required = true)]
+        files: Vec<String>,
+    },
     /// Dump raw frame data for programmatic consumption.
     Dump {
         /// Path to a .bbl or .bfl log file.
@@ -55,6 +61,7 @@ fn main() {
     match cli.command {
         Command::Info { log_file, json } => cmd_info(&log_file, json),
         Command::Analyze { log_file, output } => cmd_analyze(&log_file, &output),
+        Command::Scan { files } => cmd_scan(&files),
         Command::Dump {
             log_file,
             session,
@@ -145,6 +152,48 @@ fn cmd_info(path: &str, json: bool) {
         println!("Global warnings:");
         for w in &log.warnings {
             println!("  {w}");
+        }
+    }
+}
+
+fn cmd_scan(files: &[String]) {
+    for path in files {
+        let log = match propwash_core::decode_file(path) {
+            Ok(log) => log,
+            Err(e) => {
+                println!("ERR  {path}: {e}");
+                continue;
+            }
+        };
+
+        for session in &log.sessions {
+            if session.frame_count() == 0 {
+                continue;
+            }
+
+            let analysis = propwash_core::analysis::analyze(session);
+            let unified = session.unified();
+            let episodes = episodes::consolidate(&analysis.events);
+
+            let worst = analysis
+                .diagnostics
+                .first()
+                .map(|d| {
+                    let icon = match d.severity {
+                        propwash_core::analysis::diagnostics::Severity::Problem => "!!",
+                        propwash_core::analysis::diagnostics::Severity::Warning => " !",
+                        propwash_core::analysis::diagnostics::Severity::Info => "  ",
+                    };
+                    format!("{icon} {}", d.message)
+                })
+                .unwrap_or_else(|| "OK".into());
+
+            println!(
+                "{worst:60}  {path} s{} ({:.0}s, {} events)",
+                session.index,
+                unified.duration_seconds(),
+                episodes.len(),
+            );
         }
     }
 }
