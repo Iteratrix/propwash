@@ -439,24 +439,36 @@ fn golden_sample_rate() {
 }
 
 #[test]
-fn golden_loop_iteration_increments_by_p_ratio() {
+fn golden_loop_iteration_matches_official_decoder() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
     let iter_idx = bf.main_field_defs.index_of("loopIteration").unwrap();
+    use propwash_core::format::bf::types::BfFrameKind;
 
     assert_eq!(bf.frames[0].values[iter_idx], 0);
-    assert_eq!(bf.frames[1].values[iter_idx], 16);
-    assert_eq!(bf.frames[2].values[iter_idx], 32);
-    assert_eq!(bf.frames[5].values[iter_idx], 80);
+    assert_eq!(bf.frames[1].values[iter_idx], 1);
+    assert_eq!(bf.frames[15].values[iter_idx], 15);
+    assert_eq!(bf.frames[16].values[iter_idx], 256);
+    assert_eq!(bf.frames[17].values[iter_idx], 257);
 
     for i in 1..bf.frames.len().min(100) {
         let prev = bf.frames[i - 1].values[iter_idx];
         let curr = bf.frames[i].values[iter_idx];
         let delta = curr - prev;
-        assert_eq!(
-            delta, 16,
-            "frame {i}: loopIteration delta should be 16 (P_ratio), got {delta}"
-        );
+        match bf.frames[i].kind {
+            BfFrameKind::Intra => {
+                assert!(
+                    delta > 1,
+                    "I-frame should jump (I_interval), got delta={delta}"
+                );
+            }
+            BfFrameKind::Inter => {
+                assert_eq!(
+                    delta, 1,
+                    "frame {i}: P-frame delta should be 1, got {delta}"
+                );
+            }
+        }
     }
 }
 
@@ -522,15 +534,15 @@ fn regression_average2_rounding() {
 /// jump by 16 per logged frame, not by 1.
 /// Fixed in commit c2f443a.
 #[test]
-fn regression_loop_iteration_uses_p_ratio() {
+fn regression_loop_iteration_uses_frame_schedule() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
     let iter_idx = bf.main_field_defs.index_of("loopIteration").unwrap();
 
     let delta = bf.frames[1].values[iter_idx] - bf.frames[0].values[iter_idx];
-    assert!(
-        delta > 1,
-        "loopIteration should increment by P_ratio (not 1), got delta={delta}"
+    assert_eq!(
+        delta, 1,
+        "btfl_001 logs every frame (P_num==P_denom), so increment should be 1"
     );
 }
 
