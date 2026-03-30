@@ -166,15 +166,17 @@ fn cmd_analyze(path: &str, output: &str) {
                 struct JsonOutput<'a> {
                     summary: &'a propwash_core::analysis::summary::FlightSummary,
                     episodes: &'a [episodes::Episode],
+                    vibration: &'a Option<propwash_core::analysis::fft::VibrationAnalysis>,
                 }
                 let out = JsonOutput {
                     summary: &analysis.summary,
                     episodes: &episodes,
+                    vibration: &analysis.vibration,
                 };
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
             }
             "summary" => {
-                print_summary(&analysis.summary, &episodes);
+                print_summary(&analysis.summary, &episodes, analysis.vibration.as_ref());
             }
             _ => {
                 eprintln!("Unknown output format: {output}. Use 'json' or 'summary'.");
@@ -187,6 +189,7 @@ fn cmd_analyze(path: &str, output: &str) {
 fn print_summary(
     s: &propwash_core::analysis::summary::FlightSummary,
     episodes: &[episodes::Episode],
+    vibration: Option<&propwash_core::analysis::fft::VibrationAnalysis>,
 ) {
     println!("── Session {} ──", s.session_index);
     println!("  Firmware:    {}", s.firmware);
@@ -247,6 +250,32 @@ fn print_summary(
                 } => {
                     println!(
                         "    {time}  OVERSHOOT      {axis} peak {peak_overshoot_percent:.0}% ({count} frames){dur}"
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(vib) = &vibration {
+        println!();
+        println!("  Vibration Analysis:");
+        for spectrum in &vib.spectra {
+            println!(
+                "    {} axis — noise floor {:.1} dB:",
+                spectrum.axis,
+                vib.noise_floor_db[match spectrum.axis {
+                    "roll" => 0,
+                    "pitch" => 1,
+                    _ => 2,
+                }]
+            );
+            if spectrum.peaks.is_empty() {
+                println!("      No significant peaks");
+            } else {
+                for peak in &spectrum.peaks {
+                    println!(
+                        "      #{}: {:.0} Hz at {:.1} dB",
+                        peak.rank, peak.frequency_hz, peak.magnitude_db
                     );
                 }
             }
