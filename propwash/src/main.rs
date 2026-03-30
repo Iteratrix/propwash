@@ -21,10 +21,13 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Analyze vibration characteristics from a blackbox log.
+    /// Analyze flight events and vibration characteristics.
     Analyze {
         /// Path to a .bbl or .bfl log file.
         log_file: String,
+        /// Output format.
+        #[arg(long, default_value = "summary")]
+        output: String,
     },
     /// Dump raw frame data for programmatic consumption.
     Dump {
@@ -49,7 +52,7 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Info { log_file, json } => cmd_info(&log_file, json),
-        Command::Analyze { log_file } => cmd_analyze(&log_file),
+        Command::Analyze { log_file, output } => cmd_analyze(&log_file, &output),
         Command::Dump {
             log_file,
             session,
@@ -144,33 +147,101 @@ fn cmd_info(path: &str, json: bool) {
     }
 }
 
-fn cmd_analyze(path: &str) {
+fn cmd_analyze(path: &str, output: &str) {
     let log = load_log(path);
 
     for session in &log.sessions {
-        let unified = session.unified();
-        if unified.frame_count() == 0 {
+        if session.frame_count() == 0 {
             continue;
         }
 
-        let gyro_roll = unified.field("gyroADC[0]");
-        let gyro_pitch = unified.field("gyroADC[1]");
-        let gyro_yaw = unified.field("gyroADC[2]");
+        let analysis = propwash_core::analysis::analyze(session);
 
-        let result = AnalyzeResult {
-            session: session.index,
-            firmware: unified.firmware_version().to_string(),
-            sample_rate_hz: unified.sample_rate_hz(),
-            duration_seconds: unified.duration_seconds(),
-            frames: unified.frame_count(),
-            motors: unified.motor_count(),
-            gyro_roll_std: std_dev(&gyro_roll),
-            gyro_pitch_std: std_dev(&gyro_pitch),
-            gyro_yaw_std: std_dev(&gyro_yaw),
-        };
-
-        println!("{}", serde_json::to_string_pretty(&result).unwrap());
+        match output {
+            "json" => {
+                println!("{}", serde_json::to_string_pretty(&analysis).unwrap());
+            }
+            "summary" => {
+                print_summary(&analysis);
+            }
+            _ => {
+                eprintln!("Unknown output format: {output}. Use 'json' or 'summary'.");
+                process::exit(1);
+            }
+        }
     }
+}
+
+fn print_summary(analysis: &propwash_core::analysis::FlightAnalysis) {
+    let s = &analysis.summary;
+    println!("── Session {} ──", s.session_index);
+    println!("  Firmware:    {}", s.firmware);
+    if !s.craft.is_empty() {
+        println!("  Craft:       {}", s.craft);
+    }
+    println!("  Duration:    {:.1}s", s.duration_seconds);
+    println!("  Sample rate: {:.0} Hz", s.sample_rate_hz);
+    println!("  Frames:      {}", s.frame_count);
+    println!("  Motors:      {}", s.motor_count);
+    println!();
+
+    if analysis.events.is_empty() {
+        println!("  No events detected.");
+    } else {
+        println!("  Events ({}):", analysis.events.len());
+        for event in &analysis.events {
+            let time = format!("{:>8.3}s", event.time_seconds);
+            match &event.kind {
+                propwash_core::analysis::events::EventKind::ThrottleChop {
+                    from_percent,
+                    to_percent,
+                    duration_ms,
+                } => {
+                    println!(
+                        "    {time}  THROTTLE CHOP  {from_percent:.0}% → {to_percent:.0}% in {duration_ms:.1}ms"
+                    );
+                }
+                propwash_core::analysis::events::EventKind::ThrottlePunch {
+                    from_percent,
+                    to_percent,
+                    duration_ms,
+                } => {
+                    println!(
+                        "    {time}  THROTTLE PUNCH {from_percent:.0}% → {to_percent:.0}% in {duration_ms:.1}ms"
+                    );
+                }
+                propwash_core::analysis::events::EventKind::MotorSaturation {
+                    motor_index,
+                    duration_frames,
+                } => {
+                    println!(
+                        "    {time}  MOTOR SATURATED motor[{motor_index}] for {duration_frames} frames"
+                    );
+                }
+                propwash_core::analysis::events::EventKind::GyroSpike { axis, magnitude } => {
+                    println!("    {time}  GYRO SPIKE     {axis} = {magnitude:.0} deg/s");
+                }
+                propwash_core::analysis::events::EventKind::Overshoot {
+                    axis,
+                    overshoot_percent,
+                    ..
+                } => {
+                    println!(
+                        "    {time}  OVERSHOOT      {axis} {overshoot_percent:.0}% over setpoint"
+                    );
+                }
+            }
+        }
+    }
+
+    println!();
+    println!("  Summary:");
+    println!("    Throttle chops:    {}", s.throttle_chops);
+    println!("    Throttle punches:  {}", s.throttle_punches);
+    println!("    Motor saturations: {}", s.motor_saturations);
+    println!("    Gyro spikes:       {}", s.gyro_spikes);
+    println!("    Overshoots:        {}", s.overshoots);
+    println!();
 }
 
 fn cmd_dump(
@@ -306,34 +377,6 @@ fn parse_time_range(s: Option<&str>) -> (Option<i64>, Option<i64>) {
         v.parse::<f64>().ok().map(|f| (f * 1_000_000.0) as i64)
     };
     (to_us(start), to_us(end))
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn std_dev(values: &[i64]) -> f64 {
-    if values.is_empty() {
-        return 0.0;
-    }
-    let n = values.len() as f64;
-    let mean = values.iter().sum::<i64>() as f64 / n;
-    let variance = values
-        .iter()
-        .map(|&v| (v as f64 - mean).powi(2))
-        .sum::<f64>()
-        / n;
-    variance.sqrt()
-}
-
-#[derive(Serialize)]
-struct AnalyzeResult {
-    session: usize,
-    firmware: String,
-    sample_rate_hz: f64,
-    duration_seconds: f64,
-    frames: usize,
-    motors: usize,
-    gyro_roll_std: f64,
-    gyro_pitch_std: f64,
-    gyro_yaw_std: f64,
 }
 
 #[derive(Serialize)]
