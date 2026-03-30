@@ -14,10 +14,18 @@ pub struct FrequencySpectrum {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub enum NoiseClass {
+    MotorNoise,
+    FrameResonance,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct FrequencyPeak {
     pub frequency_hz: f64,
     pub magnitude_db: f64,
     pub rank: usize,
+    pub classification: Option<NoiseClass>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +91,8 @@ pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationA
 
     let throttle_bands = compute_throttle_bands(session, sample_rate, &gyro_indices, &axis_names);
     let accel = analyze_accel(session, sample_rate);
+
+    classify_peaks(&mut spectra, &throttle_bands);
 
     VibrationAnalysis {
         spectra,
@@ -284,8 +294,63 @@ fn find_peaks(frequencies: &[f64], magnitudes_db: &[f64]) -> Vec<FrequencyPeak> 
             frequency_hz: frequencies[bin],
             magnitude_db: db,
             rank: rank + 1,
+            classification: None,
         })
         .collect()
+}
+
+fn classify_peaks(spectra: &mut [FrequencySpectrum], bands: &[ThrottleBand]) {
+    if bands.len() < 2 {
+        return;
+    }
+
+    for spectrum in spectra.iter_mut() {
+        let band_peaks: Vec<Option<f64>> = bands
+            .iter()
+            .map(|band| {
+                band.spectra
+                    .iter()
+                    .find(|s| s.axis == spectrum.axis)
+                    .and_then(|s| s.peaks.first())
+                    .map(|p| p.frequency_hz)
+            })
+            .collect();
+
+        let valid_peaks: Vec<f64> = band_peaks.iter().filter_map(|p| *p).collect();
+        if valid_peaks.len() < 2 {
+            continue;
+        }
+
+        let min_f = valid_peaks.iter().copied().reduce(f64::min).unwrap_or(0.0);
+        let max_f = valid_peaks.iter().copied().reduce(f64::max).unwrap_or(0.0);
+        let shifts_with_throttle = max_f > min_f * 1.5 && min_f > 10.0;
+
+        for peak in &mut spectrum.peaks {
+            let freq = peak.frequency_hz;
+            let appears_in_bands: Vec<bool> = bands
+                .iter()
+                .map(|band| {
+                    band.spectra
+                        .iter()
+                        .find(|s| s.axis == spectrum.axis)
+                        .map(|s| {
+                            s.peaks
+                                .iter()
+                                .any(|p| (p.frequency_hz - freq).abs() < freq * 0.15)
+                        })
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            let appears_count = appears_in_bands.iter().filter(|&&b| b).count();
+
+            if appears_count >= bands.len() / 2 && !shifts_with_throttle {
+                peak.classification = Some(NoiseClass::FrameResonance);
+            } else if shifts_with_throttle && freq > 50.0 {
+                peak.classification = Some(NoiseClass::MotorNoise);
+            }
+        }
+    }
 }
 
 fn compute_noise_floor(magnitudes_db: &[f64]) -> f64 {
