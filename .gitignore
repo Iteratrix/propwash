@@ -3,3 +3,5 @@ perf.data
 perf.data.old
 *.svg
 .idea/
+compare.py
+perf.data
