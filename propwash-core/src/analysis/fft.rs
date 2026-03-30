@@ -30,10 +30,17 @@ pub struct ThrottleBand {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AccelVibration {
+    pub rms: [f64; 3],
+    pub spectra: Vec<FrequencySpectrum>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct VibrationAnalysis {
     pub spectra: Vec<FrequencySpectrum>,
     pub noise_floor_db: [f64; 3],
     pub throttle_bands: Vec<ThrottleBand>,
+    pub accel: Option<AccelVibration>,
 }
 
 const FFT_WINDOW_SIZE: usize = 1024;
@@ -75,12 +82,51 @@ pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationA
     }
 
     let throttle_bands = compute_throttle_bands(session, sample_rate, &gyro_indices, &axis_names);
+    let accel = analyze_accel(session, sample_rate);
 
     VibrationAnalysis {
         spectra,
         noise_floor_db,
         throttle_bands,
+        accel,
     }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn analyze_accel(session: &BfRawSession, sample_rate: f64) -> Option<AccelVibration> {
+    let acc_indices = [
+        session.main_field_defs.index_of("accSmooth[0]")?,
+        session.main_field_defs.index_of("accSmooth[1]")?,
+        session.main_field_defs.index_of("accSmooth[2]")?,
+    ];
+
+    let axis_names = ["X", "Y", "Z"];
+    let mut rms = [0.0; 3];
+    let mut spectra = Vec::new();
+
+    for (i, &idx) in acc_indices.iter().enumerate() {
+        let samples: Vec<f64> = session
+            .frames
+            .iter()
+            .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
+            .collect();
+
+        if samples.is_empty() {
+            continue;
+        }
+
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let ac_coupled: Vec<f64> = samples.iter().map(|&s| s - mean).collect();
+
+        let variance = ac_coupled.iter().map(|v| v * v).sum::<f64>() / ac_coupled.len() as f64;
+        rms[i] = variance.sqrt();
+
+        if ac_coupled.len() >= FFT_WINDOW_SIZE {
+            spectra.push(compute_spectrum(&ac_coupled, sample_rate, axis_names[i]));
+        }
+    }
+
+    Some(AccelVibration { rms, spectra })
 }
 
 const THROTTLE_BANDS: [(f64, f64, &str); 4] = [

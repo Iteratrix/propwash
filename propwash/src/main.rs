@@ -270,6 +270,23 @@ fn print_summary(
         println!("  Vibration Analysis (full flight):");
         print_spectra(&vib.spectra, &vib.noise_floor_db);
 
+        if let Some(accel) = &vib.accel {
+            println!();
+            println!("  FC Board Vibration (accelerometer):");
+            println!(
+                "    RMS: X={:.1}  Y={:.1}  Z={:.1}",
+                accel.rms[0], accel.rms[1], accel.rms[2]
+            );
+            for spectrum in &accel.spectra {
+                if let Some(peak) = spectrum.peaks.first() {
+                    println!(
+                        "    {}: dominant {:.0} Hz at {:.1} dB",
+                        spectrum.axis, peak.frequency_hz, peak.magnitude_db
+                    );
+                }
+            }
+        }
+
         if !vib.throttle_bands.is_empty() {
             println!();
             println!("  Vibration by Throttle:");
