@@ -1,3 +1,5 @@
+mod episodes;
+
 use std::process;
 
 use clap::{Parser, Subcommand};
@@ -156,13 +158,23 @@ fn cmd_analyze(path: &str, output: &str) {
         }
 
         let analysis = propwash_core::analysis::analyze(session);
+        let episodes = episodes::consolidate(&analysis.events);
 
         match output {
             "json" => {
-                println!("{}", serde_json::to_string_pretty(&analysis).unwrap());
+                #[derive(Serialize)]
+                struct JsonOutput<'a> {
+                    summary: &'a propwash_core::analysis::summary::FlightSummary,
+                    episodes: &'a [episodes::Episode],
+                }
+                let out = JsonOutput {
+                    summary: &analysis.summary,
+                    episodes: &episodes,
+                };
+                println!("{}", serde_json::to_string_pretty(&out).unwrap());
             }
             "summary" => {
-                print_summary(&analysis);
+                print_summary(&analysis.summary, &episodes);
             }
             _ => {
                 eprintln!("Unknown output format: {output}. Use 'json' or 'summary'.");
@@ -172,8 +184,10 @@ fn cmd_analyze(path: &str, output: &str) {
     }
 }
 
-fn print_summary(analysis: &propwash_core::analysis::FlightAnalysis) {
-    let s = &analysis.summary;
+fn print_summary(
+    s: &propwash_core::analysis::summary::FlightSummary,
+    episodes: &[episodes::Episode],
+) {
     println!("── Session {} ──", s.session_index);
     println!("  Firmware:    {}", s.firmware);
     if !s.craft.is_empty() {
@@ -185,49 +199,54 @@ fn print_summary(analysis: &propwash_core::analysis::FlightAnalysis) {
     println!("  Motors:      {}", s.motor_count);
     println!();
 
-    if analysis.events.is_empty() {
+    if episodes.is_empty() {
         println!("  No events detected.");
     } else {
-        println!("  Events ({}):", analysis.events.len());
-        for event in &analysis.events {
-            let time = format!("{:>8.3}s", event.time_seconds);
-            match &event.kind {
-                propwash_core::analysis::events::EventKind::ThrottleChop {
+        println!("  Timeline ({} episodes):", episodes.len());
+        for ep in episodes {
+            let time = format!("{:>8.3}s", ep.start_time);
+            let dur = if ep.duration_seconds > 0.001 {
+                format!(" ({:.0}ms)", ep.duration_seconds * 1000.0)
+            } else {
+                String::new()
+            };
+            match &ep.kind {
+                episodes::EpisodeKind::ThrottleChop {
                     from_percent,
                     to_percent,
-                    duration_ms,
                 } => {
-                    println!(
-                        "    {time}  THROTTLE CHOP  {from_percent:.0}% → {to_percent:.0}% in {duration_ms:.1}ms"
-                    );
+                    println!("    {time}  THROTTLE CHOP  {from_percent:.0}% → {to_percent:.0}%");
                 }
-                propwash_core::analysis::events::EventKind::ThrottlePunch {
+                episodes::EpisodeKind::ThrottlePunch {
                     from_percent,
                     to_percent,
-                    duration_ms,
                 } => {
-                    println!(
-                        "    {time}  THROTTLE PUNCH {from_percent:.0}% → {to_percent:.0}% in {duration_ms:.1}ms"
-                    );
+                    println!("    {time}  THROTTLE PUNCH {from_percent:.0}% → {to_percent:.0}%");
                 }
-                propwash_core::analysis::events::EventKind::MotorSaturation {
+                episodes::EpisodeKind::MotorSaturation {
                     motor_index,
                     duration_frames,
                 } => {
                     println!(
-                        "    {time}  MOTOR SATURATED motor[{motor_index}] for {duration_frames} frames"
+                        "    {time}  MOTOR SAT      motor[{motor_index}] for {duration_frames} frames"
                     );
                 }
-                propwash_core::analysis::events::EventKind::GyroSpike { axis, magnitude } => {
-                    println!("    {time}  GYRO SPIKE     {axis} = {magnitude:.0} deg/s");
-                }
-                propwash_core::analysis::events::EventKind::Overshoot {
+                episodes::EpisodeKind::GyroSpikes {
                     axis,
-                    overshoot_percent,
-                    ..
+                    peak_magnitude,
+                    count,
                 } => {
                     println!(
-                        "    {time}  OVERSHOOT      {axis} {overshoot_percent:.0}% over setpoint"
+                        "    {time}  GYRO SPIKE     {axis} peak {peak_magnitude:.0}°/s ({count} frames){dur}"
+                    );
+                }
+                episodes::EpisodeKind::Overshoot {
+                    axis,
+                    peak_overshoot_percent,
+                    count,
+                } => {
+                    println!(
+                        "    {time}  OVERSHOOT      {axis} peak {peak_overshoot_percent:.0}% ({count} frames){dur}"
                     );
                 }
             }
