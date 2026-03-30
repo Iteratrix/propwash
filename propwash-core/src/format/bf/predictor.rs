@@ -1,4 +1,4 @@
-use super::types::BfRawSession;
+use super::types::{BfFieldSign, BfRawSession};
 
 const MINTHROTTLE: u8 = 4;
 const MOTOR_0: u8 = 5;
@@ -12,13 +12,73 @@ const STRAIGHT_LINE: u8 = 2;
 const AVERAGE_2: u8 = 3;
 const INCREMENT: u8 = 6;
 
+/// Frame prediction history. Encodes the invariant that I-frames reset
+/// both slots, while P-frames shift them forward.
+pub(crate) enum FrameHistory {
+    Empty,
+    Ready { prev1: Vec<i64>, prev2: Vec<i64> },
+}
+
+impl FrameHistory {
+    pub fn new(n_fields: usize) -> Self {
+        let _ = n_fields;
+        Self::Empty
+    }
+
+    /// Resets both history slots to the I-frame values.
+    pub fn reset_from_i_frame(&mut self, values: &[i64]) {
+        match self {
+            Self::Empty => {
+                *self = Self::Ready {
+                    prev1: values.to_vec(),
+                    prev2: values.to_vec(),
+                };
+            }
+            Self::Ready { prev1, prev2 } => {
+                prev1.copy_from_slice(values);
+                prev2.copy_from_slice(values);
+            }
+        }
+    }
+
+    /// Advances history: prev2 takes prev1's old values, prev1 takes the new values.
+    pub fn advance_from_p_frame(&mut self, values: &[i64]) {
+        match self {
+            Self::Empty => panic!("advance_from_p_frame called without I-frame"),
+            Self::Ready { prev1, prev2 } => {
+                prev2.copy_from_slice(prev1);
+                prev1.copy_from_slice(values);
+            }
+        }
+    }
+
+    /// Returns whether history is ready for P-frame decoding.
+    pub fn is_ready(&self) -> bool {
+        match self {
+            Self::Empty => false,
+            Self::Ready { .. } => true,
+        }
+    }
+
+    /// Invalidates history (after corruption).
+    pub fn invalidate(&mut self) {
+        *self = Self::Empty;
+    }
+
+    /// Borrows prev1 and prev2 for prediction. Panics if empty.
+    pub fn slices(&self) -> (&[i64], &[i64]) {
+        match self {
+            Self::Empty => panic!("slices() called on empty history"),
+            Self::Ready { prev1, prev2 } => (prev1, prev2),
+        }
+    }
+}
+
 /// Applies predictor for an I-frame field.
-/// `current_values` contains already-decoded fields earlier in the same frame.
-/// `motor0_idx` is the index of `motor[0]` for the `MOTOR_0` predictor.
 pub(crate) fn apply_i_predictor(
     predictor_id: u8,
     decoded: i32,
-    field_name: &str,
+    sign: BfFieldSign,
     current_values: &[i64],
     motor0_idx: Option<usize>,
     session: &BfRawSession,
@@ -30,7 +90,7 @@ pub(crate) fn apply_i_predictor(
             let motor0 = motor0_idx
                 .and_then(|idx| current_values.get(idx))
                 .copied()
-                .unwrap_or(0) as i32;
+                .map_or(0, |v| v as i32);
             decoded.wrapping_add(motor0)
         }
         FIFTEEN_HUNDRED => decoded.wrapping_add(1500),
@@ -38,7 +98,7 @@ pub(crate) fn apply_i_predictor(
         MINMOTOR => decoded.wrapping_add(session.min_motor()),
         _ => decoded,
     };
-    to_i64(predicted, field_name)
+    to_i64(predicted, sign)
 }
 
 /// Applies predictor for a P-frame field.
@@ -47,7 +107,7 @@ pub(crate) fn apply_p_predictor(
     predictor_id: u8,
     decoded: i32,
     field_idx: usize,
-    field_name: &str,
+    sign: BfFieldSign,
     prev1: &[i64],
     prev2: &[i64],
     session: &BfRawSession,
@@ -88,29 +148,20 @@ pub(crate) fn apply_p_predictor(
         }
         _ => decoded,
     };
-    to_i64(predicted, field_name)
+    to_i64(predicted, sign)
 }
 
-/// Converts an i32 result to i64 for storage.
-/// Unsigned fields (time, loopIteration) are zero-extended.
-/// Signed fields are sign-extended.
 #[allow(clippy::cast_sign_loss)]
-fn to_i64(value: i32, field_name: &str) -> i64 {
-    if is_unsigned_field(field_name) {
-        i64::from(value as u32)
-    } else {
-        i64::from(value)
+fn to_i64(value: i32, sign: BfFieldSign) -> i64 {
+    match sign {
+        BfFieldSign::Unsigned => i64::from(value as u32),
+        BfFieldSign::Signed => i64::from(value),
     }
 }
 
-/// Truncates a stored i64 back to i32 for prediction arithmetic.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(clippy::cast_possible_truncation)]
 fn to_i32(value: i64) -> i32 {
     value as i32
-}
-
-fn is_unsigned_field(name: &str) -> bool {
-    matches!(name, "time" | "loopIteration")
 }
 
 #[cfg(test)]
@@ -119,22 +170,17 @@ mod tests {
 
     #[test]
     fn to_i64_signed_positive() {
-        assert_eq!(to_i64(42, "gyroADC[0]"), 42);
+        assert_eq!(to_i64(42, BfFieldSign::Signed), 42);
     }
 
     #[test]
     fn to_i64_signed_negative() {
-        assert_eq!(to_i64(-1, "gyroADC[0]"), -1);
+        assert_eq!(to_i64(-1, BfFieldSign::Signed), -1);
     }
 
     #[test]
     fn to_i64_unsigned_large() {
-        assert_eq!(to_i64(-1, "time"), 0xFFFF_FFFF);
-    }
-
-    #[test]
-    fn to_i64_unsigned_wraps_correctly() {
-        assert_eq!(to_i64(0, "time"), 0);
+        assert_eq!(to_i64(-1, BfFieldSign::Unsigned), 0xFFFF_FFFF);
     }
 
     #[test]
@@ -143,14 +189,42 @@ mod tests {
         let p2: i32 = p1.wrapping_sub(4000);
         let prediction = p1.wrapping_mul(2).wrapping_sub(p2);
         let result = 4000_i32.wrapping_add(prediction);
-        assert_eq!(to_i64(result, "time") as u32, p1.wrapping_add(8000) as u32);
+        assert_eq!(
+            to_i64(result, BfFieldSign::Unsigned) as u32,
+            p1.wrapping_add(8000) as u32
+        );
     }
 
     #[test]
-    fn average_via_shift() {
-        let a: i32 = 100;
-        let b: i32 = 200;
-        let avg = (a >> 1).wrapping_add(b >> 1);
-        assert_eq!(avg, 150);
+    fn history_reset_sets_both_slots() {
+        let mut h = FrameHistory::new(3);
+        assert!(!h.is_ready());
+
+        h.reset_from_i_frame(&[10, 20, 30]);
+        assert!(h.is_ready());
+
+        let (p1, p2) = h.slices();
+        assert_eq!(p1, &[10, 20, 30]);
+        assert_eq!(p2, &[10, 20, 30]);
+    }
+
+    #[test]
+    fn history_advance_shifts() {
+        let mut h = FrameHistory::new(2);
+        h.reset_from_i_frame(&[100, 200]);
+        h.advance_from_p_frame(&[110, 210]);
+
+        let (p1, p2) = h.slices();
+        assert_eq!(p1, &[110, 210]);
+        assert_eq!(p2, &[100, 200]);
+    }
+
+    #[test]
+    fn history_invalidate() {
+        let mut h = FrameHistory::new(2);
+        h.reset_from_i_frame(&[1, 2]);
+        assert!(h.is_ready());
+        h.invalidate();
+        assert!(!h.is_ready());
     }
 }

@@ -3,7 +3,7 @@ use super::encoding::{
     read_tag8_8svb, read_unsigned_vb, ENC_NEG_14BIT, ENC_NULL, ENC_TAG2_3S32, ENC_TAG2_3SVARIABLE,
     ENC_TAG8_4S16, ENC_TAG8_8SVB, ENC_UNSIGNED_VB,
 };
-use super::predictor::{apply_i_predictor, apply_p_predictor};
+use super::predictor::{apply_i_predictor, apply_p_predictor, FrameHistory};
 use super::types::{BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession};
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
@@ -57,14 +57,10 @@ pub(crate) fn parse_session_frames(
     let p_encodings = &session.p_encodings;
     let p_predictors = &session.p_predictors;
 
-    // Pre-compute field indices for predictor lookups
     let motor0_idx = session.main_field_defs.index_of("motor[0]");
     let time_idx = session.main_field_defs.index_of("time");
 
-    // History for P-frame prediction (indexed, not named)
-    let mut prev1: Vec<i64> = vec![0; n_fields];
-    let mut prev2: Vec<i64> = vec![0; n_fields];
-    let mut have_i_frame = false;
+    let mut history = FrameHistory::new(n_fields);
     let mut frame_index: usize = 0;
     let mut stats = BfParseStats::default();
 
@@ -99,10 +95,8 @@ pub(crate) fn parse_session_frames(
                 match result {
                     Ok(frame) => {
                         if validate_next_marker(&reader) {
-                            prev1.copy_from_slice(&frame.values);
-                            prev2.copy_from_slice(&frame.values);
+                            history.reset_from_i_frame(&frame.values);
                             main_frames.push(frame);
-                            have_i_frame = true;
                             frame_index += 1;
                             stats.i_frame_count += 1;
                         } else {
@@ -116,23 +110,24 @@ pub(crate) fn parse_session_frames(
                         stats.corrupt_bytes += 1;
                         reader.restore(frame_start);
                         reader.skip(1);
-                        have_i_frame = false;
+                        history.invalidate();
                     }
                 }
             }
 
             MARKER_P => {
-                if !have_i_frame {
+                if !history.is_ready() {
                     stats.corrupt_bytes += 1;
                     continue;
                 }
+                let (prev1, prev2) = history.slices();
                 let result = decode_p_frame(
                     &mut reader,
                     fields,
                     p_encodings,
                     p_predictors,
-                    &prev1,
-                    &prev2,
+                    prev1,
+                    prev2,
                     session,
                     time_idx,
                     frame_abs_offset,
@@ -141,8 +136,7 @@ pub(crate) fn parse_session_frames(
                 match result {
                     Ok(frame) => {
                         if validate_next_marker(&reader) {
-                            prev2.copy_from_slice(&prev1);
-                            prev1.copy_from_slice(&frame.values);
+                            history.advance_from_p_frame(&frame.values);
                             main_frames.push(frame);
                             frame_index += 1;
                             stats.p_frame_count += 1;
@@ -157,7 +151,7 @@ pub(crate) fn parse_session_frames(
                         stats.corrupt_bytes += 1;
                         reader.restore(frame_start);
                         reader.skip(1);
-                        have_i_frame = false;
+                        history.invalidate();
                     }
                 }
             }
@@ -348,7 +342,7 @@ fn decode_i_frame(
         let predicted = apply_i_predictor(
             field.predictor,
             raw[i],
-            &field.name,
+            field.value_sign,
             &values,
             motor0_idx,
             session,
@@ -387,7 +381,7 @@ fn decode_p_frame(
             pred_id,
             raw[j],
             j,
-            &field.name,
+            field.value_sign,
             prev1,
             prev2,
             session,

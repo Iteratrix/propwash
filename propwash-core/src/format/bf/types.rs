@@ -1,5 +1,12 @@
 use std::collections::HashMap;
 
+/// Whether a field's predicted value wraps as unsigned or signed 32-bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BfFieldSign {
+    Signed,
+    Unsigned,
+}
+
 /// Definition of one field, parsed from header metadata.
 #[derive(Debug, Clone)]
 pub struct BfFieldDef {
@@ -7,6 +14,7 @@ pub struct BfFieldDef {
     pub signed: bool,
     pub predictor: u8,
     pub encoding: u8,
+    pub value_sign: BfFieldSign,
 }
 
 /// All field definitions for one frame type.
