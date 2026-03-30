@@ -1,8 +1,15 @@
-use crate::frame::parse_session_frames;
-use crate::header::{find_sessions, parse_headers};
-use crate::types::{BfRawSession, Log, RawSession, Session, Warning};
+pub mod analyzed;
+mod encoding;
+mod frame;
+mod header;
+mod predictor;
+pub mod types;
 
-/// Decode a Betaflight-family blackbox log.
+use crate::types::{Log, RawSession, Session, Warning};
+use header::{find_sessions, parse_headers};
+use types::{BfHeaderValue, BfRawSession};
+
+/// Decodes a Betaflight-family blackbox log.
 pub(crate) fn decode(data: &[u8]) -> Log {
     let offsets = find_sessions(data);
     let mut sessions = Vec::new();
@@ -23,7 +30,6 @@ pub(crate) fn decode(data: &[u8]) -> Log {
         let session_end = offsets.get(i + 1).copied().unwrap_or(data.len());
         let mut warnings: Vec<Warning> = Vec::new();
 
-        // Parse headers
         let parsed = parse_headers(data, offset, session_end, &mut warnings);
 
         if parsed.main_field_defs.is_empty() {
@@ -33,10 +39,9 @@ pub(crate) fn decode(data: &[u8]) -> Log {
             });
         }
 
-        // Build a partial BfRawSession for the predictor functions
         #[allow(clippy::cast_possible_truncation)]
         let motor_output = match parsed.raw.get("motorOutput") {
-            Some(crate::types::BfHeaderValue::IntList(v)) => v.first().copied().unwrap_or(0) as i32,
+            Some(BfHeaderValue::IntList(v)) => v.first().copied().unwrap_or(0) as i32,
             _ => 0,
         };
 
@@ -54,10 +59,9 @@ pub(crate) fn decode(data: &[u8]) -> Log {
             motor_output,
         );
 
-        // Parse frames
         if !raw_session.main_field_defs.is_empty() {
             let binary_data = &data[parsed.binary_start..session_end];
-            let (main, slow, gps, events, stats) = parse_session_frames(
+            let (main, slow, gps, events, stats) = frame::parse_session_frames(
                 binary_data,
                 parsed.binary_start,
                 &raw_session,

@@ -1,12 +1,6 @@
 use std::fmt;
 
-use super::raw::{BfParseStats, BfRawSession, RawSession};
-
-/// Format-specific analyzed view.
-#[non_exhaustive]
-pub enum Analyzed<'a> {
-    Betaflight(BfAnalyzedView<'a>),
-}
+use super::types::{BfParseStats, BfRawSession};
 
 /// Betaflight-specific analyzed view. Borrows raw data.
 pub struct BfAnalyzedView<'a> {
@@ -61,11 +55,5 @@ impl BfAnalyzedView<'_> {
     /// Returns the parse statistics.
     pub fn stats(&self) -> &BfParseStats {
         &self.raw.stats
-    }
-}
-
-pub(super) fn analyzed_from_raw(raw: &RawSession) -> Analyzed<'_> {
-    match raw {
-        RawSession::Betaflight(bf) => Analyzed::Betaflight(BfAnalyzedView { raw: bf }),
     }
 }

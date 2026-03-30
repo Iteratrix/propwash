@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use super::Warning;
-
 /// Definition of one field, parsed from header metadata.
 #[derive(Debug, Clone)]
 pub struct BfFieldDef {
@@ -258,20 +256,5 @@ impl BfRawSession {
     /// Gets a field value from a frame by name, with a default.
     pub fn get_field_or(&self, frame: &BfFrame, name: &str, default: i64) -> i64 {
         self.get_field(frame, name).unwrap_or(default)
-    }
-}
-
-/// Format-specific raw session data.
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum RawSession {
-    Betaflight(BfRawSession),
-}
-
-/// Non-fatal diagnostics collected during parsing.
-pub(super) fn _warn(message: impl Into<String>, byte_offset: Option<usize>) -> Warning {
-    Warning {
-        message: message.into(),
-        byte_offset,
     }
 }

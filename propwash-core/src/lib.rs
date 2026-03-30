@@ -5,30 +5,22 @@
 #![doc = "- **Analyzed** (`session.analyzed()`) — format-specific domain knowledge"]
 #![doc = "- **Raw** (`session.raw`) — format-specific parsed data, faithful to the file"]
 
-mod betaflight;
-mod encoding;
-mod frame;
-mod header;
-mod predictor;
+pub mod format;
 mod reader;
 pub mod types;
 
-pub use types::{
-    Analyzed, BfAnalyzedView, Log, ParseError, RawSession, Session, UnifiedView, Warning,
-};
+pub use format::bf::analyzed::BfAnalyzedView;
+pub use types::{Analyzed, Log, ParseError, RawSession, Session, UnifiedView, Warning};
 
-/// Magic bytes that identify a Betaflight-family blackbox log.
 const BETAFLIGHT_MARKER: &[u8] = b"H Product:Blackbox flight data recorder";
 
-/// Decode a blackbox log from raw bytes.
+/// Decodes a blackbox log from raw bytes.
 /// Never panics on corrupt data. Collects warnings instead.
 pub fn decode(data: &[u8]) -> Log {
-    // Auto-detect format by checking for known markers
     if memchr::memmem::find(data, BETAFLIGHT_MARKER).is_some() {
-        return betaflight::decode(data);
+        return format::bf::decode(data);
     }
 
-    // No recognized format
     Log {
         sessions: Vec::new(),
         warnings: vec![Warning {
@@ -38,7 +30,7 @@ pub fn decode(data: &[u8]) -> Log {
     }
 }
 
-/// Decode a blackbox log file. Only fails on I/O errors.
+/// Decodes a blackbox log file. Only fails on I/O errors.
 ///
 /// # Errors
 ///
