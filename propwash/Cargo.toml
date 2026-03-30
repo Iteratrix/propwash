@@ -3,6 +3,8 @@ name = "propwash"
 version = "0.1.0"
 edition.workspace = true
 description = "Flight log vibration analyzer CLI"
+repository = "https://github.com/Iteratrix/propwash"
+license = "MIT"
 
 [dependencies]
 propwash-core = { path = "../propwash-core" }
