@@ -3,7 +3,7 @@ use super::encoding::{
     read_tag8_8svb, read_unsigned_vb, ENC_NEG_14BIT, ENC_NULL, ENC_TAG2_3S32, ENC_TAG2_3SVARIABLE,
     ENC_TAG8_4S16, ENC_TAG8_8SVB, ENC_UNSIGNED_VB,
 };
-use super::predictor::{apply_i_predictor, apply_p_predictor, FrameHistory};
+use super::predictor::{apply_i_predictor, apply_p_predictor, DecodeContext};
 use super::types::{BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession};
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
@@ -53,14 +53,14 @@ pub(crate) fn parse_session_frames(
     let mut events: Vec<BfEvent> = Vec::new();
 
     let fields = &session.main_field_defs.fields;
-    let n_fields = fields.len();
     let p_encodings = &session.p_encodings;
     let p_predictors = &session.p_predictors;
 
     let motor0_idx = session.main_field_defs.index_of("motor[0]");
     let time_idx = session.main_field_defs.index_of("time");
+    let iter_idx = session.main_field_defs.index_of("loopIteration");
 
-    let mut history = FrameHistory::new(n_fields);
+    let mut ctx = DecodeContext::new(session);
     let mut frame_index: usize = 0;
     let mut stats = BfParseStats::default();
 
@@ -95,7 +95,11 @@ pub(crate) fn parse_session_frames(
                 match result {
                     Ok(frame) => {
                         if validate_next_marker(&reader) {
-                            history.reset_from_i_frame(&frame.values);
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let iteration = iter_idx
+                                .and_then(|i| frame.values.get(i).copied())
+                                .unwrap_or(0) as u32;
+                            ctx.reset_from_i_frame(&frame.values, iteration);
                             main_frames.push(frame);
                             frame_index += 1;
                             stats.i_frame_count += 1;
@@ -110,17 +114,18 @@ pub(crate) fn parse_session_frames(
                         stats.corrupt_bytes += 1;
                         reader.restore(frame_start);
                         reader.skip(1);
-                        history.invalidate();
+                        ctx.invalidate();
                     }
                 }
             }
 
             MARKER_P => {
-                if !history.is_ready() {
+                if !ctx.is_ready() {
                     stats.corrupt_bytes += 1;
                     continue;
                 }
-                let (prev1, prev2) = history.slices();
+                let skipped = ctx.skipped_frames();
+                let (prev1, prev2) = ctx.slices();
                 let result = decode_p_frame(
                     &mut reader,
                     fields,
@@ -130,13 +135,14 @@ pub(crate) fn parse_session_frames(
                     prev2,
                     session,
                     time_idx,
+                    skipped,
                     frame_abs_offset,
                     frame_index,
                 );
                 match result {
                     Ok(frame) => {
                         if validate_next_marker(&reader) {
-                            history.advance_from_p_frame(&frame.values);
+                            ctx.advance_from_p_frame(&frame.values);
                             main_frames.push(frame);
                             frame_index += 1;
                             stats.p_frame_count += 1;
@@ -151,7 +157,7 @@ pub(crate) fn parse_session_frames(
                         stats.corrupt_bytes += 1;
                         reader.restore(frame_start);
                         reader.skip(1);
-                        history.invalidate();
+                        ctx.invalidate();
                     }
                 }
             }
@@ -369,6 +375,7 @@ fn decode_p_frame(
     prev2: &[i64],
     session: &BfRawSession,
     time_idx: Option<usize>,
+    skipped_frames: u32,
     byte_offset: usize,
     frame_index: usize,
 ) -> Result<BfFrame, InternalError> {
@@ -386,6 +393,7 @@ fn decode_p_frame(
             prev2,
             session,
             time_idx,
+            skipped_frames,
         );
         values.push(predicted);
     }
