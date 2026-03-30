@@ -17,6 +17,7 @@ pub struct FlightSummary {
     pub motor_saturations: usize,
     pub gyro_spikes: usize,
     pub overshoots: usize,
+    pub desyncs: usize,
     pub total_events: usize,
 }
 
@@ -29,6 +30,7 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
     let mut motor_saturations = 0;
     let mut gyro_spikes = 0;
     let mut overshoots = 0;
+    let mut desyncs = 0;
 
     for event in events {
         match &event.kind {
@@ -37,6 +39,7 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
             EventKind::MotorSaturation { .. } => motor_saturations += 1,
             EventKind::GyroSpike { .. } => gyro_spikes += 1,
             EventKind::Overshoot { .. } => overshoots += 1,
+            EventKind::Desync { .. } => desyncs += 1,
         }
     }
 
@@ -53,6 +56,7 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
         motor_saturations,
         gyro_spikes,
         overshoots,
+        desyncs,
         total_events: events.len(),
     }
 }

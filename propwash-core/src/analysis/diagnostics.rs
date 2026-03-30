@@ -27,6 +27,7 @@ pub fn diagnose(
     let mut diagnostics = Vec::new();
 
     diagnose_motor_saturation(events, motor_count, &mut diagnostics);
+    diagnose_desync(events, &mut diagnostics);
     diagnose_overshoot(events, duration_seconds, &mut diagnostics);
     diagnose_gyro_spikes(events, &mut diagnostics);
     if let Some(vib) = vibration {
@@ -114,6 +115,29 @@ fn diagnose_motor_saturation(
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
+        });
+    }
+}
+
+fn diagnose_desync(events: &[FlightEvent], diagnostics: &mut Vec<Diagnostic>) {
+    let desync_count: usize = events
+        .iter()
+        .filter(|e| matches!(&e.kind, EventKind::Desync { .. }))
+        .count();
+
+    if desync_count > 10 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Problem,
+            category: "esc",
+            message: format!("ESC desync detected ({desync_count} events)"),
+            detail: "One motor spiking to max while others are normal indicates ESC desync. Check motor timing, reduce DShot speed, or try a different ESC protocol. Also check for damaged motor wires or bad solder joints.".into(),
+        });
+    } else if desync_count > 0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "esc",
+            message: format!("Possible ESC desync ({desync_count} events)"),
+            detail: "Brief single-motor spikes detected. May be desync or aggressive PID correction. If twitches are visible in flight, check ESC settings.".into(),
         });
     }
 }

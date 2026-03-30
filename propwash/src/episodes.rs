@@ -35,6 +35,10 @@ pub enum EpisodeKind {
         peak_overshoot_percent: f64,
         count: usize,
     },
+    Desync {
+        motor_index: usize,
+        count: usize,
+    },
 }
 
 const EPISODE_GAP_SECONDS: f64 = 0.1;
@@ -47,6 +51,7 @@ pub fn consolidate(events: &[FlightEvent]) -> Vec<Episode> {
     consolidate_motor_saturations(events, &mut episodes);
     consolidate_gyro_spikes(events, &mut episodes);
     consolidate_overshoots(events, &mut episodes);
+    consolidate_desyncs(events, &mut episodes);
 
     episodes.sort_by(|a, b| a.start_time.partial_cmp(&b.start_time).unwrap());
     episodes
@@ -206,6 +211,48 @@ fn consolidate_overshoots(events: &[FlightEvent], episodes: &mut Vec<Episode>) {
                 kind: EpisodeKind::Overshoot {
                     axis,
                     peak_overshoot_percent: peak,
+                    count,
+                },
+            });
+            i += 1;
+        }
+    }
+}
+
+fn consolidate_desyncs(events: &[FlightEvent], episodes: &mut Vec<Episode>) {
+    for motor_idx in 0..8 {
+        let mut motor_events: Vec<&FlightEvent> = events
+            .iter()
+            .filter(|e| {
+                matches!(&e.kind, EventKind::Desync { motor_index, .. } if *motor_index == motor_idx)
+            })
+            .collect();
+        if motor_events.is_empty() {
+            continue;
+        }
+        motor_events.sort_by(|a, b| a.time_seconds.partial_cmp(&b.time_seconds).unwrap());
+
+        let mut i = 0;
+        while i < motor_events.len() {
+            let start = motor_events[i];
+            let mut end = start;
+            let mut count = 1;
+
+            while i + 1 < motor_events.len()
+                && motor_events[i + 1].time_seconds - end.time_seconds < EPISODE_GAP_SECONDS
+            {
+                i += 1;
+                end = motor_events[i];
+                count += 1;
+            }
+
+            episodes.push(Episode {
+                start_time: start.time_seconds,
+                end_time: end.time_seconds,
+                duration_seconds: end.time_seconds - start.time_seconds,
+                event_count: count,
+                kind: EpisodeKind::Desync {
+                    motor_index: motor_idx,
                     count,
                 },
             });

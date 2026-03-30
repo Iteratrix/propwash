@@ -309,6 +309,11 @@ fn print_summary(
                         "    {time}  OVERSHOOT      {axis} peak {peak_overshoot_percent:.0}% ({count} frames){dur}"
                     );
                 }
+                episodes::EpisodeKind::Desync { motor_index, count } => {
+                    println!(
+                        "    {time}  DESYNC         motor[{motor_index}] ({count} frames){dur}"
+                    );
+                }
             }
         }
     }
@@ -359,6 +364,7 @@ fn print_summary(
     println!("    Motor saturations: {}", s.motor_saturations);
     println!("    Gyro spikes:       {}", s.gyro_spikes);
     println!("    Overshoots:        {}", s.overshoots);
+    println!("    Desyncs:           {}", s.desyncs);
 
     if !diagnostics.is_empty() {
         println!();

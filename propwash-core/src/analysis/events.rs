@@ -37,6 +37,11 @@ pub enum EventKind {
         actual: f64,
         overshoot_percent: f64,
     },
+    Desync {
+        motor_index: usize,
+        motor_value: i64,
+        average_others: f64,
+    },
 }
 
 struct FieldIndices {
@@ -104,6 +109,7 @@ pub fn detect_events(session: &BfRawSession) -> Vec<FlightEvent> {
     detect_motor_saturation(frames, &idx, first_time, motor_max, &mut events);
     detect_gyro_spikes(frames, &idx, first_time, &mut events);
     detect_overshoot(frames, &idx, first_time, &mut events);
+    detect_desync(frames, &idx, first_time, motor_max, &mut events);
 
     events.sort_by_key(|e| e.frame_index);
     events
@@ -290,6 +296,56 @@ fn detect_overshoot(
                         setpoint,
                         actual,
                         overshoot_percent: overshoot_pct,
+                    },
+                });
+            }
+        }
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn detect_desync(
+    frames: &[BfFrame],
+    idx: &FieldIndices,
+    first_time: i64,
+    motor_max: i64,
+    events: &mut Vec<FlightEvent>,
+) {
+    if idx.motors.len() < 2 {
+        return;
+    }
+
+    let threshold = motor_max - (motor_max / 20);
+
+    for frame in frames {
+        let motor_vals: Vec<i64> = idx
+            .motors
+            .iter()
+            .map(|&i| frame_val(frame, Some(i)))
+            .collect();
+
+        for (mi, &val) in motor_vals.iter().enumerate() {
+            if val < threshold {
+                continue;
+            }
+
+            let others_sum: i64 = motor_vals
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != mi)
+                .map(|(_, &v)| v)
+                .sum();
+            let others_avg = others_sum as f64 / (motor_vals.len() - 1) as f64;
+
+            if val as f64 > others_avg * 1.5 && others_avg > 0.0 {
+                events.push(FlightEvent {
+                    frame_index: frame.frame_index,
+                    time_us: frame_val(frame, idx.time),
+                    time_seconds: frame_time_seconds(frame, first_time, idx.time),
+                    kind: EventKind::Desync {
+                        motor_index: mi,
+                        motor_value: val,
+                        average_others: others_avg,
                     },
                 });
             }
