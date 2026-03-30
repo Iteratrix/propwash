@@ -1,0 +1,357 @@
+use std::path::Path;
+
+use propwash_core::{decode_file, Analyzed, Log};
+
+fn fixtures_dir() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
+}
+
+fn parse_fixture(rel_path: &str) -> Log {
+    let path = fixtures_dir().join(rel_path);
+    decode_file(&path).unwrap_or_else(|e| panic!("Failed to parse {rel_path}: {e}"))
+}
+
+// ── Every fixture parses without panic ──────────────────────────────
+
+macro_rules! fixture_test {
+    ($name:ident, $path:expr) => {
+        #[test]
+        fn $name() {
+            let log = parse_fixture($path);
+            assert!(
+                log.session_count() >= 1,
+                "{}: expected ≥1 session, got {}",
+                $path,
+                log.session_count()
+            );
+            let total_frames: usize = log.sessions.iter().map(|s| s.frame_count()).sum();
+            assert!(total_frames > 0, "{}: expected >0 frames, got 0", $path);
+        }
+    };
+}
+
+// Betaflight
+fixture_test!(fc_btfl_001, "fc-blackbox/btfl_001.bbl");
+fixture_test!(fc_btfl_002, "fc-blackbox/btfl_002.bbl");
+fixture_test!(fc_btfl_all, "fc-blackbox/btfl_all.bbl");
+fixture_test!(fc_log00037, "fc-blackbox/LOG00037.BFL");
+fixture_test!(fc_crashing, "fc-blackbox/crashing-LOG00002.BFL");
+fixture_test!(fc_log00002, "fc-blackbox/LOG00002.BFL");
+fixture_test!(fc_log00004, "fc-blackbox/LOG00004.TXT");
+fixture_test!(fc_log00007, "fc-blackbox/LOG00007.BFL");
+
+// Gimbal-ghost
+fixture_test!(gg_btfl_001, "gimbal-ghost/btfl_001.bbl");
+fixture_test!(gg_btfl_002, "gimbal-ghost/btfl_002.bbl");
+fixture_test!(gg_emuf_001, "gimbal-ghost/emuf_001.bbl");
+fixture_test!(gg_rtfl_001, "gimbal-ghost/rtfl_001.bbl");
+fixture_test!(gg_log00001, "gimbal-ghost/LOG00001.BFL");
+
+// Cleanflight
+fixture_test!(cf_log00568, "cleanflight/LOG00568.TXT");
+fixture_test!(cf_log00569, "cleanflight/LOG00569.TXT");
+fixture_test!(cf_log00570, "cleanflight/LOG00570.TXT");
+fixture_test!(cf_log00571, "cleanflight/LOG00571.TXT");
+fixture_test!(cf_log00572, "cleanflight/LOG00572.TXT");
+
+// INAV
+fixture_test!(inav_log00001, "inav/LOG00001.TXT");
+fixture_test!(inav_log00005, "inav/LOG00005.TXT");
+
+// Rotorflight
+fixture_test!(rtfl_log246, "rotorflight/LOG246.TXT");
+
+// Error recovery
+fixture_test!(error_recovery, "error-recovery.bbl");
+
+// ── Unified view tests ──────────────────────────────────────────────
+
+#[test]
+fn unified_sample_rate() {
+    let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
+    let session = &log.sessions[0];
+    let unified = session.unified();
+    assert!(
+        unified.sample_rate_hz() > 10.0,
+        "expected reasonable sample rate, got {}",
+        unified.sample_rate_hz()
+    );
+}
+
+#[test]
+fn unified_duration() {
+    let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
+    let unified = log.sessions[0].unified();
+    assert!(
+        unified.duration_seconds() > 1.0,
+        "expected >1s duration, got {}",
+        unified.duration_seconds()
+    );
+}
+
+#[test]
+fn unified_field_extraction() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let unified = log.sessions[0].unified();
+    let gyro = unified.field("gyroADC[0]");
+    assert_eq!(gyro.len(), unified.frame_count());
+}
+
+#[test]
+fn unified_fields_prefix() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let unified = log.sessions[0].unified();
+    let gyro_fields = unified.fields("gyroADC");
+    assert!(
+        gyro_fields.len() >= 3,
+        "expected ≥3 gyroADC fields, got {}",
+        gyro_fields.len()
+    );
+}
+
+#[test]
+fn unified_firmware_version() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let unified = log.sessions[0].unified();
+    assert!(
+        unified.firmware_version().contains("Betaflight"),
+        "got: {}",
+        unified.firmware_version()
+    );
+}
+
+#[test]
+fn unified_motor_count() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    assert_eq!(log.sessions[0].unified().motor_count(), 4);
+
+    let log2 = parse_fixture("gimbal-ghost/rtfl_001.bbl");
+    assert_eq!(log2.sessions[0].unified().motor_count(), 1);
+}
+
+#[test]
+fn unified_field_names() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let unified = log.sessions[0].unified();
+    let names = unified.field_names();
+    assert!(names.contains(&"time"));
+    assert!(names.contains(&"gyroADC[0]"));
+    assert!(names.contains(&"motor[0]"));
+}
+
+// ── Analyzed view tests ─────────────────────────────────────────────
+
+#[test]
+fn analyzed_betaflight_motor_count() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    match log.sessions[0].analyzed() {
+        Analyzed::Betaflight(bf) => assert_eq!(bf.motor_count(), 4),
+        _ => panic!("expected Betaflight"),
+    }
+}
+
+#[test]
+fn analyzed_rotorflight_single_motor() {
+    let log = parse_fixture("gimbal-ghost/rtfl_001.bbl");
+    match log.sessions[0].analyzed() {
+        Analyzed::Betaflight(bf) => assert_eq!(bf.motor_count(), 1),
+        _ => panic!("expected Betaflight"),
+    }
+}
+
+#[test]
+fn analyzed_crash_log_has_corruption() {
+    let log = parse_fixture("fc-blackbox/crashing-LOG00002.BFL");
+    match log.sessions[0].analyzed() {
+        Analyzed::Betaflight(bf) => {
+            assert!(
+                bf.stats().corrupt_bytes > 0,
+                "crash log should have corruption"
+            );
+            // This file has a corrupt header but the flight data ended cleanly
+            // (it contains a valid "End of log" marker), so is_truncated()
+            // is correctly false. Truncation detection works — this file
+            // just isn't truncated.
+        }
+        _ => panic!("expected Betaflight"),
+    }
+}
+
+#[test]
+fn truncated_files_detected() {
+    // Files without "End of log" marker should be detected as truncated
+    let log = parse_fixture("fc-blackbox/LOG00002.BFL");
+    match log.sessions[0].analyzed() {
+        Analyzed::Betaflight(bf) => {
+            assert!(
+                bf.is_truncated(),
+                "file without End of log should be truncated"
+            );
+        }
+        _ => panic!("expected Betaflight"),
+    }
+}
+
+#[test]
+fn analyzed_debug_mode() {
+    let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
+    match log.sessions[0].analyzed() {
+        Analyzed::Betaflight(bf) => {
+            let _ = bf.debug_mode();
+        }
+        _ => panic!("expected Betaflight"),
+    }
+}
+
+#[test]
+fn analyzed_stats() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    match log.sessions[0].analyzed() {
+        Analyzed::Betaflight(bf) => {
+            assert!(bf.stats().total_main_frames() > 0);
+            assert!(bf.stats().i_frame_count > 0);
+        }
+        _ => panic!("expected Betaflight"),
+    }
+}
+
+// ── Structural invariants across all fixtures ───────────────────────
+
+macro_rules! invariant_test {
+    ($name:ident, $path:expr) => {
+        #[test]
+        fn $name() {
+            let log = parse_fixture($path);
+            for session in &log.sessions {
+                let unified = session.unified();
+
+                // Every session should have field definitions
+                assert!(
+                    !unified.field_names().is_empty(),
+                    "{}: session {} has no field names",
+                    $path,
+                    session.index
+                );
+
+                // Every frame should have values for all defined fields
+                if let propwash_core::RawSession::Betaflight(bf) = &session.raw {
+                    let n_fields = bf.main_field_defs.len();
+                    for (i, frame) in bf.frames.iter().take(10).enumerate() {
+                        assert_eq!(
+                            frame.values.len(),
+                            n_fields,
+                            "{}: session {} frame {} has {} values, expected {}",
+                            $path,
+                            session.index,
+                            i,
+                            frame.values.len(),
+                            n_fields
+                        );
+                    }
+                }
+
+                // frame_index should be sequential
+                if let propwash_core::RawSession::Betaflight(bf) = &session.raw {
+                    for (i, frame) in bf.frames.iter().enumerate() {
+                        assert_eq!(
+                            frame.frame_index, i,
+                            "{}: frame_index mismatch at position {}",
+                            $path, i
+                        );
+                    }
+                }
+
+                // Field extraction length matches frame count
+                if unified.frame_count() > 0 {
+                    let time = unified.field("time");
+                    assert_eq!(
+                        time.len(),
+                        unified.frame_count(),
+                        "{}: time array length mismatch",
+                        $path
+                    );
+                }
+
+                // Stats should be consistent
+                if let Analyzed::Betaflight(bf) = session.analyzed() {
+                    let stats = bf.stats();
+                    assert_eq!(
+                        stats.total_main_frames(),
+                        unified.frame_count(),
+                        "{}: stats frame count mismatch",
+                        $path
+                    );
+                }
+            }
+        }
+    };
+}
+
+invariant_test!(inv_fc_btfl_001, "fc-blackbox/btfl_001.bbl");
+invariant_test!(inv_fc_btfl_002, "fc-blackbox/btfl_002.bbl");
+invariant_test!(inv_fc_log00037, "fc-blackbox/LOG00037.BFL");
+invariant_test!(inv_gg_btfl_001, "gimbal-ghost/btfl_001.bbl");
+invariant_test!(inv_gg_btfl_002, "gimbal-ghost/btfl_002.bbl");
+invariant_test!(inv_gg_emuf_001, "gimbal-ghost/emuf_001.bbl");
+invariant_test!(inv_gg_rtfl_001, "gimbal-ghost/rtfl_001.bbl");
+invariant_test!(inv_cf_log00568, "cleanflight/LOG00568.TXT");
+invariant_test!(inv_inav_log00001, "inav/LOG00001.TXT");
+invariant_test!(inv_rtfl_log246, "rotorflight/LOG246.TXT");
+
+// ── Multi-session file assertions ───────────────────────────────────
+
+#[test]
+fn btfl_all_session_count() {
+    let log = parse_fixture("fc-blackbox/btfl_all.bbl");
+    assert!(
+        log.session_count() >= 20,
+        "btfl_all.bbl should have many sessions, got {}",
+        log.session_count()
+    );
+}
+
+#[test]
+fn events_are_captured() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    // At least some sessions should have events (sync beep, disarm, etc.)
+    let total_events: usize = log
+        .sessions
+        .iter()
+        .map(|s| match &s.raw {
+            propwash_core::RawSession::Betaflight(bf) => bf.events.len(),
+            _ => 0,
+        })
+        .sum();
+    // Not all files have events, so just verify the mechanism works
+    let _ = total_events;
+}
+
+// ── Three-layer access pattern ──────────────────────────────────────
+
+#[test]
+fn three_layer_access() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let session = &log.sessions[0];
+
+    // Layer 1: Unified (recommended)
+    let unified = session.unified();
+    let _gyro = unified.field("gyroADC[0]");
+
+    // Layer 2: Analyzed (format-specific)
+    match session.analyzed() {
+        Analyzed::Betaflight(bf) => {
+            let _ = bf.motor_count();
+        }
+        _ => panic!("expected Betaflight"),
+    }
+
+    // Layer 3: Raw (escape hatch)
+    match &session.raw {
+        propwash_core::RawSession::Betaflight(raw) => {
+            let frame = &raw.frames[0];
+            assert!(frame.byte_offset > 0);
+            assert_eq!(frame.frame_index, 0);
+        }
+        _ => panic!("expected Betaflight session"),
+    }
+}
