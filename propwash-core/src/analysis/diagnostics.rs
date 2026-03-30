@@ -32,6 +32,7 @@ pub fn diagnose(
     if let Some(vib) = vibration {
         diagnose_vibration(vib, &mut diagnostics);
         diagnose_throttle_response(vib, &mut diagnostics);
+        diagnose_fc_mounting(vib, &mut diagnostics);
     }
 
     diagnostics.sort_by(|a, b| b.severity.cmp(&a.severity));
@@ -295,5 +296,46 @@ fn diagnose_throttle_response(vib: &VibrationAnalysis, diagnostics: &mut Vec<Dia
                 });
             }
         }
+    }
+}
+
+fn diagnose_fc_mounting(vib: &VibrationAnalysis, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(accel) = &vib.accel else {
+        return;
+    };
+
+    let accel_rms_total =
+        (accel.rms[0].powi(2) + accel.rms[1].powi(2) + accel.rms[2].powi(2)).sqrt();
+
+    if accel_rms_total > 200.0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Problem,
+            category: "mounting",
+            message: format!(
+                "High FC board vibration (accel RMS: X={:.0} Y={:.0} Z={:.0})",
+                accel.rms[0], accel.rms[1], accel.rms[2]
+            ),
+            detail: "The accelerometer shows excessive vibration of the FC board itself. Check soft mount grommets, stack screws, and standoffs for looseness or wear. If using hard mount, consider switching to soft mounting.".into(),
+        });
+    } else if accel_rms_total > 100.0 {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "mounting",
+            message: format!(
+                "Moderate FC board vibration (accel RMS: X={:.0} Y={:.0} Z={:.0})",
+                accel.rms[0], accel.rms[1], accel.rms[2]
+            ),
+            detail: "FC board vibration is elevated. Check that soft mount grommets are intact and stack hardware is tight.".into(),
+        });
+    }
+
+    if accel.rms[2] > accel.rms[0] * 2.0 && accel.rms[2] > accel.rms[1] * 2.0 && accel.rms[2] > 50.0
+    {
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "mounting",
+            message: "FC vibration dominated by Z-axis (vertical bounce)".into(),
+            detail: "The FC board is bouncing vertically more than it vibrates laterally. This pattern suggests the soft mount grommets are too soft or the FC stack has vertical play. Check standoff height and grommet condition.".into(),
+        });
     }
 }
