@@ -175,18 +175,17 @@ fn cmd_scan(files: &[String]) {
             let unified = session.unified();
             let episodes = episodes::consolidate(&analysis.events);
 
-            let worst = analysis
-                .diagnostics
-                .first()
-                .map(|d| {
+            let worst = analysis.diagnostics.first().map_or_else(
+                || "OK".into(),
+                |d| {
                     let icon = match d.severity {
                         propwash_core::analysis::diagnostics::Severity::Problem => "!!",
                         propwash_core::analysis::diagnostics::Severity::Warning => " !",
                         propwash_core::analysis::diagnostics::Severity::Info => "  ",
                     };
                     format!("{icon} {}", d.message)
-                })
-                .unwrap_or_else(|| "OK".into());
+                },
+            );
 
             println!(
                 "{worst:60}  {path} s{} ({:.0}s, {} events)",
