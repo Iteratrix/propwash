@@ -5,6 +5,7 @@
 #![doc = "- **Analyzed** (`session.analyzed()`) — format-specific domain knowledge"]
 #![doc = "- **Raw** (`session.raw`) — format-specific parsed data, faithful to the file"]
 
+pub mod analysis;
 pub mod format;
 mod reader;
 pub mod types;
