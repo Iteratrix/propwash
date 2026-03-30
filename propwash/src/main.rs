@@ -258,32 +258,28 @@ fn print_summary(
 
     if let Some(vib) = &vibration {
         println!();
-        println!("  Vibration Analysis:");
-        for spectrum in &vib.spectra {
-            println!(
-                "    {} axis — noise floor {:.1} dB:",
-                spectrum.axis,
-                vib.noise_floor_db[match spectrum.axis {
-                    "roll" => 0,
-                    "pitch" => 1,
-                    _ => 2,
-                }]
-            );
-            if spectrum.peaks.is_empty() {
-                println!("      No significant peaks");
-            } else {
-                for peak in &spectrum.peaks {
-                    println!(
-                        "      #{}: {:.0} Hz at {:.1} dB",
-                        peak.rank, peak.frequency_hz, peak.magnitude_db
-                    );
+        println!("  Vibration Analysis (full flight):");
+        print_spectra(&vib.spectra, &vib.noise_floor_db);
+
+        if !vib.throttle_bands.is_empty() {
+            println!();
+            println!("  Vibration by Throttle:");
+            for band in &vib.throttle_bands {
+                println!("    {} ({} frames):", band.label, band.frame_count);
+                for spectrum in &band.spectra {
+                    if let Some(peak) = spectrum.peaks.first() {
+                        println!(
+                            "      {}: dominant {:.0} Hz at {:.1} dB",
+                            spectrum.axis, peak.frequency_hz, peak.magnitude_db
+                        );
+                    }
                 }
             }
         }
     }
 
     println!();
-    println!("  Summary:");
+    println!("  Summary (raw event counts):");
     println!("    Throttle chops:    {}", s.throttle_chops);
     println!("    Throttle punches:  {}", s.throttle_punches);
     println!("    Motor saturations: {}", s.motor_saturations);
@@ -396,6 +392,33 @@ fn cmd_dump(
     }
 
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+
+fn print_spectra(
+    spectra: &[propwash_core::analysis::fft::FrequencySpectrum],
+    noise_floor: &[f64; 3],
+) {
+    for spectrum in spectra {
+        let floor_idx = match spectrum.axis {
+            "roll" => 0,
+            "pitch" => 1,
+            _ => 2,
+        };
+        println!(
+            "    {} axis — noise floor {:.1} dB:",
+            spectrum.axis, noise_floor[floor_idx]
+        );
+        if spectrum.peaks.is_empty() {
+            println!("      No significant peaks");
+        } else {
+            for peak in &spectrum.peaks {
+                println!(
+                    "      #{}: {:.0} Hz at {:.1} dB",
+                    peak.rank, peak.frequency_hz, peak.magnitude_db
+                );
+            }
+        }
+    }
 }
 
 fn parse_range(s: Option<&str>) -> (usize, Option<usize>) {
