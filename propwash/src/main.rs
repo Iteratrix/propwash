@@ -506,8 +506,15 @@ fn print_spectra(
             println!("      No significant peaks");
         } else {
             for peak in &spectrum.peaks {
+                let class = match &peak.classification {
+                    Some(propwash_core::analysis::fft::NoiseClass::MotorNoise) => " (motor noise)",
+                    Some(propwash_core::analysis::fft::NoiseClass::FrameResonance) => {
+                        " (frame resonance)"
+                    }
+                    Some(propwash_core::analysis::fft::NoiseClass::Unknown) | None => "",
+                };
                 println!(
-                    "      #{}: {:.0} Hz at {:.1} dB",
+                    "      #{}: {:.0} Hz at {:.1} dB{class}",
                     peak.rank, peak.frequency_hz, peak.magnitude_db
                 );
             }
