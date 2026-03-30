@@ -31,6 +31,13 @@ enum Command {
         #[arg(long, default_value = "summary")]
         output: String,
     },
+    /// Compare two log files side by side.
+    Compare {
+        /// First log file (before).
+        log_a: String,
+        /// Second log file (after).
+        log_b: String,
+    },
     /// Scan multiple log files and surface the worst diagnostics.
     Scan {
         /// Log files to scan.
@@ -61,6 +68,7 @@ fn main() {
     match cli.command {
         Command::Info { log_file, json } => cmd_info(&log_file, json),
         Command::Analyze { log_file, output } => cmd_analyze(&log_file, &output),
+        Command::Compare { log_a, log_b } => cmd_compare(&log_a, &log_b),
         Command::Scan { files } => cmd_scan(&files),
         Command::Dump {
             log_file,
@@ -154,6 +162,136 @@ fn cmd_info(path: &str, json: bool) {
             println!("  {w}");
         }
     }
+}
+
+fn cmd_compare(path_a: &str, path_b: &str) {
+    let log_a = load_log(path_a);
+    let log_b = load_log(path_b);
+
+    let session_a = log_a.sessions.iter().find(|s| s.frame_count() > 0);
+    let session_b = log_b.sessions.iter().find(|s| s.frame_count() > 0);
+
+    let (Some(sa), Some(sb)) = (session_a, session_b) else {
+        eprintln!("Both files must contain at least one session with frames.");
+        process::exit(1);
+    };
+
+    let aa = propwash_core::analysis::analyze(sa);
+    let ab = propwash_core::analysis::analyze(sb);
+    let ea = episodes::consolidate(&aa.events);
+    let eb = episodes::consolidate(&ab.events);
+
+    println!("                        {:>20}  {:>20}", path_a, path_b);
+    println!("  ─────────────────────────────────────────────────────────────");
+
+    compare_line(
+        "Duration",
+        &format!("{:.1}s", aa.summary.duration_seconds),
+        &format!("{:.1}s", ab.summary.duration_seconds),
+    );
+    compare_line(
+        "Sample rate",
+        &format!("{:.0} Hz", aa.summary.sample_rate_hz),
+        &format!("{:.0} Hz", ab.summary.sample_rate_hz),
+    );
+    compare_line(
+        "Frames",
+        &format!("{}", aa.summary.frame_count),
+        &format!("{}", ab.summary.frame_count),
+    );
+    compare_line(
+        "Episodes",
+        &format!("{}", ea.len()),
+        &format!("{}", eb.len()),
+    );
+    println!();
+
+    compare_val(
+        "Throttle chops",
+        aa.summary.throttle_chops,
+        ab.summary.throttle_chops,
+    );
+    compare_val(
+        "Motor saturations",
+        aa.summary.motor_saturations,
+        ab.summary.motor_saturations,
+    );
+    compare_val(
+        "Gyro spikes",
+        aa.summary.gyro_spikes,
+        ab.summary.gyro_spikes,
+    );
+    compare_val("Overshoots", aa.summary.overshoots, ab.summary.overshoots);
+    compare_val("Desyncs", aa.summary.desyncs, ab.summary.desyncs);
+    println!();
+
+    if let (Some(va), Some(vb)) = (&aa.vibration, &ab.vibration) {
+        println!("  Noise floor (dB):");
+        let axes = ["roll", "pitch", "yaw"];
+        for (i, axis) in axes.iter().enumerate() {
+            let da = va.noise_floor_db[i];
+            let db_val = vb.noise_floor_db[i];
+            let diff = db_val - da;
+            let arrow = if diff < -1.0 {
+                " ▼ improved"
+            } else if diff > 1.0 {
+                " ▲ worse"
+            } else {
+                ""
+            };
+            println!("    {axis:6} {da:>20.1}  {db_val:>20.1}{arrow}");
+        }
+        println!();
+
+        println!("  Dominant frequency:");
+        for (i, axis) in axes.iter().enumerate() {
+            let freq_a = va
+                .spectra
+                .get(i)
+                .and_then(|s| s.peaks.first())
+                .map(|p| p.frequency_hz);
+            let freq_b = vb
+                .spectra
+                .get(i)
+                .and_then(|s| s.peaks.first())
+                .map(|p| p.frequency_hz);
+            let fa = freq_a.map_or_else(|| "—".into(), |f| format!("{f:.0} Hz"));
+            let fb = freq_b.map_or_else(|| "—".into(), |f| format!("{f:.0} Hz"));
+            println!("    {axis:6} {fa:>20}  {fb:>20}");
+        }
+    }
+    println!();
+
+    println!("  Diagnostics A:");
+    if aa.diagnostics.is_empty() {
+        println!("    None");
+    }
+    for d in &aa.diagnostics {
+        println!("    [{}] {}", d.category, d.message);
+    }
+
+    println!("  Diagnostics B:");
+    if ab.diagnostics.is_empty() {
+        println!("    None");
+    }
+    for d in &ab.diagnostics {
+        println!("    [{}] {}", d.category, d.message);
+    }
+    println!();
+}
+
+fn compare_line(label: &str, a: &str, b: &str) {
+    println!("  {label:20} {a:>20}  {b:>20}");
+}
+
+fn compare_val(label: &str, a: usize, b: usize) {
+    let diff = b as i64 - a as i64;
+    let arrow = match diff.cmp(&0) {
+        std::cmp::Ordering::Less => format!(" (▼{diff})"),
+        std::cmp::Ordering::Greater => format!(" (▲+{diff})"),
+        std::cmp::Ordering::Equal => String::new(),
+    };
+    println!("  {label:20} {a:>20}  {b:>20}{arrow}");
 }
 
 fn cmd_scan(files: &[String]) {

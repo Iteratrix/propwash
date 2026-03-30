@@ -333,12 +333,11 @@ fn classify_peaks(spectra: &mut [FrequencySpectrum], bands: &[ThrottleBand]) {
                     band.spectra
                         .iter()
                         .find(|s| s.axis == spectrum.axis)
-                        .map(|s| {
+                        .is_some_and(|s| {
                             s.peaks
                                 .iter()
                                 .any(|p| (p.frequency_hz - freq).abs() < freq * 0.15)
                         })
-                        .unwrap_or(false)
                 })
                 .collect();
 
