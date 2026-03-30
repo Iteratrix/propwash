@@ -166,17 +166,24 @@ fn cmd_analyze(path: &str, output: &str) {
                 struct JsonOutput<'a> {
                     summary: &'a propwash_core::analysis::summary::FlightSummary,
                     episodes: &'a [episodes::Episode],
-                    vibration: &'a Option<propwash_core::analysis::fft::VibrationAnalysis>,
+                    vibration: Option<&'a propwash_core::analysis::fft::VibrationAnalysis>,
+                    diagnostics: &'a [propwash_core::analysis::diagnostics::Diagnostic],
                 }
                 let out = JsonOutput {
                     summary: &analysis.summary,
                     episodes: &episodes,
-                    vibration: &analysis.vibration,
+                    vibration: analysis.vibration.as_ref(),
+                    diagnostics: &analysis.diagnostics,
                 };
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
             }
             "summary" => {
-                print_summary(&analysis.summary, &episodes, analysis.vibration.as_ref());
+                print_summary(
+                    &analysis.summary,
+                    &episodes,
+                    analysis.vibration.as_ref(),
+                    &analysis.diagnostics,
+                );
             }
             _ => {
                 eprintln!("Unknown output format: {output}. Use 'json' or 'summary'.");
@@ -186,10 +193,12 @@ fn cmd_analyze(path: &str, output: &str) {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn print_summary(
     s: &propwash_core::analysis::summary::FlightSummary,
     episodes: &[episodes::Episode],
     vibration: Option<&propwash_core::analysis::fft::VibrationAnalysis>,
+    diagnostics: &[propwash_core::analysis::diagnostics::Diagnostic],
 ) {
     println!("── Session {} ──", s.session_index);
     println!("  Firmware:    {}", s.firmware);
@@ -285,6 +294,20 @@ fn print_summary(
     println!("    Motor saturations: {}", s.motor_saturations);
     println!("    Gyro spikes:       {}", s.gyro_spikes);
     println!("    Overshoots:        {}", s.overshoots);
+
+    if !diagnostics.is_empty() {
+        println!();
+        println!("  Diagnostics:");
+        for diag in diagnostics {
+            let icon = match diag.severity {
+                propwash_core::analysis::diagnostics::Severity::Info => "   ",
+                propwash_core::analysis::diagnostics::Severity::Warning => " ! ",
+                propwash_core::analysis::diagnostics::Severity::Problem => "!! ",
+            };
+            println!("    {icon} [{:}] {}", diag.category, diag.message);
+            println!("         {}", diag.detail);
+        }
+    }
     println!();
 }
 
