@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::types::{BfFieldDef, BfFrameDefs, BfHeaderValue};
+use super::types::{BfFieldDef, BfFieldSign, BfFrameDefs, BfHeaderValue};
 use crate::types::Warning;
 
 /// The exact marker string that begins every Betaflight-family blackbox log session.
@@ -232,11 +232,18 @@ fn build_field_defs(
     let fields = names
         .iter()
         .enumerate()
-        .map(|(i, name)| BfFieldDef {
-            name: name.clone(),
-            signed: signed.get(i).copied().unwrap_or(0) != 0,
-            predictor: predictors.get(i).copied().unwrap_or(0),
-            encoding: encodings.get(i).copied().unwrap_or(0),
+        .map(|(i, name)| {
+            let value_sign = match name.as_str() {
+                "time" | "loopIteration" => BfFieldSign::Unsigned,
+                _ => BfFieldSign::Signed,
+            };
+            BfFieldDef {
+                name: name.clone(),
+                signed: signed.get(i).copied().unwrap_or(0) != 0,
+                predictor: predictors.get(i).copied().unwrap_or(0),
+                encoding: encodings.get(i).copied().unwrap_or(0),
+                value_sign,
+            }
         })
         .collect();
     BfFrameDefs::new(fields)
