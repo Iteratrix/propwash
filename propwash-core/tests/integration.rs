@@ -355,3 +355,102 @@ fn three_layer_access() {
         _ => panic!("expected Betaflight session"),
     }
 }
+
+fn get_bf(session: &propwash_core::Session) -> &propwash_core::format::bf::types::BfRawSession {
+    match &session.raw {
+        propwash_core::RawSession::Betaflight(bf) => bf,
+        _ => panic!("expected Betaflight"),
+    }
+}
+
+fn field_val(
+    bf: &propwash_core::format::bf::types::BfRawSession,
+    frame_idx: usize,
+    name: &str,
+) -> i64 {
+    let idx = bf.main_field_defs.index_of(name).unwrap();
+    bf.frames[frame_idx].values[idx]
+}
+
+#[test]
+fn golden_values_btfl_001_session2() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let bf = get_bf(&log.sessions[1]);
+
+    assert_eq!(field_val(bf, 0, "time"), 191_882_474);
+    assert_eq!(field_val(bf, 0, "gyroADC[0]"), -2);
+    assert_eq!(field_val(bf, 0, "gyroADC[1]"), 0);
+    assert_eq!(field_val(bf, 0, "gyroADC[2]"), 0);
+    assert_eq!(field_val(bf, 0, "motor[0]"), 165);
+
+    assert_eq!(field_val(bf, 1, "time"), 191_884_524);
+    assert_eq!(field_val(bf, 1, "gyroADC[0]"), -2);
+    assert_eq!(field_val(bf, 1, "gyroADC[1]"), -1);
+    assert_within(field_val(bf, 1, "motor[0]"), 172, 1);
+
+    assert_eq!(field_val(bf, 2, "time"), 191_886_524);
+    assert_eq!(field_val(bf, 5, "time"), 191_892_649);
+    assert_eq!(field_val(bf, 10, "time"), 191_902_646);
+    assert_eq!(field_val(bf, 100, "time"), 192_083_146);
+
+    assert_eq!(field_val(bf, 100, "gyroADC[0]"), 0);
+    assert_eq!(field_val(bf, 100, "gyroADC[1]"), -6);
+    assert_eq!(field_val(bf, 100, "gyroADC[2]"), -9);
+    assert_within(field_val(bf, 100, "motor[0]"), 231, 1);
+}
+
+#[test]
+fn golden_values_gg_btfl_001_session1() {
+    let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
+    let bf = get_bf(&log.sessions[0]);
+
+    assert_eq!(field_val(bf, 0, "time"), 220_155_884);
+    assert_eq!(field_val(bf, 0, "gyroADC[0]"), 0);
+    assert_eq!(field_val(bf, 0, "gyroADC[1]"), 0);
+    assert_eq!(field_val(bf, 0, "gyroADC[2]"), 0);
+    assert_eq!(field_val(bf, 0, "motor[0]"), 177);
+
+    assert_eq!(field_val(bf, 1, "time"), 220_159_884);
+    assert_eq!(field_val(bf, 1, "gyroADC[0]"), 0);
+    assert_eq!(field_val(bf, 1, "gyroADC[1]"), -1);
+    assert_eq!(field_val(bf, 1, "gyroADC[2]"), 1);
+    assert_eq!(field_val(bf, 1, "motor[0]"), 195);
+
+    assert_eq!(field_val(bf, 2, "time"), 220_163_884);
+    assert_eq!(field_val(bf, 5, "time"), 220_175_884);
+    assert_eq!(field_val(bf, 10, "time"), 220_196_010);
+    assert_eq!(field_val(bf, 100, "time"), 220_556_634);
+
+    assert_eq!(field_val(bf, 100, "gyroADC[0]"), 0);
+    assert_eq!(field_val(bf, 100, "gyroADC[1]"), 1);
+    assert_eq!(field_val(bf, 100, "gyroADC[2]"), 0);
+    assert_eq!(field_val(bf, 100, "motor[0]"), 167);
+}
+
+#[test]
+fn golden_sample_rate() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let rate = log.sessions[1].unified().sample_rate_hz();
+    assert!((rate - 498.0).abs() < 2.0, "expected ~498 Hz, got {rate}");
+
+    let log2 = parse_fixture("gimbal-ghost/btfl_001.bbl");
+    let rate2 = log2.sessions[0].unified().sample_rate_hz();
+    assert!((rate2 - 249.0).abs() < 2.0, "expected ~249 Hz, got {rate2}");
+}
+
+#[test]
+fn golden_time_deltas_are_sane() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let bf = get_bf(&log.sessions[1]);
+    let time_idx = bf.main_field_defs.index_of("time").unwrap();
+
+    for i in 1..bf.frames.len().min(1000) {
+        let t0 = bf.frames[i - 1].values[time_idx];
+        let t1 = bf.frames[i].values[time_idx];
+        let delta = t1 - t0;
+        assert!(
+            delta > 0 && delta < 100_000,
+            "frame {i}: time delta {delta}us is unreasonable (expected 1000-5000us)"
+        );
+    }
+}

@@ -123,7 +123,7 @@ pub(crate) fn apply_p_predictor(
             decoded.wrapping_add(prediction)
         }
         AVERAGE_2 => {
-            let avg = (p1 >> 1).wrapping_add(p2 >> 1);
+            let avg = p1.wrapping_add(p2) / 2;
             decoded.wrapping_add(avg)
         }
         INCREMENT => p1.wrapping_add(1).wrapping_add(decoded),
