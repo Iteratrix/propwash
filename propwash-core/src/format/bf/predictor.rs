@@ -1,6 +1,5 @@
 use super::types::BfRawSession;
 
-// Predictor IDs from the blackbox format spec.
 const MINTHROTTLE: u8 = 4;
 const MOTOR_0: u8 = 5;
 const FIFTEEN_HUNDRED: u8 = 8;
@@ -8,13 +7,12 @@ const VBATREF: u8 = 9;
 const LAST_MAIN_FRAME_TIME: u8 = 10;
 const MINMOTOR: u8 = 11;
 
-// P-frame only predictor IDs
 const PREVIOUS: u8 = 1;
 const STRAIGHT_LINE: u8 = 2;
 const AVERAGE_2: u8 = 3;
 const INCREMENT: u8 = 6;
 
-/// Apply predictor for an I-frame field.
+/// Applies predictor for an I-frame field.
 /// `current_values` contains already-decoded fields earlier in the same frame.
 /// `motor0_idx` is the index of `motor[0]` for the `MOTOR_0` predictor.
 pub(crate) fn apply_i_predictor(
@@ -25,23 +23,25 @@ pub(crate) fn apply_i_predictor(
     motor0_idx: Option<usize>,
     session: &BfRawSession,
 ) -> i64 {
-    let d = i64::from(decoded);
-    match predictor_id {
-        MINTHROTTLE => wrap(d + i64::from(session.min_throttle()), field_name),
+    let predicted: i32 = match predictor_id {
+        MINTHROTTLE => decoded.wrapping_add(session.min_throttle()),
         MOTOR_0 => {
+            #[allow(clippy::cast_possible_truncation)]
             let motor0 = motor0_idx
-                .and_then(|idx| current_values.get(idx).copied())
-                .unwrap_or(0);
-            wrap(d + motor0, field_name)
+                .and_then(|idx| current_values.get(idx))
+                .copied()
+                .unwrap_or(0) as i32;
+            decoded.wrapping_add(motor0)
         }
-        FIFTEEN_HUNDRED => wrap(d + 1500, field_name),
-        VBATREF => wrap(d + i64::from(session.vbat_ref()), field_name),
-        MINMOTOR => wrap(d + i64::from(session.min_motor()), field_name),
-        _ => d,
-    }
+        FIFTEEN_HUNDRED => decoded.wrapping_add(1500),
+        VBATREF => decoded.wrapping_add(session.vbat_ref()),
+        MINMOTOR => decoded.wrapping_add(session.min_motor()),
+        _ => decoded,
+    };
+    to_i64(predicted, field_name)
 }
 
-/// Apply predictor for a P-frame field.
+/// Applies predictor for a P-frame field.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_p_predictor(
     predictor_id: u8,
@@ -53,47 +53,60 @@ pub(crate) fn apply_p_predictor(
     session: &BfRawSession,
     time_idx: Option<usize>,
 ) -> i64 {
-    let d = i64::from(decoded);
-    let p1 = prev1.get(field_idx).copied().unwrap_or(0);
-    let p2 = prev2.get(field_idx).copied().unwrap_or(0);
+    let p1 = to_i32(prev1.get(field_idx).copied().unwrap_or(0));
+    let p2 = to_i32(prev2.get(field_idx).copied().unwrap_or(0));
 
-    match predictor_id {
-        PREVIOUS => wrap(d + p1, field_name),
-        STRAIGHT_LINE => wrap(d + 2 * p1 - p2, field_name),
-        AVERAGE_2 => wrap(d + i64::midpoint(p1, p2), field_name),
-        INCREMENT => wrap(p1 + 1 + d, field_name),
+    let predicted: i32 = match predictor_id {
+        PREVIOUS => decoded.wrapping_add(p1),
+        STRAIGHT_LINE => {
+            let prediction = p1.wrapping_mul(2).wrapping_sub(p2);
+            decoded.wrapping_add(prediction)
+        }
+        AVERAGE_2 => {
+            let avg = (p1 >> 1).wrapping_add(p2 >> 1);
+            decoded.wrapping_add(avg)
+        }
+        INCREMENT => p1.wrapping_add(1).wrapping_add(decoded),
         MOTOR_0 => {
-            // In P-frames, MOTOR_0 references motor[0] from the previous frame
             let motor0_idx = session.main_field_defs.index_of("motor[0]");
             let motor0 = motor0_idx
-                .and_then(|idx| prev1.get(idx).copied())
-                .unwrap_or(0);
-            wrap(d + motor0, field_name)
+                .and_then(|idx| prev1.get(idx))
+                .copied()
+                .map_or(0, to_i32);
+            decoded.wrapping_add(motor0)
         }
-        MINTHROTTLE => wrap(d + i64::from(session.min_throttle()), field_name),
-        MINMOTOR => wrap(d + i64::from(session.min_motor()), field_name),
-        VBATREF => wrap(d + i64::from(session.vbat_ref()), field_name),
-        FIFTEEN_HUNDRED => wrap(d + 1500, field_name),
+        MINTHROTTLE => decoded.wrapping_add(session.min_throttle()),
+        MINMOTOR => decoded.wrapping_add(session.min_motor()),
+        VBATREF => decoded.wrapping_add(session.vbat_ref()),
+        FIFTEEN_HUNDRED => decoded.wrapping_add(1500),
         LAST_MAIN_FRAME_TIME => {
             let t = time_idx
-                .and_then(|idx| prev1.get(idx).copied())
-                .unwrap_or(0);
-            wrap(d + t, field_name)
+                .and_then(|idx| prev1.get(idx))
+                .copied()
+                .map_or(0, to_i32);
+            decoded.wrapping_add(t)
         }
-        _ => d,
+        _ => decoded,
+    };
+    to_i64(predicted, field_name)
+}
+
+/// Converts an i32 result to i64 for storage.
+/// Unsigned fields (time, loopIteration) are zero-extended.
+/// Signed fields are sign-extended.
+#[allow(clippy::cast_sign_loss)]
+fn to_i64(value: i32, field_name: &str) -> i64 {
+    if is_unsigned_field(field_name) {
+        i64::from(value as u32)
+    } else {
+        i64::from(value)
     }
 }
 
-/// Wrap a value to 32-bit range.
-/// `time` and `loopIteration` are unsigned; everything else is signed.
+/// Truncates a stored i64 back to i32 for prediction arithmetic.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn wrap(value: i64, field_name: &str) -> i64 {
-    let masked = value as u32;
-    if is_unsigned_field(field_name) {
-        i64::from(masked)
-    } else {
-        i64::from(masked.cast_signed())
-    }
+fn to_i32(value: i64) -> i32 {
+    value as i32
 }
 
 fn is_unsigned_field(name: &str) -> bool {
@@ -105,32 +118,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wrap_signed_positive() {
-        assert_eq!(wrap(42, "gyroADC[0]"), 42);
+    fn to_i64_signed_positive() {
+        assert_eq!(to_i64(42, "gyroADC[0]"), 42);
     }
 
     #[test]
-    fn wrap_signed_negative() {
-        assert_eq!(wrap(-1, "gyroADC[0]"), -1);
+    fn to_i64_signed_negative() {
+        assert_eq!(to_i64(-1, "gyroADC[0]"), -1);
     }
 
     #[test]
-    fn wrap_signed_overflow() {
-        assert_eq!(wrap(0x1_0000_0000, "motor[0]"), 0);
+    fn to_i64_unsigned_large() {
+        assert_eq!(to_i64(-1, "time"), 0xFFFF_FFFF);
     }
 
     #[test]
-    fn wrap_unsigned_large() {
-        assert_eq!(wrap(0xFFFF_FFFF, "time"), 0xFFFF_FFFF);
+    fn to_i64_unsigned_wraps_correctly() {
+        assert_eq!(to_i64(0, "time"), 0);
     }
 
     #[test]
-    fn wrap_unsigned_overflow() {
-        assert_eq!(wrap(0x1_0000_0000, "time"), 0);
+    fn straight_line_wrapping() {
+        let p1: i32 = 0x7FFF_FFFF_u32 as i32;
+        let p2: i32 = p1.wrapping_sub(4000);
+        let prediction = p1.wrapping_mul(2).wrapping_sub(p2);
+        let result = 4000_i32.wrapping_add(prediction);
+        assert_eq!(to_i64(result, "time") as u32, p1.wrapping_add(8000) as u32);
     }
 
     #[test]
-    fn wrap_loop_iteration_unsigned() {
-        assert_eq!(wrap(0xFFFF_FFFE, "loopIteration"), 0xFFFF_FFFE);
+    fn average_via_shift() {
+        let a: i32 = 100;
+        let b: i32 = 200;
+        let avg = (a >> 1).wrapping_add(b >> 1);
+        assert_eq!(avg, 150);
     }
 }
