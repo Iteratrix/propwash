@@ -21,9 +21,19 @@ pub struct FrequencyPeak {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ThrottleBand {
+    pub label: String,
+    pub throttle_min: f64,
+    pub throttle_max: f64,
+    pub frame_count: usize,
+    pub spectra: Vec<FrequencySpectrum>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct VibrationAnalysis {
     pub spectra: Vec<FrequencySpectrum>,
     pub noise_floor_db: [f64; 3],
+    pub throttle_bands: Vec<ThrottleBand>,
 }
 
 const FFT_WINDOW_SIZE: usize = 1024;
@@ -64,10 +74,82 @@ pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationA
         spectra.push(spectrum);
     }
 
+    let throttle_bands = compute_throttle_bands(session, sample_rate, &gyro_indices, &axis_names);
+
     VibrationAnalysis {
         spectra,
         noise_floor_db,
+        throttle_bands,
     }
+}
+
+const THROTTLE_BANDS: [(f64, f64, &str); 4] = [
+    (0.0, 25.0, "0-25%"),
+    (25.0, 50.0, "25-50%"),
+    (50.0, 75.0, "50-75%"),
+    (75.0, 100.0, "75-100%"),
+];
+
+#[allow(clippy::cast_precision_loss)]
+fn compute_throttle_bands(
+    session: &BfRawSession,
+    sample_rate: f64,
+    gyro_indices: &[Option<usize>; 3],
+    axis_names: &[&'static str; 3],
+) -> Vec<ThrottleBand> {
+    let Some(throttle_idx) = session.main_field_defs.index_of("rcCommand[3]") else {
+        return Vec::new();
+    };
+
+    let mut bands = Vec::new();
+
+    for &(t_min, t_max, label) in &THROTTLE_BANDS {
+        let band_frames: Vec<usize> = session
+            .frames
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| {
+                let throttle = f.values.get(throttle_idx).copied().unwrap_or(0);
+                let pct = (throttle - 1000) as f64 / 10.0;
+                pct >= t_min && pct < t_max
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if band_frames.len() < FFT_WINDOW_SIZE {
+            continue;
+        }
+
+        let mut spectra = Vec::new();
+        for (axis_idx, gyro_idx) in gyro_indices.iter().enumerate() {
+            let Some(idx) = *gyro_idx else {
+                continue;
+            };
+
+            let samples: Vec<f64> = band_frames
+                .iter()
+                .map(|&i| session.frames[i].values.get(idx).copied().unwrap_or(0) as f64)
+                .collect();
+
+            if samples.len() >= FFT_WINDOW_SIZE {
+                spectra.push(compute_spectrum(
+                    &samples,
+                    sample_rate,
+                    axis_names[axis_idx],
+                ));
+            }
+        }
+
+        bands.push(ThrottleBand {
+            label: label.to_string(),
+            throttle_min: t_min,
+            throttle_max: t_max,
+            frame_count: band_frames.len(),
+            spectra,
+        });
+    }
+
+    bands
 }
 
 #[allow(clippy::cast_precision_loss)]
