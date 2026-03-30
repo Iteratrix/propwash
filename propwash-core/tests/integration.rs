@@ -386,7 +386,7 @@ fn golden_values_btfl_001_session2() {
     assert_eq!(field_val(bf, 1, "time"), 191_884_524);
     assert_eq!(field_val(bf, 1, "gyroADC[0]"), -2);
     assert_eq!(field_val(bf, 1, "gyroADC[1]"), -1);
-    assert_within(field_val(bf, 1, "motor[0]"), 172, 1);
+    assert_eq!(field_val(bf, 1, "motor[0]"), 172);
 
     assert_eq!(field_val(bf, 2, "time"), 191_886_524);
     assert_eq!(field_val(bf, 5, "time"), 191_892_649);
@@ -396,7 +396,7 @@ fn golden_values_btfl_001_session2() {
     assert_eq!(field_val(bf, 100, "gyroADC[0]"), 0);
     assert_eq!(field_val(bf, 100, "gyroADC[1]"), -6);
     assert_eq!(field_val(bf, 100, "gyroADC[2]"), -9);
-    assert_within(field_val(bf, 100, "motor[0]"), 231, 1);
+    assert_eq!(field_val(bf, 100, "motor[0]"), 231);
 }
 
 #[test]
@@ -436,6 +436,28 @@ fn golden_sample_rate() {
     let log2 = parse_fixture("gimbal-ghost/btfl_001.bbl");
     let rate2 = log2.sessions[0].unified().sample_rate_hz();
     assert!((rate2 - 249.0).abs() < 2.0, "expected ~249 Hz, got {rate2}");
+}
+
+#[test]
+fn golden_loop_iteration_increments_by_p_ratio() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let bf = get_bf(&log.sessions[1]);
+    let iter_idx = bf.main_field_defs.index_of("loopIteration").unwrap();
+
+    assert_eq!(bf.frames[0].values[iter_idx], 0);
+    assert_eq!(bf.frames[1].values[iter_idx], 16);
+    assert_eq!(bf.frames[2].values[iter_idx], 32);
+    assert_eq!(bf.frames[5].values[iter_idx], 80);
+
+    for i in 1..bf.frames.len().min(100) {
+        let prev = bf.frames[i - 1].values[iter_idx];
+        let curr = bf.frames[i].values[iter_idx];
+        let delta = curr - prev;
+        assert_eq!(
+            delta, 16,
+            "frame {i}: loopIteration delta should be 16 (P_ratio), got {delta}"
+        );
+    }
 }
 
 #[test]

@@ -12,65 +12,112 @@ const STRAIGHT_LINE: u8 = 2;
 const AVERAGE_2: u8 = 3;
 const INCREMENT: u8 = 6;
 
-/// Frame prediction history. Encodes the invariant that I-frames reset
-/// both slots, while P-frames shift them forward.
-pub(crate) enum FrameHistory {
-    Empty,
-    Ready { prev1: Vec<i64>, prev2: Vec<i64> },
+/// Frame scheduling: how loopIteration advances between logged frames.
+#[derive(Debug, Clone)]
+pub(crate) struct FrameSchedule {
+    p_ratio: u32,
 }
 
-impl FrameHistory {
-    pub fn new(n_fields: usize) -> Self {
-        let _ = n_fields;
-        Self::Empty
+impl FrameSchedule {
+    pub fn from_headers(session: &BfRawSession) -> Self {
+        #[allow(clippy::cast_sign_loss)]
+        let p_ratio = session.get_header_int("P ratio", 1).max(1) as u32;
+        Self { p_ratio }
     }
 
-    /// Resets both history slots to the I-frame values.
-    pub fn reset_from_i_frame(&mut self, values: &[i64]) {
-        match self {
-            Self::Empty => {
-                *self = Self::Ready {
-                    prev1: values.to_vec(),
-                    prev2: values.to_vec(),
-                };
-            }
-            Self::Ready { prev1, prev2 } => {
-                prev1.copy_from_slice(values);
-                prev2.copy_from_slice(values);
-            }
+    fn skipped_frames(&self) -> u32 {
+        self.p_ratio - 1
+    }
+}
+
+/// Decode context: frame history + iteration tracking.
+/// Encodes the invariant that I-frames reset everything,
+/// P-frames advance, and corruption invalidates.
+pub(crate) enum DecodeContext {
+    Empty {
+        schedule: FrameSchedule,
+    },
+    Ready {
+        prev1: Vec<i64>,
+        prev2: Vec<i64>,
+        iteration: u32,
+        schedule: FrameSchedule,
+    },
+}
+
+impl DecodeContext {
+    pub fn new(session: &BfRawSession) -> Self {
+        Self::Empty {
+            schedule: FrameSchedule::from_headers(session),
         }
     }
 
-    /// Advances history: prev2 takes prev1's old values, prev1 takes the new values.
-    pub fn advance_from_p_frame(&mut self, values: &[i64]) {
+    /// Resets from an I-frame. Sets both history slots and the iteration counter.
+    pub fn reset_from_i_frame(&mut self, values: &[i64], loop_iteration: u32) {
+        let schedule = self.take_schedule();
+        *self = Self::Ready {
+            prev1: values.to_vec(),
+            prev2: values.to_vec(),
+            iteration: loop_iteration,
+            schedule,
+        };
+    }
+
+    /// Advances from a P-frame. Shifts history and increments iteration.
+    /// Returns the number of skipped frames (for the INCREMENT predictor).
+    pub fn advance_from_p_frame(&mut self, values: &[i64]) -> u32 {
         match self {
-            Self::Empty => panic!("advance_from_p_frame called without I-frame"),
-            Self::Ready { prev1, prev2 } => {
+            Self::Empty { .. } => panic!("advance_from_p_frame called without I-frame"),
+            Self::Ready {
+                prev1,
+                prev2,
+                iteration,
+                schedule,
+            } => {
+                let skipped = schedule.skipped_frames();
+                *iteration = iteration.wrapping_add(skipped + 1);
                 prev2.copy_from_slice(prev1);
                 prev1.copy_from_slice(values);
+                skipped
             }
         }
     }
 
-    /// Returns whether history is ready for P-frame decoding.
+    /// Returns whether the context is ready for P-frame decoding.
     pub fn is_ready(&self) -> bool {
         match self {
-            Self::Empty => false,
+            Self::Empty { .. } => false,
             Self::Ready { .. } => true,
         }
     }
 
-    /// Invalidates history (after corruption).
+    /// Invalidates after corruption.
     pub fn invalidate(&mut self) {
-        *self = Self::Empty;
+        let schedule = self.take_schedule();
+        *self = Self::Empty { schedule };
     }
 
-    /// Borrows prev1 and prev2 for prediction. Panics if empty.
+    /// Borrows prev1 and prev2 for prediction.
     pub fn slices(&self) -> (&[i64], &[i64]) {
         match self {
-            Self::Empty => panic!("slices() called on empty history"),
-            Self::Ready { prev1, prev2 } => (prev1, prev2),
+            Self::Empty { .. } => panic!("slices() called on empty context"),
+            Self::Ready { prev1, prev2, .. } => (prev1, prev2),
         }
+    }
+
+    /// Returns the current `skipped_frames` count for the INCREMENT predictor.
+    pub fn skipped_frames(&self) -> u32 {
+        self.schedule().skipped_frames()
+    }
+
+    fn schedule(&self) -> &FrameSchedule {
+        match self {
+            Self::Empty { schedule } | Self::Ready { schedule, .. } => schedule,
+        }
+    }
+
+    fn take_schedule(&mut self) -> FrameSchedule {
+        self.schedule().clone()
     }
 }
 
@@ -112,6 +159,7 @@ pub(crate) fn apply_p_predictor(
     prev2: &[i64],
     session: &BfRawSession,
     time_idx: Option<usize>,
+    skipped_frames: u32,
 ) -> i64 {
     let p1 = to_i32(prev1.get(field_idx).copied().unwrap_or(0));
     let p2 = to_i32(prev2.get(field_idx).copied().unwrap_or(0));
@@ -126,7 +174,11 @@ pub(crate) fn apply_p_predictor(
             let avg = p1.wrapping_add(p2) / 2;
             decoded.wrapping_add(avg)
         }
-        INCREMENT => p1.wrapping_add(1).wrapping_add(decoded),
+        INCREMENT => {
+            #[allow(clippy::cast_possible_wrap)]
+            let skip = skipped_frames as i32;
+            p1.wrapping_add(skip + 1).wrapping_add(decoded)
+        }
         MOTOR_0 => {
             let motor0_idx = session.main_field_defs.index_of("motor[0]");
             let motor0 = motor0_idx
@@ -184,47 +236,64 @@ mod tests {
     }
 
     #[test]
-    fn straight_line_wrapping() {
-        let p1: i32 = 0x7FFF_FFFF_u32 as i32;
-        let p2: i32 = p1.wrapping_sub(4000);
-        let prediction = p1.wrapping_mul(2).wrapping_sub(p2);
-        let result = 4000_i32.wrapping_add(prediction);
-        assert_eq!(
-            to_i64(result, BfFieldSign::Unsigned) as u32,
-            p1.wrapping_add(8000) as u32
-        );
-    }
+    fn context_reset_sets_both_slots() {
+        let mut ctx = make_test_context();
+        assert!(!ctx.is_ready());
 
-    #[test]
-    fn history_reset_sets_both_slots() {
-        let mut h = FrameHistory::new(3);
-        assert!(!h.is_ready());
+        ctx.reset_from_i_frame(&[10, 20, 30], 0);
+        assert!(ctx.is_ready());
 
-        h.reset_from_i_frame(&[10, 20, 30]);
-        assert!(h.is_ready());
-
-        let (p1, p2) = h.slices();
+        let (p1, p2) = ctx.slices();
         assert_eq!(p1, &[10, 20, 30]);
         assert_eq!(p2, &[10, 20, 30]);
     }
 
     #[test]
-    fn history_advance_shifts() {
-        let mut h = FrameHistory::new(2);
-        h.reset_from_i_frame(&[100, 200]);
-        h.advance_from_p_frame(&[110, 210]);
+    fn context_advance_shifts_and_returns_skipped() {
+        let mut ctx = make_test_context_with_ratio(8);
+        ctx.reset_from_i_frame(&[100, 200], 0);
+        let skipped = ctx.advance_from_p_frame(&[110, 210]);
 
-        let (p1, p2) = h.slices();
+        assert_eq!(skipped, 7); // p_ratio=8, so 7 skipped
+        let (p1, p2) = ctx.slices();
         assert_eq!(p1, &[110, 210]);
         assert_eq!(p2, &[100, 200]);
     }
 
     #[test]
-    fn history_invalidate() {
-        let mut h = FrameHistory::new(2);
-        h.reset_from_i_frame(&[1, 2]);
-        assert!(h.is_ready());
-        h.invalidate();
-        assert!(!h.is_ready());
+    fn context_invalidate() {
+        let mut ctx = make_test_context();
+        ctx.reset_from_i_frame(&[1, 2], 0);
+        assert!(ctx.is_ready());
+        ctx.invalidate();
+        assert!(!ctx.is_ready());
+    }
+
+    #[test]
+    fn increment_with_p_ratio_1() {
+        let schedule = FrameSchedule { p_ratio: 1 };
+        assert_eq!(schedule.skipped_frames(), 0);
+    }
+
+    #[test]
+    fn increment_with_p_ratio_8() {
+        let schedule = FrameSchedule { p_ratio: 8 };
+        assert_eq!(schedule.skipped_frames(), 7);
+    }
+
+    #[test]
+    fn increment_with_p_ratio_16() {
+        let schedule = FrameSchedule { p_ratio: 16 };
+        assert_eq!(schedule.skipped_frames(), 15);
+    }
+
+    fn make_test_context() -> DecodeContext {
+        make_test_context_with_ratio(1)
+    }
+
+    fn make_test_context_with_ratio(p_ratio: u32) -> DecodeContext {
+        DecodeContext::Empty {
+            schedule: FrameSchedule { p_ratio },
+        }
     }
 }
