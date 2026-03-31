@@ -31,68 +31,88 @@
     <div id="results" class="hidden">
       <div class="results-header">
         <nav id="session-tabs" class="session-tabs"></nav>
-        <button id="compare-btn" class="reset-btn">Compare with another file</button>
-        <button id="reset-btn" class="reset-btn">Start over</button>
+        <div class="results-actions">
+          <button id="compare-btn" class="reset-btn">Compare</button>
+          <button id="reset-btn" class="reset-btn">Start over</button>
+        </div>
       </div>
 
-      <section id="summary" class="panel">
-        <h2>Summary</h2>
-        <div id="summary-grid" class="summary-grid"></div>
-      </section>
+      <nav class="view-tabs" id="view-tabs">
+        <button class="view-tab active" data-view="overview">Overview</button>
+        <button class="view-tab" data-view="timeline">Timeline</button>
+        <button class="view-tab" data-view="spectrum">Spectrum</button>
+        <button class="view-tab" data-view="raw">Raw Data</button>
+      </nav>
 
-      <section id="timeseries-panel" class="panel">
-        <h2>Flight Data</h2>
-        <div class="ts-controls">
-          <div class="ts-tabs" id="ts-tabs">
-            <button class="ts-tab active" data-group="gyro">Gyro</button>
-            <button class="ts-tab" data-group="motors">Motors</button>
-            <button class="ts-tab" data-group="rc">RC</button>
-            <button class="ts-tab" data-group="pids">PIDs</button>
+      <!-- Overview tab -->
+      <div class="view-content active" data-view="overview">
+        <section id="summary" class="panel">
+          <h2>Summary</h2>
+          <div id="summary-grid" class="summary-grid"></div>
+        </section>
+
+        <section id="diagnostics-panel" class="panel">
+          <h2>Diagnostics</h2>
+          <div id="diagnostics-list"></div>
+        </section>
+
+        <section id="events-panel" class="panel">
+          <h2>Events</h2>
+          <div id="events-list"></div>
+        </section>
+      </div>
+
+      <!-- Timeline tab -->
+      <div class="view-content" data-view="timeline">
+        <section id="timeseries-panel" class="panel">
+          <div class="ts-controls">
+            <div class="ts-tabs" id="ts-tabs">
+              <button class="ts-tab active" data-group="gyro">Gyro</button>
+              <button class="ts-tab" data-group="motors">Motors</button>
+              <button class="ts-tab" data-group="rc">RC</button>
+              <button class="ts-tab" data-group="pids">PIDs</button>
+            </div>
+            <button id="ts-reset-zoom" class="ts-reset-zoom">Reset zoom</button>
           </div>
-          <button id="ts-reset-zoom" class="ts-reset-zoom">Reset zoom</button>
-        </div>
-        <div id="ts-charts"></div>
-      </section>
+          <div id="ts-charts"></div>
+        </section>
+      </div>
 
-      <section id="diagnostics-panel" class="panel">
-        <h2>Diagnostics</h2>
-        <div id="diagnostics-list"></div>
-      </section>
+      <!-- Spectrum tab -->
+      <div class="view-content" data-view="spectrum">
+        <section id="spectrum-panel" class="panel">
+          <h2>Gyro Frequency Spectrum</h2>
+          <div id="spectrum-plots"></div>
+        </section>
 
-      <section id="spectrum-panel" class="panel">
-        <h2>Gyro Frequency Spectrum</h2>
-        <div id="spectrum-plots"></div>
-      </section>
+        <section id="spectrogram-panel" class="panel">
+          <h2>Spectrogram</h2>
+          <div id="spectrogram-plots"></div>
+        </section>
 
-      <section id="spectrogram-panel" class="panel">
-        <h2>Spectrogram</h2>
-        <div id="spectrogram-plots"></div>
-      </section>
+        <section id="throttle-panel" class="panel">
+          <h2>Throttle Band Spectra</h2>
+          <div id="throttle-plots"></div>
+        </section>
 
-      <section id="throttle-panel" class="panel">
-        <h2>Throttle Band Spectra</h2>
-        <div id="throttle-plots"></div>
-      </section>
+        <section id="accel-panel" class="panel hidden">
+          <h2>Accelerometer Vibration</h2>
+          <div id="accel-info"></div>
+          <div id="accel-plots"></div>
+        </section>
+      </div>
 
-      <section id="accel-panel" class="panel hidden">
-        <h2>Accelerometer Vibration</h2>
-        <div id="accel-info"></div>
-        <div id="accel-plots"></div>
-      </section>
-
-      <section id="raw-panel" class="panel">
-        <h2>Raw Data</h2>
-        <div class="raw-controls">
-          <select id="raw-field-select" class="raw-select" multiple></select>
-          <span class="hint" id="raw-frame-info"></span>
-        </div>
-        <div id="raw-table-wrap" class="raw-table-wrap"></div>
-      </section>
-
-      <section id="events-panel" class="panel">
-        <h2>Events</h2>
-        <div id="events-list"></div>
-      </section>
+      <!-- Raw Data tab -->
+      <div class="view-content" data-view="raw">
+        <section id="raw-panel" class="panel">
+          <h2>Raw Data</h2>
+          <div class="raw-controls">
+            <select id="raw-field-select" class="raw-select" multiple></select>
+            <span class="hint" id="raw-frame-info"></span>
+          </div>
+          <div id="raw-table-wrap" class="raw-table-wrap"></div>
+        </section>
+      </div>
     </div>
 
     <div id="compare-drop" class="drop-zone hidden">
@@ -133,6 +153,7 @@
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
   <script type="module" src="app.js"></script>
 </body>
 </html>
