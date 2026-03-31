@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::types::{BfFieldDef, BfFieldSign, BfFrameDefs, BfHeaderValue};
+use super::types::{BfFieldDef, BfFieldSign, BfFrameDefs, BfHeaderValue, Encoding, Predictor};
 use crate::types::Warning;
 
 /// The exact marker string that begins every Betaflight-family blackbox log session.
@@ -19,8 +19,8 @@ pub(crate) struct ParsedHeaders {
     pub firmware_version: String,
     pub craft_name: String,
     pub main_field_defs: BfFrameDefs,
-    pub p_encodings: Vec<u8>,
-    pub p_predictors: Vec<u8>,
+    pub p_encodings: Vec<Encoding>,
+    pub p_predictors: Vec<Predictor>,
     pub slow_field_defs: Option<BfFrameDefs>,
     pub gps_field_defs: Option<BfFrameDefs>,
     pub gps_home_field_defs: Option<BfFrameDefs>,
@@ -124,8 +124,8 @@ pub(crate) fn parse_headers(
     let main_signed = get_u8_list(i_defs, "signed", n);
     let main_predictors = get_u8_list(i_defs, "predictor", n);
     let main_encodings = get_u8_list(i_defs, "encoding", n);
-    let p_predictors = get_u8_list(p_defs, "predictor", n);
-    let p_encodings = get_u8_list(p_defs, "encoding", n);
+    let p_predictors: Vec<Predictor> = get_u8_list(p_defs, "predictor", n).into_iter().map(Predictor::from).collect();
+    let p_encodings: Vec<Encoding> = get_u8_list(p_defs, "encoding", n).into_iter().map(Encoding::from).collect();
 
     let main_field_defs =
         build_field_defs(&main_names, &main_signed, &main_predictors, &main_encodings);
@@ -240,8 +240,8 @@ fn build_field_defs(
             BfFieldDef {
                 name: name.clone(),
                 signed: signed.get(i).copied().unwrap_or(0) != 0,
-                predictor: predictors.get(i).copied().unwrap_or(0),
-                encoding: encodings.get(i).copied().unwrap_or(0),
+                predictor: Predictor::from(predictors.get(i).copied().unwrap_or(0)),
+                encoding: Encoding::from(encodings.get(i).copied().unwrap_or(0)),
                 value_sign,
             }
         })

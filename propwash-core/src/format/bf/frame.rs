@@ -1,10 +1,9 @@
 use super::encoding::{
     read_neg_14bit, read_signed_vb, read_tag2_3s32, read_tag2_3svariable, read_tag8_4s16,
-    read_tag8_8svb, read_unsigned_vb, ENC_NEG_14BIT, ENC_NULL, ENC_TAG2_3S32, ENC_TAG2_3SVARIABLE,
-    ENC_TAG8_4S16, ENC_TAG8_8SVB, ENC_UNSIGNED_VB,
+    read_tag8_8svb, read_unsigned_vb,
 };
 use super::predictor::{apply_i_predictor, apply_p_predictor, DecodeContext};
-use super::types::{BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession};
+use super::types::{BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Encoding, Predictor};
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
 
@@ -261,55 +260,55 @@ pub(crate) fn parse_session_frames(
 fn decode_fields(
     reader: &mut Reader<'_>,
     fields: &[BfFieldDef],
-    encodings: &[u8],
+    encodings: &[Encoding],
 ) -> Result<Vec<i32>, InternalError> {
     let n = fields.len();
     let mut values = vec![0i32; n];
     let mut i = 0;
 
     while i < n {
-        let enc = encodings.get(i).copied().unwrap_or(0);
+        let enc = encodings.get(i).copied().unwrap_or(Encoding::SignedVb);
 
         match enc {
-            ENC_NULL => {
+            Encoding::Null => {
                 i += 1;
             }
-            ENC_UNSIGNED_VB => {
+            Encoding::UnsignedVb => {
                 #[allow(clippy::cast_possible_wrap)]
                 {
                     values[i] = read_unsigned_vb(reader)? as i32;
                 }
                 i += 1;
             }
-            ENC_NEG_14BIT => {
+            Encoding::Neg14Bit => {
                 values[i] = read_neg_14bit(reader)?;
                 i += 1;
             }
-            ENC_TAG2_3S32 => {
-                let count = count_consecutive(encodings, i, ENC_TAG2_3S32, 3);
+            Encoding::Tag2_3S32 => {
+                let count = count_consecutive(encodings, i, enc, 3);
                 let raw = read_tag2_3s32(reader)?;
                 values[i..i + count].copy_from_slice(&raw[..count]);
                 i += count;
             }
-            ENC_TAG8_4S16 => {
-                let count = count_consecutive(encodings, i, ENC_TAG8_4S16, 4);
+            Encoding::Tag8_4S16 => {
+                let count = count_consecutive(encodings, i, enc, 4);
                 let raw = read_tag8_4s16(reader)?;
                 values[i..i + count].copy_from_slice(&raw[..count]);
                 i += count;
             }
-            ENC_TAG8_8SVB => {
-                let count = count_consecutive(encodings, i, ENC_TAG8_8SVB, 8);
+            Encoding::Tag8_8Svb => {
+                let count = count_consecutive(encodings, i, enc, 8);
                 let raw = read_tag8_8svb(reader, count)?;
                 values[i..i + count].copy_from_slice(&raw[..count]);
                 i += count;
             }
-            ENC_TAG2_3SVARIABLE => {
-                let count = count_consecutive(encodings, i, ENC_TAG2_3SVARIABLE, 3);
+            Encoding::Tag2_3SVariable => {
+                let count = count_consecutive(encodings, i, enc, 3);
                 let raw = read_tag2_3svariable(reader)?;
                 values[i..i + count].copy_from_slice(&raw[..count]);
                 i += count;
             }
-            _ => {
+            Encoding::SignedVb | Encoding::Unknown(_) => {
                 values[i] = read_signed_vb(reader)?;
                 i += 1;
             }
@@ -318,7 +317,7 @@ fn decode_fields(
     Ok(values)
 }
 
-fn count_consecutive(encodings: &[u8], start: usize, target: u8, max_n: usize) -> usize {
+fn count_consecutive(encodings: &[Encoding], start: usize, target: Encoding, max_n: usize) -> usize {
     let mut count = 0;
     for &enc in encodings.iter().skip(start).take(max_n) {
         if enc == target {
@@ -339,7 +338,7 @@ fn decode_i_frame(
     byte_offset: usize,
     frame_index: usize,
 ) -> Result<BfFrame, InternalError> {
-    let encodings: Vec<u8> = fields.iter().map(|f| f.encoding).collect();
+    let encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
     let raw = decode_fields(reader, fields, &encodings)?;
 
     // Apply I-frame predictors in order (MOTOR_0 depends on motor[0])
@@ -369,8 +368,8 @@ fn decode_i_frame(
 fn decode_p_frame(
     reader: &mut Reader<'_>,
     fields: &[BfFieldDef],
-    p_encodings: &[u8],
-    p_predictors: &[u8],
+    p_encodings: &[Encoding],
+    p_predictors: &[Predictor],
     prev1: &[i64],
     prev2: &[i64],
     session: &BfRawSession,
@@ -383,9 +382,9 @@ fn decode_p_frame(
 
     let mut values: Vec<i64> = Vec::with_capacity(fields.len());
     for (j, field) in fields.iter().enumerate() {
-        let pred_id = p_predictors.get(j).copied().unwrap_or(0);
+        let predictor = p_predictors.get(j).copied().unwrap_or(Predictor::Zero);
         let predicted = apply_p_predictor(
-            pred_id,
+            predictor,
             raw[j],
             j,
             field.value_sign,
@@ -411,7 +410,7 @@ fn decode_simple_frame(
     reader: &mut Reader<'_>,
     fields: &[BfFieldDef],
 ) -> Result<Vec<i64>, InternalError> {
-    let encodings: Vec<u8> = fields.iter().map(|f| f.encoding).collect();
+    let encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
     let raw = decode_fields(reader, fields, &encodings)?;
     Ok(raw.into_iter().map(i64::from).collect())
 }

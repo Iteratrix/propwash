@@ -1,16 +1,4 @@
-use super::types::{BfFieldSign, BfRawSession};
-
-const MINTHROTTLE: u8 = 4;
-const MOTOR_0: u8 = 5;
-const FIFTEEN_HUNDRED: u8 = 8;
-const VBATREF: u8 = 9;
-const LAST_MAIN_FRAME_TIME: u8 = 10;
-const MINMOTOR: u8 = 11;
-
-const PREVIOUS: u8 = 1;
-const STRAIGHT_LINE: u8 = 2;
-const AVERAGE_2: u8 = 3;
-const INCREMENT: u8 = 6;
+use super::types::{BfFieldSign, BfRawSession, Predictor};
 
 /// Frame scheduling: determines which PID loop iterations are logged.
 /// Mirrors the firmware's `shouldHaveFrame()` logic.
@@ -151,16 +139,16 @@ impl DecodeContext {
 
 /// Applies predictor for an I-frame field.
 pub(crate) fn apply_i_predictor(
-    predictor_id: u8,
+    predictor: Predictor,
     decoded: i32,
     sign: BfFieldSign,
     current_values: &[i64],
     motor0_idx: Option<usize>,
     session: &BfRawSession,
 ) -> i64 {
-    let predicted: i32 = match predictor_id {
-        MINTHROTTLE => decoded.wrapping_add(session.min_throttle()),
-        MOTOR_0 => {
+    let predicted: i32 = match predictor {
+        Predictor::MinThrottle => decoded.wrapping_add(session.min_throttle()),
+        Predictor::Motor0 => {
             #[allow(clippy::cast_possible_truncation)]
             let motor0 = motor0_idx
                 .and_then(|idx| current_values.get(idx))
@@ -168,9 +156,9 @@ pub(crate) fn apply_i_predictor(
                 .map_or(0, |v| v as i32);
             decoded.wrapping_add(motor0)
         }
-        FIFTEEN_HUNDRED => decoded.wrapping_add(1500),
-        VBATREF => decoded.wrapping_add(session.vbat_ref()),
-        MINMOTOR => decoded.wrapping_add(session.min_motor()),
+        Predictor::FifteenHundred => decoded.wrapping_add(1500),
+        Predictor::VbatRef => decoded.wrapping_add(session.vbat_ref()),
+        Predictor::MinMotor => decoded.wrapping_add(session.min_motor()),
         _ => decoded,
     };
     to_i64(predicted, sign)
@@ -179,7 +167,7 @@ pub(crate) fn apply_i_predictor(
 /// Applies predictor for a P-frame field.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_p_predictor(
-    predictor_id: u8,
+    predictor: Predictor,
     decoded: i32,
     field_idx: usize,
     sign: BfFieldSign,
@@ -192,22 +180,22 @@ pub(crate) fn apply_p_predictor(
     let p1 = to_i32(prev1.get(field_idx).copied().unwrap_or(0));
     let p2 = to_i32(prev2.get(field_idx).copied().unwrap_or(0));
 
-    let predicted: i32 = match predictor_id {
-        PREVIOUS => decoded.wrapping_add(p1),
-        STRAIGHT_LINE => {
+    let predicted: i32 = match predictor {
+        Predictor::Previous => decoded.wrapping_add(p1),
+        Predictor::StraightLine => {
             let prediction = p1.wrapping_mul(2).wrapping_sub(p2);
             decoded.wrapping_add(prediction)
         }
-        AVERAGE_2 => {
+        Predictor::Average2 => {
             let avg = p1.wrapping_add(p2) / 2;
             decoded.wrapping_add(avg)
         }
-        INCREMENT => {
+        Predictor::Increment => {
             #[allow(clippy::cast_possible_wrap)]
             let skip = skipped_frames as i32;
             p1.wrapping_add(skip + 1).wrapping_add(decoded)
         }
-        MOTOR_0 => {
+        Predictor::Motor0 => {
             let motor0_idx = session.main_field_defs.index_of("motor[0]");
             let motor0 = motor0_idx
                 .and_then(|idx| prev1.get(idx))
@@ -215,11 +203,11 @@ pub(crate) fn apply_p_predictor(
                 .map_or(0, to_i32);
             decoded.wrapping_add(motor0)
         }
-        MINTHROTTLE => decoded.wrapping_add(session.min_throttle()),
-        MINMOTOR => decoded.wrapping_add(session.min_motor()),
-        VBATREF => decoded.wrapping_add(session.vbat_ref()),
-        FIFTEEN_HUNDRED => decoded.wrapping_add(1500),
-        LAST_MAIN_FRAME_TIME => {
+        Predictor::MinThrottle => decoded.wrapping_add(session.min_throttle()),
+        Predictor::MinMotor => decoded.wrapping_add(session.min_motor()),
+        Predictor::VbatRef => decoded.wrapping_add(session.vbat_ref()),
+        Predictor::FifteenHundred => decoded.wrapping_add(1500),
+        Predictor::LastMainFrameTime => {
             let t = time_idx
                 .and_then(|idx| prev1.get(idx))
                 .copied()

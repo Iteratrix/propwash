@@ -7,13 +7,90 @@ pub enum BfFieldSign {
     Unsigned,
 }
 
+/// Encoding scheme used to decode field values from the binary stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encoding {
+    SignedVb,
+    UnsignedVb,
+    Neg14Bit,
+    Tag8_8Svb,
+    Tag2_3S32,
+    Tag8_4S16,
+    Null,
+    Tag2_3SVariable,
+    Unknown(u8),
+}
+
+impl From<u8> for Encoding {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Self::SignedVb,
+            1 => Self::UnsignedVb,
+            3 => Self::Neg14Bit,
+            6 => Self::Tag8_8Svb,
+            7 => Self::Tag2_3S32,
+            8 => Self::Tag8_4S16,
+            9 => Self::Null,
+            10 => Self::Tag2_3SVariable,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+/// Predictor used to reconstruct field values from deltas.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Predictor {
+    /// Value is used as-is (no prediction).
+    Zero,
+    /// Delta from previous frame's value.
+    Previous,
+    /// Linear extrapolation from two previous frames.
+    StraightLine,
+    /// Average of two previous frames.
+    Average2,
+    /// Offset from `minthrottle` header value.
+    MinThrottle,
+    /// Offset from motor[0] value (same frame for I, previous frame for P).
+    Motor0,
+    /// Incrementing counter (loop iteration).
+    Increment,
+    /// Offset from 1500.
+    FifteenHundred,
+    /// Offset from `vbatref` header value.
+    VbatRef,
+    /// Offset from previous frame's time field.
+    LastMainFrameTime,
+    /// Offset from `minmotor` header value.
+    MinMotor,
+    Unknown(u8),
+}
+
+impl From<u8> for Predictor {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Self::Zero,
+            1 => Self::Previous,
+            2 => Self::StraightLine,
+            3 => Self::Average2,
+            4 => Self::MinThrottle,
+            5 => Self::Motor0,
+            6 => Self::Increment,
+            8 => Self::FifteenHundred,
+            9 => Self::VbatRef,
+            10 => Self::LastMainFrameTime,
+            11 => Self::MinMotor,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
 /// Definition of one field, parsed from header metadata.
 #[derive(Debug, Clone)]
 pub struct BfFieldDef {
     pub name: String,
     pub signed: bool,
-    pub predictor: u8,
-    pub encoding: u8,
+    pub predictor: Predictor,
+    pub encoding: Encoding,
     pub value_sign: BfFieldSign,
 }
 
@@ -144,10 +221,10 @@ pub struct BfRawSession {
     pub craft_name: String,
     /// I-frame field definitions.
     pub main_field_defs: BfFrameDefs,
-    /// P-frame encoding IDs (parallel to `main_field_defs`).
-    pub p_encodings: Vec<u8>,
-    /// P-frame predictor IDs (parallel to `main_field_defs`).
-    pub p_predictors: Vec<u8>,
+    /// P-frame encodings (parallel to `main_field_defs`).
+    pub p_encodings: Vec<Encoding>,
+    /// P-frame predictors (parallel to `main_field_defs`).
+    pub p_predictors: Vec<Predictor>,
     /// Slow-frame field definitions.
     pub slow_field_defs: Option<BfFrameDefs>,
     /// GPS-frame field definitions.
@@ -178,8 +255,8 @@ impl BfRawSession {
         firmware_version: String,
         craft_name: String,
         main_field_defs: BfFrameDefs,
-        p_encodings: Vec<u8>,
-        p_predictors: Vec<u8>,
+        p_encodings: Vec<Encoding>,
+        p_predictors: Vec<Predictor>,
         slow_field_defs: Option<BfFrameDefs>,
         gps_field_defs: Option<BfFrameDefs>,
         gps_home_field_defs: Option<BfFrameDefs>,
