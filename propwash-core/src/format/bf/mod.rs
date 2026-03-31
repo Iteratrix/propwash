@@ -1,4 +1,3 @@
-pub mod analyzed;
 mod encoding;
 mod frame;
 mod header;
