@@ -51,19 +51,223 @@ let tsPlots = [];
 let tsSync = null;
 let filterConfig = null;
 
+let compareResult = null;
+
 async function boot() {
   await init();
   wasmReady = true;
   setupDropZone();
+  setupCompareDropZone();
   setupTimeseriesControls();
   $("#reset-btn").addEventListener("click", reset);
+  $("#compare-btn").addEventListener("click", startCompare);
+  $("#compare-reset-btn").addEventListener("click", reset);
 }
 
 function reset() {
   result = null;
+  compareResult = null;
   $("#results").classList.add("hidden");
+  $("#compare-drop").classList.add("hidden");
+  $("#compare-results").classList.add("hidden");
   $("#drop-zone").classList.remove("hidden");
   $("#file-input").value = "";
+  $("#compare-file-input").value = "";
+}
+
+function startCompare() {
+  $("#results").classList.add("hidden");
+  $("#compare-drop").classList.remove("hidden");
+}
+
+function setupCompareDropZone() {
+  const zone = $("#compare-drop");
+  const input = $("#compare-file-input");
+
+  zone.addEventListener("click", () => input.click());
+  input.addEventListener("change", (e) => {
+    if (e.target.files.length > 0) handleCompareFile(e.target.files[0]);
+  });
+  zone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    zone.classList.add("drag-over");
+  });
+  zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+  zone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    zone.classList.remove("drag-over");
+    if (e.dataTransfer.files.length > 0) handleCompareFile(e.dataTransfer.files[0]);
+  });
+}
+
+async function handleCompareFile(file) {
+  if (!wasmReady) return;
+
+  $("#compare-drop").classList.add("hidden");
+  $("#loading").classList.remove("hidden");
+
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const buffer = await file.arrayBuffer();
+  const data = new Uint8Array(buffer);
+  const json = analyze(data);
+  compareResult = JSON.parse(json);
+
+  $("#loading").classList.add("hidden");
+
+  if (compareResult.sessions.length === 0) {
+    $("#compare-drop").classList.remove("hidden");
+    alert("No sessions found in comparison file.");
+    return;
+  }
+
+  $("#compare-results").classList.remove("hidden");
+  renderComparison();
+}
+
+function renderComparison() {
+  const a = result.sessions[0];
+  const b = compareResult.sessions[0];
+
+  renderComparisonSummary(a, b);
+  renderComparisonDiagnostics(a, b);
+  renderComparisonSpectra(a, b);
+}
+
+function renderComparisonSummary(a, b) {
+  const rows = [
+    ["Firmware", a.firmware, b.firmware],
+    ["Craft", a.craft, b.craft],
+    ["Duration", `${a.duration_seconds.toFixed(1)}s`, `${b.duration_seconds.toFixed(1)}s`],
+    ["Sample Rate", `${a.sample_rate_hz.toFixed(0)} Hz`, `${b.sample_rate_hz.toFixed(0)} Hz`],
+    ["Frames", a.frame_count.toLocaleString(), b.frame_count.toLocaleString()],
+  ];
+
+  const eventRows = [
+    ["Events", a.analysis.summary.total_events, b.analysis.summary.total_events, "lower"],
+    ["Desyncs", a.analysis.summary.desyncs, b.analysis.summary.desyncs, "lower"],
+    ["Gyro Spikes", a.analysis.summary.gyro_spikes, b.analysis.summary.gyro_spikes, "lower"],
+    ["Motor Sats", a.analysis.summary.motor_saturations, b.analysis.summary.motor_saturations, "lower"],
+    ["Overshoots", a.analysis.summary.overshoots, b.analysis.summary.overshoots, "lower"],
+  ];
+
+  let html = `<table class="compare-table">
+    <thead><tr><th>Metric</th><th>Flight A</th><th>Flight B</th><th>Delta</th></tr></thead><tbody>`;
+
+  for (const [label, va, vb] of rows) {
+    html += `<tr><td>${label}</td><td>${va}</td><td>${vb}</td><td></td></tr>`;
+  }
+
+  for (const [label, va, vb, better] of eventRows) {
+    const diff = vb - va;
+    let cls = "neutral";
+    if (diff !== 0) cls = (better === "lower" ? (diff < 0 ? "better" : "worse") : (diff > 0 ? "better" : "worse"));
+    const sign = diff > 0 ? "+" : "";
+    html += `<tr><td>${label}</td><td>${va}</td><td>${vb}</td><td class="delta ${cls}">${sign}${diff}</td></tr>`;
+  }
+
+  html += "</tbody></table>";
+  $("#compare-summary-table").innerHTML = html;
+}
+
+function renderComparisonDiagnostics(a, b) {
+  const diagA = a.analysis.diagnostics || [];
+  const diagB = b.analysis.diagnostics || [];
+
+  const msgsA = new Set(diagA.map((d) => d.message));
+  const msgsB = new Set(diagB.map((d) => d.message));
+
+  const fixed = diagA.filter((d) => !msgsB.has(d.message));
+  const newIssues = diagB.filter((d) => !msgsA.has(d.message));
+  const unchanged = diagB.filter((d) => msgsA.has(d.message));
+
+  let html = "";
+
+  if (fixed.length > 0) {
+    html += `<div class="diag-diff-section"><h3 class="fixed">Fixed (${fixed.length})</h3>`;
+    for (const d of fixed) {
+      html += `<div class="diagnostic Info"><div class="message">${escHtml(d.message)}</div></div>`;
+    }
+    html += "</div>";
+  }
+
+  if (newIssues.length > 0) {
+    html += `<div class="diag-diff-section"><h3 class="new-issue">New Issues (${newIssues.length})</h3>`;
+    for (const d of newIssues) {
+      html += `<div class="diagnostic ${d.severity}"><div class="message">${escHtml(d.message)}</div></div>`;
+    }
+    html += "</div>";
+  }
+
+  if (unchanged.length > 0) {
+    html += `<div class="diag-diff-section"><h3 class="unchanged">Unchanged (${unchanged.length})</h3>`;
+    for (const d of unchanged) {
+      html += `<div class="diagnostic ${d.severity}"><div class="message">${escHtml(d.message)}</div></div>`;
+    }
+    html += "</div>";
+  }
+
+  if (!html) html = '<p class="hint">No diagnostics to compare.</p>';
+  $("#compare-diag-content").innerHTML = html;
+}
+
+function renderComparisonSpectra(a, b) {
+  const container = $("#compare-spectrum-plots");
+  container.innerHTML = "";
+
+  const vibA = a.analysis.vibration;
+  const vibB = b.analysis.vibration;
+  if (!vibA?.spectra || !vibB?.spectra) {
+    container.innerHTML = '<p class="hint">No spectrum data to compare.</p>';
+    return;
+  }
+
+  const axes = ["roll", "pitch", "yaw"];
+  for (const axisName of axes) {
+    const specA = vibA.spectra.find((s) => s.axis === axisName);
+    const specB = vibB.spectra.find((s) => s.axis === axisName);
+    if (!specA || !specB) continue;
+
+    const row = document.createElement("div");
+    row.className = "spectrum-row";
+    const title = document.createElement("h3");
+    title.textContent = axisName.charAt(0).toUpperCase() + axisName.slice(1);
+    row.appendChild(title);
+
+    const plotDiv = document.createElement("div");
+    row.appendChild(plotDiv);
+    container.appendChild(row);
+
+    const maxFreq = Math.min(specA.sample_rate_hz / 2, 1000);
+    const endA = specA.frequencies_hz.findIndex((f) => f > maxFreq);
+    const nA = endA > 0 ? endA : specA.frequencies_hz.length;
+    const endB = specB.frequencies_hz.findIndex((f) => f > maxFreq);
+    const nB = endB > 0 ? endB : specB.frequencies_hz.length;
+
+    const color = AXIS_COLORS[axisName] || "#5b8def";
+
+    const opts = {
+      width: chartWidth(),
+      height: 200,
+      cursor: { show: true },
+      scales: { x: { time: false } },
+      axes: [
+        { label: "Hz", stroke: "#8888a0", grid: { stroke: "rgba(42,45,58,0.6)" }, ticks: { stroke: "rgba(42,45,58,0.6)" }, font: "11px JetBrains Mono, monospace", labelFont: "11px JetBrains Mono, monospace" },
+        { label: "dB", stroke: "#8888a0", grid: { stroke: "rgba(42,45,58,0.6)" }, ticks: { stroke: "rgba(42,45,58,0.6)" }, font: "11px JetBrains Mono, monospace", labelFont: "11px JetBrains Mono, monospace" },
+      ],
+      series: [
+        {},
+        { label: "Flight A", stroke: color, width: 1.5 },
+        { label: "Flight B", stroke: color, width: 1.5, dash: [4, 4] },
+      ],
+    };
+
+    new uPlot(opts, [
+      specA.frequencies_hz.slice(0, nA),
+      specA.magnitudes_db.slice(0, nA),
+      specB.magnitudes_db.slice(0, nB),
+    ], plotDiv);
+  }
 }
 
 function setupDropZone() {
