@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use propwash_core::types::{Axis, SensorField};
-use propwash_core::{decode_file, Analyzed, Log};
+use propwash_core::{decode_file, Log, RawSession, Unified};
 
 fn fixtures_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
@@ -25,7 +25,7 @@ macro_rules! fixture_test {
                 $path,
                 log.session_count()
             );
-            let total_frames: usize = log.sessions.iter().map(|s| s.frame_count()).sum();
+            let total_frames: usize = log.sessions.iter().map(|s| s.unified().frame_count()).sum();
             assert!(total_frames > 0, "{}: expected >0 frames, got 0", $path);
         }
     };
@@ -99,15 +99,13 @@ fn unified_field_extraction() {
 }
 
 #[test]
-fn unified_fields_prefix() {
+fn unified_gyro_fields() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let unified = log.sessions[0].unified();
-    let gyro_fields = unified.fields_by_prefix("gyroADC");
-    assert!(
-        gyro_fields.len() >= 3,
-        "expected ≥3 gyroADC fields, got {}",
-        gyro_fields.len()
-    );
+    for axis in Axis::ALL {
+        let data = unified.field(&SensorField::Gyro(axis));
+        assert!(!data.is_empty(), "gyro {axis} should have data");
+    }
 }
 
 #[test]
@@ -145,8 +143,8 @@ fn unified_field_names() {
 #[test]
 fn analyzed_betaflight_motor_count() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    match log.sessions[0].analyzed() {
-        Analyzed::Betaflight(bf) => assert_eq!(bf.motor_count(), 4),
+    match &log.sessions[0].raw {
+        RawSession::Betaflight(bf) => assert_eq!(bf.motor_count(), 4),
         _ => panic!("expected Betaflight"),
     }
 }
@@ -154,8 +152,8 @@ fn analyzed_betaflight_motor_count() {
 #[test]
 fn analyzed_rotorflight_single_motor() {
     let log = parse_fixture("gimbal-ghost/rtfl_001.bbl");
-    match log.sessions[0].analyzed() {
-        Analyzed::Betaflight(bf) => assert_eq!(bf.motor_count(), 1),
+    match &log.sessions[0].raw {
+        RawSession::Betaflight(bf) => assert_eq!(bf.motor_count(), 1),
         _ => panic!("expected Betaflight"),
     }
 }
@@ -163,10 +161,10 @@ fn analyzed_rotorflight_single_motor() {
 #[test]
 fn analyzed_crash_log_has_corruption() {
     let log = parse_fixture("fc-blackbox/crashing-LOG00002.BFL");
-    match log.sessions[0].analyzed() {
-        Analyzed::Betaflight(bf) => {
+    match &log.sessions[0].raw {
+        RawSession::Betaflight(bf) => {
             assert!(
-                bf.stats().corrupt_bytes > 0,
+                bf.stats.corrupt_bytes > 0,
                 "crash log should have corruption"
             );
             // This file has a corrupt header but the flight data ended cleanly
@@ -182,8 +180,8 @@ fn analyzed_crash_log_has_corruption() {
 fn truncated_files_detected() {
     // Files without "End of log" marker should be detected as truncated
     let log = parse_fixture("fc-blackbox/LOG00002.BFL");
-    match log.sessions[0].analyzed() {
-        Analyzed::Betaflight(bf) => {
+    match &log.sessions[0].raw {
+        RawSession::Betaflight(bf) => {
             assert!(
                 bf.is_truncated(),
                 "file without End of log should be truncated"
@@ -196,8 +194,8 @@ fn truncated_files_detected() {
 #[test]
 fn analyzed_debug_mode() {
     let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
-    match log.sessions[0].analyzed() {
-        Analyzed::Betaflight(bf) => {
+    match &log.sessions[0].raw {
+        RawSession::Betaflight(bf) => {
             let _ = bf.debug_mode();
         }
         _ => panic!("expected Betaflight"),
@@ -207,10 +205,10 @@ fn analyzed_debug_mode() {
 #[test]
 fn analyzed_stats() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    match log.sessions[0].analyzed() {
-        Analyzed::Betaflight(bf) => {
-            assert!(bf.stats().total_main_frames() > 0);
-            assert!(bf.stats().i_frame_count > 0);
+    match &log.sessions[0].raw {
+        RawSession::Betaflight(bf) => {
+            assert!(bf.stats.total_main_frames() > 0);
+            assert!(bf.stats.i_frame_count > 0);
         }
         _ => panic!("expected Betaflight"),
     }
@@ -274,8 +272,8 @@ macro_rules! invariant_test {
                 }
 
                 // Stats should be consistent
-                if let Analyzed::Betaflight(bf) = session.analyzed() {
-                    let stats = bf.stats();
+                if let RawSession::Betaflight(bf) = &session.raw {
+                    let stats = &bf.stats;
                     assert_eq!(
                         stats.total_main_frames(),
                         unified.frame_count(),
@@ -339,8 +337,8 @@ fn three_layer_access() {
     let _gyro = unified.field(&SensorField::Gyro(Axis::Roll));
 
     // Layer 2: Analyzed (format-specific)
-    match session.analyzed() {
-        Analyzed::Betaflight(bf) => {
+    match &session.raw {
+        RawSession::Betaflight(bf) => {
             let _ = bf.motor_count();
         }
         _ => panic!("expected Betaflight"),
@@ -554,10 +552,10 @@ fn regression_loop_iteration_uses_frame_schedule() {
 #[test]
 fn regression_log_end_requires_marker_string() {
     let log = parse_fixture("fc-blackbox/crashing-LOG00002.BFL");
-    match log.sessions[0].analyzed() {
-        Analyzed::Betaflight(bf) => {
+    match &log.sessions[0].raw {
+        RawSession::Betaflight(bf) => {
             assert!(
-                bf.stats().corrupt_bytes > 0,
+                bf.stats.corrupt_bytes > 0,
                 "crash log should have corruption"
             );
         }

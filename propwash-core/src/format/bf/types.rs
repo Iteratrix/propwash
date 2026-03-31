@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::SensorField;
+use crate::types::{SensorField, Unified};
 
 /// Whether a field's predicted value wraps as unsigned or signed 32-bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,4 +350,116 @@ impl BfRawSession {
     pub fn get_field_or(&self, frame: &BfFrame, name: &str, default: i64) -> i64 {
         self.get_field(frame, name).unwrap_or(default)
     }
+
+    // ── Methods absorbed from BfAnalyzedView ────────────────────────
+
+    /// Returns the number of main frames.
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
+    /// Returns field names from header definitions.
+    pub fn field_names(&self) -> Vec<String> {
+        self.main_field_defs.names()
+    }
+
+    /// Returns the firmware version string.
+    pub fn firmware_version(&self) -> &str {
+        &self.firmware_version
+    }
+
+    /// Returns the craft name.
+    pub fn craft_name(&self) -> &str {
+        &self.craft_name
+    }
+
+    /// Computes sample rate from first/last frame timestamps.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn sample_rate_hz(&self) -> f64 {
+        if self.frames.len() < 2 {
+            return 0.0;
+        }
+        let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
+            return 0.0;
+        };
+        let t0 = self.frames.first().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
+        let tn = self.frames.last().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
+        let dt_us = tn - t0;
+        if dt_us <= 0 {
+            return 0.0;
+        }
+        (self.frames.len() - 1) as f64 / (dt_us as f64 / 1_000_000.0)
+    }
+
+    /// Returns flight duration in seconds.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn duration_seconds(&self) -> f64 {
+        if self.frames.len() < 2 {
+            return 0.0;
+        }
+        let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
+            return 0.0;
+        };
+        let t0 = self.frames.first().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
+        let tn = self.frames.last().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
+        let dt_us = tn - t0;
+        if dt_us <= 0 {
+            return 0.0;
+        }
+        dt_us as f64 / 1_000_000.0
+    }
+
+    /// Extracts one field as a `Vec<i64>` across all main frames.
+    pub fn field(&self, sensor_field: &SensorField) -> Vec<i64> {
+        let Some(idx) = self.main_field_defs.index_of(sensor_field) else {
+            return vec![0; self.frames.len()];
+        };
+        self.frames.iter().map(|f| f.values.get(idx).copied().unwrap_or(0)).collect()
+    }
+
+    /// Returns the number of motors detected from field definitions.
+    pub fn motor_count(&self) -> usize {
+        self.main_field_defs
+            .fields
+            .iter()
+            .filter(|f| f.name.is_motor())
+            .count()
+    }
+
+    /// Returns whether bidirectional `DShot` RPM telemetry is present.
+    pub fn has_rpm_telemetry(&self) -> bool {
+        self.main_field_defs
+            .fields
+            .iter()
+            .any(|f| f.name.is_erpm())
+    }
+
+    /// Returns whether unfiltered gyro data is logged.
+    pub fn has_gyro_unfiltered(&self) -> bool {
+        self.main_field_defs
+            .fields
+            .iter()
+            .any(|f| matches!(f.name, SensorField::GyroUnfilt(_)))
+    }
+
+    /// Returns the debug mode from headers.
+    pub fn debug_mode(&self) -> i32 {
+        self.get_header_int("debug_mode", 0)
+    }
+
+    /// Returns whether the log ended cleanly (vs truncation/crash).
+    pub fn is_truncated(&self) -> bool {
+        !self.stats.clean_end
+    }
+}
+
+impl Unified for BfRawSession {
+    fn frame_count(&self) -> usize { self.frame_count() }
+    fn field_names(&self) -> Vec<String> { self.field_names() }
+    fn firmware_version(&self) -> &str { self.firmware_version() }
+    fn craft_name(&self) -> &str { self.craft_name() }
+    fn sample_rate_hz(&self) -> f64 { self.sample_rate_hz() }
+    fn duration_seconds(&self) -> f64 { self.duration_seconds() }
+    fn field(&self, field: &SensorField) -> Vec<i64> { self.field(field) }
+    fn motor_count(&self) -> usize { self.motor_count() }
 }

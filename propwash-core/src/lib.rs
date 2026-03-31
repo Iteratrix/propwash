@@ -1,8 +1,7 @@
 #![doc = "propwash-core: lenient parser for flight controller blackbox logs."]
 #![doc = ""]
-#![doc = "Three-layer API:"]
-#![doc = "- **Unified** (`session.unified()`) — format-agnostic sensor data in canonical units"]
-#![doc = "- **Analyzed** (`session.analyzed()`) — format-specific domain knowledge"]
+#![doc = "Two-layer API:"]
+#![doc = "- **Unified** (`session.unified()`) — format-agnostic sensor data via the `Unified` trait"]
 #![doc = "- **Raw** (`session.raw`) — format-specific parsed data, faithful to the file"]
 
 pub mod analysis;
@@ -10,8 +9,7 @@ pub mod format;
 mod reader;
 pub mod types;
 
-pub use format::bf::analyzed::BfAnalyzedView;
-pub use types::{Analyzed, Log, ParseError, RawSession, Session, UnifiedView, Warning};
+pub use types::{Log, ParseError, RawSession, Session, Unified, Warning};
 
 const BETAFLIGHT_MARKER: &[u8] = b"H Product:Blackbox flight data recorder";
 

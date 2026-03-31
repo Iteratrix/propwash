@@ -3,7 +3,7 @@ mod episodes;
 use std::process;
 
 use clap::{Parser, Subcommand};
-use propwash_core::Analyzed;
+use propwash_core::Unified;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -119,7 +119,7 @@ fn cmd_info(path: &str, json: bool) {
         println!("  Frames:         {}", unified.frame_count());
         println!("  Motors:         {}", unified.motor_count());
 
-        if let Analyzed::Betaflight(bf) = session.analyzed() {
+        if let propwash_core::RawSession::Betaflight(bf) = &session.raw {
             println!(
                 "  RPM telemetry:  {}",
                 if bf.has_rpm_telemetry() { "yes" } else { "no" }
@@ -136,8 +136,8 @@ fn cmd_info(path: &str, json: bool) {
                 "  Truncated:      {}",
                 if bf.is_truncated() { "yes" } else { "no" }
             );
-            if bf.stats().corrupt_bytes > 0 {
-                println!("  Corrupt bytes:  {}", bf.stats().corrupt_bytes);
+            if bf.stats.corrupt_bytes > 0 {
+                println!("  Corrupt bytes:  {}", bf.stats.corrupt_bytes);
             }
         }
 
@@ -169,8 +169,8 @@ fn cmd_compare(path_a: &str, path_b: &str) {
     let log_a = load_log(path_a);
     let log_b = load_log(path_b);
 
-    let session_a = log_a.sessions.iter().find(|s| s.frame_count() > 0);
-    let session_b = log_b.sessions.iter().find(|s| s.frame_count() > 0);
+    let session_a = log_a.sessions.iter().find(|s| s.unified().frame_count() > 0);
+    let session_b = log_b.sessions.iter().find(|s| s.unified().frame_count() > 0);
 
     let (Some(sa), Some(sb)) = (session_a, session_b) else {
         eprintln!("Both files must contain at least one session with frames.");
@@ -307,7 +307,7 @@ fn cmd_scan(files: &[String]) {
         };
 
         for session in &log.sessions {
-            if session.frame_count() == 0 {
+            if session.unified().frame_count() == 0 {
                 continue;
             }
 
@@ -341,7 +341,7 @@ fn cmd_analyze(path: &str, output: &str) {
     let log = load_log(path);
 
     for session in &log.sessions {
-        if session.frame_count() == 0 {
+        if session.unified().frame_count() == 0 {
             continue;
         }
 

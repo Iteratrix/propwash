@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::format::bf::analyzed::BfAnalyzedView;
-use crate::format::bf::types::{BfFrame, BfRawSession};
+use crate::format::bf::types::BfRawSession;
 
 /// Rotational axis: roll, pitch, or yaw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -276,6 +275,28 @@ impl Value {
     }
 }
 
+/// Format-agnostic interface for accessing sensor data.
+///
+/// Implemented by each format's raw session type. This is the primary
+/// abstraction consumers should use — it provides uniform access to
+/// sensor data regardless of the underlying log format.
+pub trait Unified {
+    fn frame_count(&self) -> usize;
+    fn field_names(&self) -> Vec<String>;
+    fn firmware_version(&self) -> &str;
+    fn craft_name(&self) -> &str;
+    fn sample_rate_hz(&self) -> f64;
+    fn duration_seconds(&self) -> f64;
+    fn field(&self, field: &SensorField) -> Vec<i64>;
+    fn motor_count(&self) -> usize;
+
+    /// Extracts one field by header string name.
+    /// Convenience for system boundaries (WASM bridge, CLI user input).
+    fn field_by_name(&self, name: &str) -> Vec<i64> {
+        self.field(&SensorField::from_header(name))
+    }
+}
+
 /// Format-specific raw session data.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -283,155 +304,34 @@ pub enum RawSession {
     Betaflight(BfRawSession),
 }
 
-/// Format-specific analyzed view.
-#[non_exhaustive]
-pub enum Analyzed<'a> {
-    Betaflight(BfAnalyzedView<'a>),
-}
-
-/// Format-agnostic unified view over any session.
-/// Provides sensor data in canonical units regardless of source format.
-/// This is the recommended API for most consumers.
-pub struct UnifiedView<'a> {
-    raw: &'a RawSession,
-}
-
-impl fmt::Debug for UnifiedView<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnifiedView").finish_non_exhaustive()
+impl Unified for RawSession {
+    fn frame_count(&self) -> usize {
+        match self { Self::Betaflight(bf) => bf.frame_count() }
+    }
+    fn field_names(&self) -> Vec<String> {
+        match self { Self::Betaflight(bf) => bf.field_names() }
+    }
+    fn firmware_version(&self) -> &str {
+        match self { Self::Betaflight(bf) => bf.firmware_version() }
+    }
+    fn craft_name(&self) -> &str {
+        match self { Self::Betaflight(bf) => bf.craft_name() }
+    }
+    fn sample_rate_hz(&self) -> f64 {
+        match self { Self::Betaflight(bf) => bf.sample_rate_hz() }
+    }
+    fn duration_seconds(&self) -> f64 {
+        match self { Self::Betaflight(bf) => bf.duration_seconds() }
+    }
+    fn field(&self, field: &SensorField) -> Vec<i64> {
+        match self { Self::Betaflight(bf) => bf.field(field) }
+    }
+    fn motor_count(&self) -> usize {
+        match self { Self::Betaflight(bf) => bf.motor_count() }
     }
 }
 
-impl UnifiedView<'_> {
-    /// Returns the number of main frames.
-    pub fn frame_count(&self) -> usize {
-        self.bf_parts().1.len()
-    }
-
-    /// Returns field names from header definitions.
-    pub fn field_names(&self) -> Vec<String> {
-        match self.raw {
-            RawSession::Betaflight(bf) => bf.main_field_defs.names(),
-        }
-    }
-
-    /// Returns the firmware version string.
-    pub fn firmware_version(&self) -> &str {
-        match self.raw {
-            RawSession::Betaflight(bf) => &bf.firmware_version,
-        }
-    }
-
-    /// Returns the craft name.
-    pub fn craft_name(&self) -> &str {
-        match self.raw {
-            RawSession::Betaflight(bf) => &bf.craft_name,
-        }
-    }
-
-    /// Computes sample rate from first/last frame timestamps.
-    pub fn sample_rate_hz(&self) -> f64 {
-        let (session, frames) = self.bf_parts();
-        if frames.len() < 2 {
-            return 0.0;
-        }
-        let Some(time_idx) = session.main_field_defs.index_of(&SensorField::Time) else {
-            return 0.0;
-        };
-        let t0 = frames
-            .first()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let tn = frames
-            .last()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let dt_us = tn - t0;
-        if dt_us <= 0 {
-            return 0.0;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        let rate = (frames.len() - 1) as f64 / (dt_us as f64 / 1_000_000.0);
-        rate
-    }
-
-    /// Returns flight duration in seconds.
-    pub fn duration_seconds(&self) -> f64 {
-        let (session, frames) = self.bf_parts();
-        if frames.len() < 2 {
-            return 0.0;
-        }
-        let Some(time_idx) = session.main_field_defs.index_of(&SensorField::Time) else {
-            return 0.0;
-        };
-        let t0 = frames
-            .first()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let tn = frames
-            .last()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let dt_us = tn - t0;
-        if dt_us <= 0 {
-            return 0.0;
-        }
-        #[allow(clippy::cast_precision_loss)]
-        let dur = dt_us as f64 / 1_000_000.0;
-        dur
-    }
-
-    /// Extracts one field as a `Vec<i64>` across all main frames.
-    pub fn field(&self, field: &SensorField) -> Vec<i64> {
-        let (session, frames) = self.bf_parts();
-        let Some(idx) = session.main_field_defs.index_of(field) else {
-            return vec![0; frames.len()];
-        };
-        frames
-            .iter()
-            .map(|f| f.values.get(idx).copied().unwrap_or(0))
-            .collect()
-    }
-
-    /// Extracts one field by header string name.
-    /// Convenience method for dynamic field names (e.g., from user input or WASM bridge).
-    pub fn field_by_name(&self, name: &str) -> Vec<i64> {
-        self.field(&SensorField::from_header(name))
-    }
-
-    /// Extracts all fields matching a name prefix (convenience for string-based access).
-    pub fn fields_by_prefix(&self, prefix: &str) -> HashMap<String, Vec<i64>> {
-        let (session, frames) = self.bf_parts();
-        session
-            .main_field_defs
-            .fields
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| f.name.to_string().starts_with(prefix))
-            .map(|(idx, f)| {
-                let values: Vec<i64> = frames
-                    .iter()
-                    .map(|frame| frame.values.get(idx).copied().unwrap_or(0))
-                    .collect();
-                (f.name.to_string(), values)
-            })
-            .collect()
-    }
-
-    /// Returns the number of motors detected.
-    pub fn motor_count(&self) -> usize {
-        let (session, _) = self.bf_parts();
-        session.main_field_defs.fields.iter().filter(|f| f.name.is_motor()).count()
-    }
-
-    fn bf_parts(&self) -> (&BfRawSession, &[BfFrame]) {
-        match self.raw {
-            RawSession::Betaflight(bf) => (bf, &bf.frames),
-        }
-    }
-}
-
-/// One parsed session from a log file. Entry point for all three layers.
+/// One parsed session from a log file.
 #[derive(Debug)]
 pub struct Session {
     /// Format-specific raw data — always available.
@@ -443,30 +343,9 @@ pub struct Session {
 }
 
 impl Session {
-    /// Returns a unified view — format-agnostic sensor data in canonical units.
-    pub fn unified(&self) -> UnifiedView<'_> {
-        UnifiedView { raw: &self.raw }
-    }
-
-    /// Returns a format-specific analyzed view.
-    pub fn analyzed(&self) -> Analyzed<'_> {
-        match &self.raw {
-            RawSession::Betaflight(bf) => Analyzed::Betaflight(BfAnalyzedView { raw: bf }),
-        }
-    }
-
-    /// Returns the number of main frames.
-    pub fn frame_count(&self) -> usize {
-        match &self.raw {
-            RawSession::Betaflight(bf) => bf.frames.len(),
-        }
-    }
-
-    /// Returns the field names from header definitions.
-    pub fn field_names(&self) -> Vec<String> {
-        match &self.raw {
-            RawSession::Betaflight(bf) => bf.main_field_defs.names(),
-        }
+    /// Returns the unified interface for format-agnostic sensor data access.
+    pub fn unified(&self) -> &dyn Unified {
+        &self.raw
     }
 }
 
