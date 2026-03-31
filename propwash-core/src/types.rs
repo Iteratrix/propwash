@@ -4,6 +4,205 @@ use std::fmt;
 use crate::format::bf::analyzed::BfAnalyzedView;
 use crate::format::bf::types::{BfFrame, BfRawSession};
 
+/// Rotational axis: roll, pitch, or yaw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Axis {
+    Roll,
+    Pitch,
+    Yaw,
+}
+
+impl Axis {
+    /// All three axes in standard order.
+    pub const ALL: [Self; 3] = [Self::Roll, Self::Pitch, Self::Yaw];
+
+    /// Index used in indexed field names (e.g., `gyroADC[0]` = Roll).
+    pub fn index(self) -> usize {
+        match self {
+            Self::Roll => 0,
+            Self::Pitch => 1,
+            Self::Yaw => 2,
+        }
+    }
+}
+
+impl fmt::Display for Axis {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Roll => write!(f, "roll"),
+            Self::Pitch => write!(f, "pitch"),
+            Self::Yaw => write!(f, "yaw"),
+        }
+    }
+}
+
+/// RC channel: roll, pitch, yaw, or throttle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RcChannel {
+    Roll,
+    Pitch,
+    Yaw,
+    Throttle,
+}
+
+impl RcChannel {
+    pub fn index(self) -> usize {
+        match self {
+            Self::Roll => 0,
+            Self::Pitch => 1,
+            Self::Yaw => 2,
+            Self::Throttle => 3,
+        }
+    }
+}
+
+/// Typed motor index. Prevents mixing with axis indices or other ordinals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MotorIndex(pub usize);
+
+impl fmt::Display for MotorIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Format-agnostic sensor field identifier.
+///
+/// Known fields get proper variants with typed indices.
+/// Unknown fields preserve the original header string.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SensorField {
+    Time,
+    LoopIteration,
+    Gyro(Axis),
+    Motor(MotorIndex),
+    Rc(RcChannel),
+    Setpoint(Axis),
+    Accel(Axis),
+    PidP(Axis),
+    PidI(Axis),
+    PidD(Axis),
+    ERpm(MotorIndex),
+    GyroUnfilt(Axis),
+    Vbat,
+    Unknown(String),
+}
+
+impl SensorField {
+    /// Parses a header field name into a `SensorField`.
+    /// Handles known aliases (e.g., `gyroData` = `gyroADC`).
+    pub fn from_header(name: &str) -> Self {
+        match name {
+            "time" => Self::Time,
+            "loopIteration" => Self::LoopIteration,
+            "vbatLatest" | "vbat" => Self::Vbat,
+
+            _ if name.starts_with("gyroADC[") || name.starts_with("gyroData[") => {
+                parse_axis_field(name).map_or_else(|| Self::Unknown(name.to_string()), Self::Gyro)
+            }
+            _ if name.starts_with("gyroUnfilt[") => {
+                parse_axis_field(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), Self::GyroUnfilt)
+            }
+            _ if name.starts_with("motor[") => {
+                parse_index(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), |i| Self::Motor(MotorIndex(i)))
+            }
+            _ if name.starts_with("rcCommand[") => {
+                parse_rc_channel(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), Self::Rc)
+            }
+            _ if name.starts_with("setpoint[") => {
+                parse_axis_field(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), Self::Setpoint)
+            }
+            _ if name.starts_with("accSmooth[") => {
+                parse_axis_field(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), Self::Accel)
+            }
+            _ if name.starts_with("axisP[") => {
+                parse_axis_field(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), Self::PidP)
+            }
+            _ if name.starts_with("axisI[") => {
+                parse_axis_field(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), Self::PidI)
+            }
+            _ if name.starts_with("axisD[") => {
+                parse_axis_field(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), Self::PidD)
+            }
+            _ if name.starts_with("eRPM[") => {
+                parse_index(name)
+                    .map_or_else(|| Self::Unknown(name.to_string()), |i| Self::ERpm(MotorIndex(i)))
+            }
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+
+    /// Returns whether this field is a motor field.
+    pub fn is_motor(&self) -> bool {
+        matches!(self, Self::Motor(_))
+    }
+
+    /// Returns whether this field is an eRPM field.
+    pub fn is_erpm(&self) -> bool {
+        matches!(self, Self::ERpm(_))
+    }
+}
+
+impl fmt::Display for SensorField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Time => write!(f, "time"),
+            Self::LoopIteration => write!(f, "loopIteration"),
+            Self::Gyro(a) => write!(f, "gyroADC[{}]", a.index()),
+            Self::Motor(m) => write!(f, "motor[{m}]"),
+            Self::Rc(ch) => write!(f, "rcCommand[{}]", ch.index()),
+            Self::Setpoint(a) => write!(f, "setpoint[{}]", a.index()),
+            Self::Accel(a) => write!(f, "accSmooth[{}]", a.index()),
+            Self::PidP(a) => write!(f, "axisP[{}]", a.index()),
+            Self::PidI(a) => write!(f, "axisI[{}]", a.index()),
+            Self::PidD(a) => write!(f, "axisD[{}]", a.index()),
+            Self::ERpm(m) => write!(f, "eRPM[{m}]"),
+            Self::GyroUnfilt(a) => write!(f, "gyroUnfilt[{}]", a.index()),
+            Self::Vbat => write!(f, "vbatLatest"),
+            Self::Unknown(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+/// Extracts the axis from an indexed field name like `gyroADC[1]`.
+fn parse_axis_field(name: &str) -> Option<Axis> {
+    let idx = parse_index(name)?;
+    match idx {
+        0 => Some(Axis::Roll),
+        1 => Some(Axis::Pitch),
+        2 => Some(Axis::Yaw),
+        _ => None,
+    }
+}
+
+/// Extracts the RC channel from `rcCommand[N]`.
+fn parse_rc_channel(name: &str) -> Option<RcChannel> {
+    let idx = parse_index(name)?;
+    match idx {
+        0 => Some(RcChannel::Roll),
+        1 => Some(RcChannel::Pitch),
+        2 => Some(RcChannel::Yaw),
+        3 => Some(RcChannel::Throttle),
+        _ => None,
+    }
+}
+
+/// Extracts the numeric index from a field name like `motor[3]`.
+fn parse_index(name: &str) -> Option<usize> {
+    let start = name.find('[')? + 1;
+    let end = name.find(']')?;
+    name[start..end].parse().ok()
+}
+
 /// A non-fatal diagnostic collected during parsing.
 /// The parser never panics on corrupt data — it collects these instead.
 #[derive(Debug, Clone)]
@@ -110,7 +309,7 @@ impl UnifiedView<'_> {
     }
 
     /// Returns field names from header definitions.
-    pub fn field_names(&self) -> Vec<&str> {
+    pub fn field_names(&self) -> Vec<String> {
         match self.raw {
             RawSession::Betaflight(bf) => bf.main_field_defs.names(),
         }
@@ -136,7 +335,7 @@ impl UnifiedView<'_> {
         if frames.len() < 2 {
             return 0.0;
         }
-        let Some(time_idx) = session.main_field_defs.index_of("time") else {
+        let Some(time_idx) = session.main_field_defs.index_of(&SensorField::Time) else {
             return 0.0;
         };
         let t0 = frames
@@ -162,7 +361,7 @@ impl UnifiedView<'_> {
         if frames.len() < 2 {
             return 0.0;
         }
-        let Some(time_idx) = session.main_field_defs.index_of("time") else {
+        let Some(time_idx) = session.main_field_defs.index_of(&SensorField::Time) else {
             return 0.0;
         };
         let t0 = frames
@@ -183,9 +382,9 @@ impl UnifiedView<'_> {
     }
 
     /// Extracts one field as a `Vec<i64>` across all main frames.
-    pub fn field(&self, name: &str) -> Vec<i64> {
+    pub fn field(&self, field: &SensorField) -> Vec<i64> {
         let (session, frames) = self.bf_parts();
-        let Some(idx) = session.main_field_defs.index_of(name) else {
+        let Some(idx) = session.main_field_defs.index_of(field) else {
             return vec![0; frames.len()];
         };
         frames
@@ -194,31 +393,35 @@ impl UnifiedView<'_> {
             .collect()
     }
 
-    /// Extracts all fields matching a name prefix.
-    pub fn fields(&self, prefix: &str) -> HashMap<String, Vec<i64>> {
+    /// Extracts one field by header string name.
+    /// Convenience method for dynamic field names (e.g., from user input or WASM bridge).
+    pub fn field_by_name(&self, name: &str) -> Vec<i64> {
+        self.field(&SensorField::from_header(name))
+    }
+
+    /// Extracts all fields matching a name prefix (convenience for string-based access).
+    pub fn fields_by_prefix(&self, prefix: &str) -> HashMap<String, Vec<i64>> {
         let (session, frames) = self.bf_parts();
         session
             .main_field_defs
             .fields
             .iter()
             .enumerate()
-            .filter(|(_, f)| f.name.starts_with(prefix))
+            .filter(|(_, f)| f.name.to_string().starts_with(prefix))
             .map(|(idx, f)| {
                 let values: Vec<i64> = frames
                     .iter()
                     .map(|frame| frame.values.get(idx).copied().unwrap_or(0))
                     .collect();
-                (f.name.clone(), values)
+                (f.name.to_string(), values)
             })
             .collect()
     }
 
     /// Returns the number of motors detected.
     pub fn motor_count(&self) -> usize {
-        self.field_names()
-            .iter()
-            .filter(|n| n.starts_with("motor["))
-            .count()
+        let (session, _) = self.bf_parts();
+        session.main_field_defs.fields.iter().filter(|f| f.name.is_motor()).count()
     }
 
     fn bf_parts(&self) -> (&BfRawSession, &[BfFrame]) {
@@ -260,7 +463,7 @@ impl Session {
     }
 
     /// Returns the field names from header definitions.
-    pub fn field_names(&self) -> Vec<&str> {
+    pub fn field_names(&self) -> Vec<String> {
         match &self.raw {
             RawSession::Betaflight(bf) => bf.main_field_defs.names(),
         }

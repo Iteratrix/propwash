@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use crate::format::bf::types::{BfFrame, BfRawSession};
+use crate::types::{Axis, MotorIndex, RcChannel, SensorField};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FlightEvent {
@@ -57,26 +58,17 @@ impl FieldIndices {
         let defs = &session.main_field_defs;
         let mut motors = Vec::new();
         for i in 0..8 {
-            let name = format!("motor[{i}]");
-            match defs.index_of(&name) {
+            match defs.index_of(&SensorField::Motor(MotorIndex(i))) {
                 Some(idx) => motors.push(idx),
                 None => break,
             }
         }
         Self {
-            time: defs.index_of("time"),
-            throttle: defs.index_of("rcCommand[3]"),
+            time: defs.index_of(&SensorField::Time),
+            throttle: defs.index_of(&SensorField::Rc(RcChannel::Throttle)),
             motors,
-            gyro: [
-                defs.index_of("gyroADC[0]"),
-                defs.index_of("gyroADC[1]"),
-                defs.index_of("gyroADC[2]"),
-            ],
-            setpoint: [
-                defs.index_of("setpoint[0]"),
-                defs.index_of("setpoint[1]"),
-                defs.index_of("setpoint[2]"),
-            ],
+            gyro: Axis::ALL.map(|a| defs.index_of(&SensorField::Gyro(a))),
+            setpoint: Axis::ALL.map(|a| defs.index_of(&SensorField::Setpoint(a))),
         }
     }
 }

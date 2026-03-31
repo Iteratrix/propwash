@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use super::types::{BfFieldDef, BfFieldSign, BfFrameDefs, BfHeaderValue, Encoding, Predictor};
+use crate::types::SensorField;
 use crate::types::Warning;
 
 /// The exact marker string that begins every Betaflight-family blackbox log session.
@@ -233,12 +234,13 @@ fn build_field_defs(
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            let value_sign = match name.as_str() {
-                "time" | "loopIteration" => BfFieldSign::Unsigned,
+            let field = SensorField::from_header(name);
+            let value_sign = match field {
+                SensorField::Time | SensorField::LoopIteration => BfFieldSign::Unsigned,
                 _ => BfFieldSign::Signed,
             };
             BfFieldDef {
-                name: name.clone(),
+                name: field,
                 signed: signed.get(i).copied().unwrap_or(0) != 0,
                 predictor: Predictor::from(predictors.get(i).copied().unwrap_or(0)),
                 encoding: Encoding::from(encodings.get(i).copied().unwrap_or(0)),
@@ -322,10 +324,10 @@ mod tests {
 
         // Check expected fields
         let names = h.main_field_defs.names();
-        assert!(names.contains(&"loopIteration"));
-        assert!(names.contains(&"time"));
-        assert!(names.contains(&"gyroADC[0]"));
-        assert!(names.contains(&"motor[0]"));
+        assert!(names.iter().any(|n| n == "loopIteration"));
+        assert!(names.iter().any(|n| n == "time"));
+        assert!(names.iter().any(|n| n == "gyroADC[0]"));
+        assert!(names.iter().any(|n| n == "motor[0]"));
     }
 
     #[test]
@@ -362,7 +364,7 @@ mod tests {
 
         // Rotorflight: should have motor[0] but not motor[1]
         let names = h.main_field_defs.names();
-        assert!(names.contains(&"motor[0]"));
+        assert!(names.iter().any(|n| n == "motor[0]"));
     }
 
     #[test]
@@ -377,10 +379,10 @@ mod tests {
 
         assert!(!h.main_field_defs.is_empty());
         let names = h.main_field_defs.names();
-        assert!(names.contains(&"time"));
+        assert!(names.iter().any(|n| n == "time"));
         // Old Cleanflight uses "gyroData" instead of "gyroADC"
         assert!(
-            names.contains(&"gyroADC[0]") || names.contains(&"gyroData[0]"),
+            names.iter().any(|n| n == "gyroADC[0]") || names.iter().any(|n| n == "gyroData[0]"),
             "expected gyro field, got: {names:?}"
         );
     }

@@ -137,7 +137,7 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
         let mut fields: HashMap<String, Vec<f64>> = HashMap::new();
 
         for &name in &requested {
-            let raw = unified.field(name);
+            let raw = unified.field_by_name(name);
             let decimated: Vec<f64> = raw.iter()
                 .step_by(step)
                 .map(|&v| v as f64)
@@ -145,7 +145,7 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
             fields.insert(name.to_string(), decimated);
         }
 
-        let time_raw = unified.field("time");
+        let time_raw = unified.field_by_name("time");
         let t0 = time_raw.first().copied().unwrap_or(0) as f64;
         let time_s: Vec<f64> = time_raw.iter()
             .step_by(step)
@@ -193,7 +193,7 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         let max_bin = ((SPEC_MAX_FREQ / freq_res) as usize).min(SPEC_WINDOW / 2);
         let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
 
-        let time_raw = unified.field("time");
+        let time_raw = unified.field_by_name("time");
         let t0 = time_raw.first().copied().unwrap_or(0) as f64;
 
         let hann = hann_window(SPEC_WINDOW);
@@ -217,7 +217,7 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         let mut axes = Vec::new();
 
         for &(axis_name, field_name) in &axis_fields {
-            let raw = unified.field(field_name);
+            let raw = unified.field_by_name(field_name);
             if raw.len() < SPEC_WINDOW {
                 continue;
             }
@@ -340,7 +340,7 @@ pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list
         for frame_idx in start..end {
             let mut row = Vec::with_capacity(requested.len());
             for &name in &requested {
-                let field_data = unified.field(name);
+                let field_data = unified.field_by_name(name);
                 row.push(field_data.get(frame_idx).copied().unwrap_or(0));
             }
             frames.push(row);

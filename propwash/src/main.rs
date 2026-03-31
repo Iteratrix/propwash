@@ -554,8 +554,8 @@ fn cmd_dump(
             continue;
         };
 
-        let field_names: Vec<&str> = bf.main_field_defs.names();
-        let time_idx = bf.main_field_defs.index_of("time");
+        let field_names: Vec<String> = bf.main_field_defs.names();
+        let time_idx = bf.main_field_defs.index_of_str("time");
 
         let selected_fields: Vec<(usize, &str)> = field_names
             .iter()
@@ -566,7 +566,7 @@ fn cmd_dump(
                 }
                 field_prefixes.iter().any(|prefix| name.starts_with(prefix))
             })
-            .map(|(i, name)| (i, *name))
+            .map(|(i, name)| (i, name.as_str()))
             .collect();
 
         let mut frames = Vec::new();

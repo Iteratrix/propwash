@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::types::SensorField;
+
 /// Whether a field's predicted value wraps as unsigned or signed 32-bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BfFieldSign {
@@ -87,7 +89,7 @@ impl From<u8> for Predictor {
 /// Definition of one field, parsed from header metadata.
 #[derive(Debug, Clone)]
 pub struct BfFieldDef {
-    pub name: String,
+    pub name: SensorField,
     pub signed: bool,
     pub predictor: Predictor,
     pub encoding: Encoding,
@@ -95,25 +97,25 @@ pub struct BfFieldDef {
 }
 
 /// All field definitions for one frame type.
-/// Also provides name→index lookup for O(1) field access.
+/// Also provides `SensorField` → index lookup for O(1) field access.
 #[derive(Debug, Clone)]
 pub struct BfFrameDefs {
     pub fields: Vec<BfFieldDef>,
-    name_index: HashMap<String, usize>,
+    field_index: HashMap<SensorField, usize>,
 }
 
 impl BfFrameDefs {
     pub fn new(fields: Vec<BfFieldDef>) -> Self {
-        let name_index = fields
+        let field_index = fields
             .iter()
             .enumerate()
             .map(|(i, f)| (f.name.clone(), i))
             .collect();
-        Self { fields, name_index }
+        Self { fields, field_index }
     }
 
-    pub fn names(&self) -> Vec<&str> {
-        self.fields.iter().map(|f| f.name.as_str()).collect()
+    pub fn names(&self) -> Vec<String> {
+        self.fields.iter().map(|f| f.name.to_string()).collect()
     }
 
     pub fn len(&self) -> usize {
@@ -124,9 +126,15 @@ impl BfFrameDefs {
         self.fields.is_empty()
     }
 
-    /// Looks up the index of a field by name.
-    pub fn index_of(&self, name: &str) -> Option<usize> {
-        self.name_index.get(name).copied()
+    /// Looks up the index of a field by `SensorField`.
+    pub fn index_of(&self, field: &SensorField) -> Option<usize> {
+        self.field_index.get(field).copied()
+    }
+
+    /// Looks up the index of a field by header string name.
+    /// Converts to `SensorField` internally.
+    pub fn index_of_str(&self, name: &str) -> Option<usize> {
+        self.index_of(&SensorField::from_header(name))
     }
 }
 
@@ -332,9 +340,9 @@ impl BfRawSession {
         self.vbat_ref
     }
 
-    /// Gets a field value from a frame by name.
+    /// Gets a field value from a frame by name string.
     pub fn get_field(&self, frame: &BfFrame, name: &str) -> Option<i64> {
-        let idx = self.main_field_defs.index_of(name)?;
+        let idx = self.main_field_defs.index_of_str(name)?;
         frame.values.get(idx).copied()
     }
 
