@@ -53,20 +53,39 @@ let filterConfig = null;
 
 let compareResult = null;
 
+let renderedViews = new Set();
+
 async function boot() {
   await init();
   wasmReady = true;
   setupDropZone();
   setupCompareDropZone();
   setupTimeseriesControls();
+  setupViewTabs();
   $("#reset-btn").addEventListener("click", reset);
   $("#compare-btn").addEventListener("click", startCompare);
   $("#compare-reset-btn").addEventListener("click", reset);
 }
 
+function setupViewTabs() {
+  const tabs = $$("#view-tabs .view-tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      $$(".view-content").forEach((v) => v.classList.remove("active"));
+      const view = tab.dataset.view;
+      $(`.view-content[data-view="${view}"]`).classList.add("active");
+      renderViewIfNeeded(view);
+    });
+  });
+}
+
 function reset() {
   result = null;
   compareResult = null;
+  disposeEcharts();
+  renderedViews.clear();
   $("#results").classList.add("hidden");
   $("#compare-drop").classList.add("hidden");
   $("#compare-results").classList.add("hidden");
@@ -341,18 +360,37 @@ function renderSessionTabs() {
 
 function showSession(idx) {
   activeSessionIdx = idx;
-  const s = result.sessions[idx];
-  renderSummary(s);
-  const activeGroup = $(".ts-tab.active")?.dataset.group || "gyro";
-  renderTimeseries(idx, activeGroup);
   filterConfig = JSON.parse(get_filter_config(idx));
-  renderDiagnostics(s.analysis.diagnostics);
-  renderSpectra(s.analysis.vibration);
-  renderSpectrogram(idx);
-  renderThrottleBands(s.analysis.vibration);
-  renderAccel(s.analysis.vibration);
-  renderRawData(idx);
-  renderEvents(s.analysis.events);
+  renderedViews.clear();
+  const activeView = $(".view-tab.active")?.dataset.view || "overview";
+  renderViewIfNeeded(activeView);
+}
+
+function renderViewIfNeeded(view) {
+  const key = `${view}-${activeSessionIdx}`;
+  if (renderedViews.has(key)) return;
+  renderedViews.add(key);
+
+  const s = result.sessions[activeSessionIdx];
+  switch (view) {
+    case "overview":
+      renderSummary(s);
+      renderDiagnostics(s.analysis.diagnostics);
+      renderEvents(s.analysis.events);
+      break;
+    case "timeline":
+      renderTimeseries(activeSessionIdx, $(".ts-tab.active")?.dataset.group || "gyro");
+      break;
+    case "spectrum":
+      renderSpectraEcharts(s.analysis.vibration);
+      renderSpectrogram(activeSessionIdx);
+      renderThrottleBandsEcharts(s.analysis.vibration);
+      renderAccel(s.analysis.vibration);
+      break;
+    case "raw":
+      renderRawData(activeSessionIdx);
+      break;
+  }
 }
 
 function setupTimeseriesControls() {
@@ -361,11 +399,13 @@ function setupTimeseriesControls() {
     tab.addEventListener("click", () => {
       tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
+      renderedViews.delete(`timeline-${activeSessionIdx}`);
       renderTimeseries(activeSessionIdx, tab.dataset.group);
     });
   });
   $("#ts-reset-zoom").addEventListener("click", () => {
     const activeGroup = $(".ts-tab.active")?.dataset.group || "gyro";
+    renderedViews.delete(`timeline-${activeSessionIdx}`);
     renderTimeseries(activeSessionIdx, activeGroup);
   });
 }
@@ -533,6 +573,207 @@ function renderSummary(session) {
       </div>`
     )
     .join("");
+}
+
+const echartsInstances = [];
+
+function disposeEcharts() {
+  for (const inst of echartsInstances) {
+    inst.dispose();
+  }
+  echartsInstances.length = 0;
+}
+
+function echartsTheme() {
+  return {
+    backgroundColor: "transparent",
+    textStyle: { fontFamily: "JetBrains Mono, Fira Code, monospace", color: "#8888a0" },
+    axisLine: { lineStyle: { color: "#2a2d3a" } },
+    splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } },
+  };
+}
+
+function renderSpectraEcharts(vibration) {
+  const container = $("#spectrum-plots");
+  container.innerHTML = "";
+
+  if (!vibration || !vibration.spectra || vibration.spectra.length === 0) {
+    container.innerHTML = '<p class="hint">No spectrum data available.</p>';
+    return;
+  }
+
+  for (const spectrum of vibration.spectra) {
+    const row = document.createElement("div");
+    row.className = "spectrum-row";
+
+    const title = document.createElement("h3");
+    title.textContent = spectrum.axis.charAt(0).toUpperCase() + spectrum.axis.slice(1);
+    row.appendChild(title);
+
+    const chartDiv = document.createElement("div");
+    chartDiv.style.width = "100%";
+    chartDiv.style.height = "250px";
+    row.appendChild(chartDiv);
+    container.appendChild(row);
+
+    const maxFreq = Math.min(spectrum.sample_rate_hz / 2, 1000);
+    const endIdx = spectrum.frequencies_hz.findIndex((f) => f > maxFreq);
+    const n = endIdx > 0 ? endIdx : spectrum.frequencies_hz.length;
+    const freqs = spectrum.frequencies_hz.slice(0, n);
+    const mags = spectrum.magnitudes_db.slice(0, n);
+    const color = AXIS_COLORS[spectrum.axis] || "#5b8def";
+
+    const chart = echarts.init(chartDiv, null, { renderer: "canvas" });
+    echartsInstances.push(chart);
+
+    const markLines = [];
+
+    if (filterConfig && !filterConfig.error) {
+      const filters = [
+        { val: filterConfig.gyro_lpf_hz, label: "LPF1", color: "#e8944a" },
+        { val: filterConfig.gyro_lpf2_hz, label: "LPF2", color: "#e8944a" },
+        { val: filterConfig.dterm_lpf_hz, label: "D-LPF", color: "#9b59b6" },
+        { val: filterConfig.gyro_notch1_hz, label: "Notch1", color: "#e85454" },
+        { val: filterConfig.gyro_notch2_hz, label: "Notch2", color: "#e85454" },
+      ];
+      for (const f of filters) {
+        if (f.val && f.val > 0 && f.val <= maxFreq) {
+          markLines.push({ xAxis: f.val, label: { formatter: f.label, position: "end", fontSize: 9, color: f.color }, lineStyle: { color: f.color, type: "dashed", width: 1 } });
+        }
+      }
+    }
+
+    const peakPoints = (spectrum.peaks || []).slice(0, 3).map((p) => ({
+      coord: [p.frequency_hz, p.magnitude_db],
+      label: { formatter: `${p.frequency_hz.toFixed(0)} Hz`, fontSize: 10, color: "#e0e0e6", position: "top" },
+      symbol: "circle",
+      symbolSize: 6,
+      itemStyle: { color: p.classification === "MotorNoise" ? "#e8944a" : p.classification === "FrameResonance" ? "#e85454" : color },
+    }));
+
+    chart.setOption({
+      grid: { left: 50, right: 20, top: 40, bottom: 50 },
+      toolbox: {
+        show: true,
+        right: 10,
+        top: 0,
+        feature: {
+          dataZoom: { title: { zoom: "Zoom", back: "Reset" }, iconStyle: { borderColor: "#8888a0" }, emphasis: { iconStyle: { borderColor: "#5b8def" } } },
+          restore: { title: "Reset", iconStyle: { borderColor: "#8888a0" }, emphasis: { iconStyle: { borderColor: "#5b8def" } } },
+          saveAsImage: { title: "Save", iconStyle: { borderColor: "#8888a0" }, emphasis: { iconStyle: { borderColor: "#5b8def" } } },
+        },
+        iconStyle: { borderColor: "#8888a0" },
+      },
+      xAxis: { type: "value", name: "Hz", nameLocation: "center", nameGap: 25, min: 0, max: maxFreq, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
+      yAxis: { type: "value", name: "dB", nameLocation: "center", nameGap: 35, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
+      tooltip: { trigger: "axis", backgroundColor: "#1a1d27", borderColor: "#2a2d3a", textStyle: { color: "#e0e0e6", fontFamily: "JetBrains Mono, monospace", fontSize: 11 } },
+      dataZoom: [
+        { type: "inside", xAxisIndex: 0 },
+        { type: "slider", xAxisIndex: 0, height: 18, bottom: 2, borderColor: "#2a2d3a", fillerColor: "rgba(91,141,239,0.15)", handleStyle: { color: "#5b8def" }, textStyle: { color: "#8888a0", fontSize: 9 } },
+      ],
+      series: [{
+        type: "line",
+        data: freqs.map((f, i) => [f, mags[i]]),
+        smooth: false,
+        symbol: "none",
+        lineStyle: { color, width: 1.5 },
+        areaStyle: { color: color + "18" },
+        markLine: markLines.length > 0 ? { data: markLines, symbol: "none", silent: true } : undefined,
+        markPoint: peakPoints.length > 0 ? { data: peakPoints } : undefined,
+      }],
+    });
+
+    if (spectrum.peaks && spectrum.peaks.length > 0) {
+      const peaks = document.createElement("div");
+      peaks.className = "peaks-list";
+      for (const p of spectrum.peaks) {
+        const badge = document.createElement("span");
+        badge.className = "peak-badge";
+        let inner = `<span class="freq">${p.frequency_hz.toFixed(0)} Hz</span> (${p.magnitude_db.toFixed(1)} dB)`;
+        if (p.classification) {
+          const cls = p.classification === "MotorNoise" ? "Motor" : p.classification === "FrameResonance" ? "Frame" : "";
+          if (cls) inner += `<span class="class">${cls}</span>`;
+        }
+        badge.innerHTML = inner;
+        peaks.appendChild(badge);
+      }
+      row.appendChild(peaks);
+    }
+  }
+}
+
+function renderThrottleBandsEcharts(vibration) {
+  const container = $("#throttle-plots");
+  container.innerHTML = "";
+
+  if (!vibration || !vibration.throttle_bands || vibration.throttle_bands.length === 0) {
+    container.innerHTML = '<p class="hint">No throttle band data.</p>';
+    return;
+  }
+
+  for (const band of vibration.throttle_bands) {
+    const section = document.createElement("div");
+    section.className = "throttle-band";
+
+    const title = document.createElement("h3");
+    title.textContent = `Throttle ${band.label}`;
+    section.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "band-meta";
+    meta.textContent = `${band.frame_count.toLocaleString()} frames`;
+    section.appendChild(meta);
+
+    if (band.spectra && band.spectra.length > 0) {
+      const chartDiv = document.createElement("div");
+      chartDiv.style.width = "100%";
+      chartDiv.style.height = "200px";
+      section.appendChild(chartDiv);
+      container.appendChild(section);
+
+      const maxFreq = Math.min(band.spectra[0].sample_rate_hz / 2, 1000);
+      const endIdx = band.spectra[0].frequencies_hz.findIndex((f) => f > maxFreq);
+      const n = endIdx > 0 ? endIdx : band.spectra[0].frequencies_hz.length;
+
+      const chart = echarts.init(chartDiv, null, { renderer: "canvas" });
+      echartsInstances.push(chart);
+
+      const series = [];
+      for (const s of band.spectra) {
+        const color = AXIS_COLORS[s.axis] || "#5b8def";
+        series.push({
+          type: "line",
+          name: s.axis,
+          data: s.frequencies_hz.slice(0, n).map((f, i) => [f, s.magnitudes_db[i]]),
+          smooth: false,
+          symbol: "none",
+          lineStyle: { color, width: 1.5 },
+        });
+      }
+
+      chart.setOption({
+        grid: { left: 50, right: 20, top: 30, bottom: 40 },
+        legend: { show: true, textStyle: { color: "#8888a0", fontSize: 10 }, top: 0 },
+        toolbox: {
+          show: true,
+          right: 10,
+          top: 0,
+          feature: {
+            dataZoom: { title: { zoom: "Zoom", back: "Reset" }, iconStyle: { borderColor: "#8888a0" } },
+            restore: { title: "Reset", iconStyle: { borderColor: "#8888a0" } },
+          },
+          iconStyle: { borderColor: "#8888a0" },
+        },
+        xAxis: { type: "value", name: "Hz", nameLocation: "center", nameGap: 25, min: 0, max: maxFreq, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
+        yAxis: { type: "value", name: "dB", nameLocation: "center", nameGap: 35, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
+        tooltip: { trigger: "axis", backgroundColor: "#1a1d27", borderColor: "#2a2d3a", textStyle: { color: "#e0e0e6", fontFamily: "JetBrains Mono, monospace", fontSize: 11 } },
+        dataZoom: [{ type: "inside", xAxisIndex: 0 }],
+        series,
+      });
+    } else {
+      container.appendChild(section);
+    }
+  }
 }
 
 function renderDiagnostics(diagnostics) {
@@ -1096,8 +1337,15 @@ let resizeTimer = null;
 window.addEventListener("resize", () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
+    for (const inst of echartsInstances) {
+      inst.resize();
+    }
     if (result && !$("#results").classList.contains("hidden")) {
-      showSession(activeSessionIdx);
+      const view = $(".view-tab.active")?.dataset.view;
+      if (view === "timeline") {
+        renderedViews.delete(`timeline-${activeSessionIdx}`);
+        renderViewIfNeeded("timeline");
+      }
     }
   }, 250);
 });
