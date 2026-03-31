@@ -3,6 +3,10 @@ import init, { analyze, get_timeseries, get_spectrogram, get_filter_config } fro
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+function chartWidth() {
+  return Math.min($("main").clientWidth - 64, 880);
+}
+
 let wasmReady = false;
 let result = null;
 
@@ -107,8 +111,8 @@ async function handleFile(file) {
   }
 
   renderSessionTabs();
-  showSession(0);
   $("#results").classList.remove("hidden");
+  showSession(0);
 }
 
 function renderSessionTabs() {
@@ -188,7 +192,7 @@ function renderTimeseries(sessionIdx, group) {
 
   const events = result.sessions[sessionIdx]?.analysis?.events || [];
 
-  const width = Math.min(container.clientWidth - 16, 920);
+  const width = chartWidth();
 
   const datasets = [time];
   const series = [{}];
@@ -449,12 +453,16 @@ function createSpectrumPlot(container, spectrum) {
   const yData = mags.slice(0, n);
 
   const color = AXIS_COLORS[spectrum.axis] || "#5b8def";
-  const width = Math.min(container.parentElement.clientWidth - 32, 880);
+  const width = chartWidth();
+
+  const plugins = [peakMarkersPlugin(spectrum.peaks, maxFreq)];
+  if (filterConfig && !filterConfig.error) {
+    plugins.push(filterOverlayPlugin(maxFreq));
+  }
 
   const opts = {
     width,
-    height: 220,
-    padding: [20, 8, 0, 0],
+    height: 200,
     cursor: { show: true },
     scales: {
       x: { time: false },
@@ -468,10 +476,7 @@ function createSpectrumPlot(container, spectrum) {
       {},
       { stroke: color, width: 1.5, fill: color + "18" },
     ],
-    plugins: [
-      peakMarkersPlugin(spectrum.peaks, maxFreq),
-      filterOverlayPlugin(maxFreq),
-    ],
+    plugins,
   };
 
   new uPlot(opts, [xData, yData], container);
@@ -482,6 +487,7 @@ function filterOverlayPlugin(maxFreq) {
     hooks: {
       draw: [
         (u) => {
+          try {
           if (!filterConfig || filterConfig.error) return;
           const ctx = u.ctx;
 
@@ -533,6 +539,7 @@ function filterOverlayPlugin(maxFreq) {
             ctx.fillText("Dyn Notch", (xMin + xMax) / 2, u.bbox.top + 12);
             ctx.restore();
           }
+          } catch (e) { /* filter overlay failed, chart still renders */ }
         },
       ],
     },
@@ -559,7 +566,7 @@ function renderSpectrogram(sessionIdx) {
     row.appendChild(title);
 
     const canvas = document.createElement("canvas");
-    const width = Math.min(container.clientWidth - 32, 880);
+    const width = chartWidth();
     const height = 160;
     canvas.width = width;
     canvas.height = height;
@@ -699,7 +706,7 @@ function createMultiAxisPlot(container, spectra) {
     });
   }
 
-  const width = Math.min(container.parentElement.clientWidth - 32, 880);
+  const width = chartWidth();
 
   const opts = {
     width,

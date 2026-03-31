@@ -31,7 +31,8 @@
     <div id="results" class="hidden">
       <div class="results-header">
         <nav id="session-tabs" class="session-tabs"></nav>
-        <button id="reset-btn" class="reset-btn">Analyze another file</button>
+        <button id="compare-btn" class="reset-btn">Compare with another file</button>
+        <button id="reset-btn" class="reset-btn">Start over</button>
       </div>
 
       <section id="summary" class="panel">
@@ -82,6 +83,37 @@
       <section id="events-panel" class="panel">
         <h2>Events</h2>
         <div id="events-list"></div>
+      </section>
+    </div>
+
+    <div id="compare-drop" class="drop-zone hidden">
+      <div class="drop-zone-content">
+        <div class="drop-icon">&#x2194;</div>
+        <p>Drop a second <code>.bbl</code> to compare</p>
+        <p class="hint">or click to browse</p>
+        <input type="file" id="compare-file-input" accept=".bbl,.txt,.log,.cfl">
+      </div>
+    </div>
+
+    <div id="compare-results" class="hidden">
+      <div class="results-header">
+        <h2>Flight Comparison</h2>
+        <button id="compare-reset-btn" class="reset-btn">Start over</button>
+      </div>
+
+      <section id="compare-summary" class="panel">
+        <h2>Summary</h2>
+        <div id="compare-summary-table"></div>
+      </section>
+
+      <section id="compare-diagnostics" class="panel">
+        <h2>Diagnostics</h2>
+        <div id="compare-diag-content"></div>
+      </section>
+
+      <section id="compare-spectra" class="panel">
+        <h2>Spectrum Overlay</h2>
+        <div id="compare-spectrum-plots"></div>
       </section>
     </div>
   </main>
