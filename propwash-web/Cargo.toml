@@ -1,0 +1,23 @@
+[package]
+name = "propwash-web"
+version = "0.2.0"
+edition.workspace = true
+description = "WASM bridge for propwash-core"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+propwash-core = { path = "../propwash-core" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+console_error_panic_hook = "0.1"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

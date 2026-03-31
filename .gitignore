@@ -5,3 +5,4 @@ perf.data.old
 .idea/
 compare.py
 perf.data
+web/pkg/
