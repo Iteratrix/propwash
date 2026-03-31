@@ -1,4 +1,4 @@
-import init, { analyze } from "./pkg/propwash_web.js";
+import init, { analyze, get_timeseries, get_spectrogram, get_filter_config } from "./pkg/propwash_web.js";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -15,10 +15,43 @@ const AXIS_COLORS = {
   Z: "#e8b84a",
 };
 
+const FIELD_GROUPS = {
+  gyro: {
+    label: "Gyro (deg/s)",
+    fields: ["gyroADC[0]", "gyroADC[1]", "gyroADC[2]"],
+    names:  ["Roll", "Pitch", "Yaw"],
+    colors: ["#5b8def", "#4ec88c", "#e8b84a"],
+  },
+  motors: {
+    label: "Motors",
+    fields: ["motor[0]", "motor[1]", "motor[2]", "motor[3]"],
+    names:  ["Motor 1", "Motor 2", "Motor 3", "Motor 4"],
+    colors: ["#5b8def", "#4ec88c", "#e8b84a", "#e85454"],
+  },
+  rc: {
+    label: "RC Commands",
+    fields: ["rcCommand[0]", "rcCommand[1]", "rcCommand[2]", "rcCommand[3]"],
+    names:  ["Roll", "Pitch", "Yaw", "Throttle"],
+    colors: ["#5b8def", "#4ec88c", "#e8b84a", "#e8944a"],
+  },
+  pids: {
+    label: "PID Sum",
+    fields: ["axisP[0]", "axisP[1]", "axisP[2]"],
+    names:  ["P Roll", "P Pitch", "P Yaw"],
+    colors: ["#5b8def", "#4ec88c", "#e8b84a"],
+  },
+};
+
+const TS_MAX_POINTS = 4000;
+let tsPlots = [];
+let tsSync = null;
+let filterConfig = null;
+
 async function boot() {
   await init();
   wasmReady = true;
   setupDropZone();
+  setupTimeseriesControls();
   $("#reset-btn").addEventListener("click", reset);
 }
 
@@ -102,11 +135,172 @@ function showSession(idx) {
   activeSessionIdx = idx;
   const s = result.sessions[idx];
   renderSummary(s);
+  const activeGroup = $(".ts-tab.active")?.dataset.group || "gyro";
+  renderTimeseries(idx, activeGroup);
+  filterConfig = JSON.parse(get_filter_config(idx));
   renderDiagnostics(s.analysis.diagnostics);
   renderSpectra(s.analysis.vibration);
+  renderSpectrogram(idx);
   renderThrottleBands(s.analysis.vibration);
   renderAccel(s.analysis.vibration);
   renderEvents(s.analysis.events);
+}
+
+function setupTimeseriesControls() {
+  const tabs = $$("#ts-tabs .ts-tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      tab.classList.add("active");
+      renderTimeseries(activeSessionIdx, tab.dataset.group);
+    });
+  });
+  $("#ts-reset-zoom").addEventListener("click", () => {
+    const activeGroup = $(".ts-tab.active")?.dataset.group || "gyro";
+    renderTimeseries(activeSessionIdx, activeGroup);
+  });
+}
+
+function renderTimeseries(sessionIdx, group) {
+  const container = $("#ts-charts");
+  container.innerHTML = "";
+  tsPlots = [];
+
+  const g = FIELD_GROUPS[group];
+  if (!g) return;
+
+  const allFields = g.fields.join(",");
+  const json = get_timeseries(sessionIdx, TS_MAX_POINTS, allFields);
+  const ts = JSON.parse(json);
+  if (ts.error) {
+    container.innerHTML = `<p class="hint">${ts.error}</p>`;
+    return;
+  }
+
+  const time = ts.time_s;
+  if (!time || time.length === 0) {
+    container.innerHTML = '<p class="hint">No time-series data.</p>';
+    return;
+  }
+
+  const syncKey = "ts-sync";
+  tsSync = uPlot.sync(syncKey);
+
+  const events = result.sessions[sessionIdx]?.analysis?.events || [];
+
+  const width = Math.min(container.clientWidth - 16, 920);
+
+  const datasets = [time];
+  const series = [{}];
+  let hasData = false;
+
+  for (let i = 0; i < g.fields.length; i++) {
+    const vals = ts.fields[g.fields[i]];
+    if (vals && vals.length > 0) {
+      datasets.push(vals);
+      series.push({
+        label: g.names[i],
+        stroke: g.colors[i],
+        width: 1,
+      });
+      hasData = true;
+    }
+  }
+
+  if (!hasData) {
+    container.innerHTML = `<p class="hint">No ${g.label} data in this log.</p>`;
+    return;
+  }
+
+  const opts = {
+    width,
+    height: 280,
+    cursor: {
+      lock: true,
+      sync: { key: syncKey, setSeries: true },
+    },
+    scales: { x: { time: false } },
+    axes: [
+      {
+        label: "Time (s)",
+        stroke: "#8888a0",
+        grid: { stroke: "rgba(42,45,58,0.6)" },
+        ticks: { stroke: "rgba(42,45,58,0.6)" },
+        font: "11px JetBrains Mono, monospace",
+        labelFont: "11px JetBrains Mono, monospace",
+      },
+      {
+        label: g.label,
+        stroke: "#8888a0",
+        grid: { stroke: "rgba(42,45,58,0.6)" },
+        ticks: { stroke: "rgba(42,45,58,0.6)" },
+        font: "11px JetBrains Mono, monospace",
+        labelFont: "11px JetBrains Mono, monospace",
+      },
+    ],
+    series,
+    plugins: [eventMarkersPlugin(events)],
+    select: { show: true },
+    hooks: {
+      setSelect: [
+        (u) => {
+          const min = u.posToVal(u.select.left, "x");
+          const max = u.posToVal(u.select.left + u.select.width, "x");
+          if (max - min > 0.01) {
+            for (const p of tsPlots) {
+              p.setScale("x", { min, max });
+            }
+          }
+        },
+      ],
+    },
+  };
+
+  const row = document.createElement("div");
+  row.className = "ts-chart-row";
+  container.appendChild(row);
+
+  const plot = new uPlot(opts, datasets, row);
+  tsPlots.push(plot);
+}
+
+function eventMarkersPlugin(events) {
+  return {
+    hooks: {
+      draw: [
+        (u) => {
+          const ctx = u.ctx;
+          const [xMin, xMax] = [u.scales.x.min, u.scales.x.max];
+          for (const e of events) {
+            const t = e.time_seconds;
+            if (t < xMin || t > xMax) continue;
+            const x = u.valToPos(t, "x", true);
+            ctx.save();
+            ctx.strokeStyle = eventColor(e.kind.type);
+            ctx.globalAlpha = 0.4;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x, u.bbox.top);
+            ctx.lineTo(x, u.bbox.top + u.bbox.height);
+            ctx.stroke();
+            ctx.restore();
+          }
+        },
+      ],
+    },
+  };
+}
+
+function eventColor(type) {
+  switch (type) {
+    case "ThrottleChop": return "#e85454";
+    case "GyroSpike": return "#e8944a";
+    case "MotorSaturation": return "#e8b84a";
+    case "Desync": return "#e85454";
+    case "Overshoot": return "#5b8def";
+    case "ThrottlePunch": return "#4ec88c";
+    default: return "#ffffff";
+  }
 }
 
 function renderSummary(session) {
@@ -274,10 +468,183 @@ function createSpectrumPlot(container, spectrum) {
       {},
       { stroke: color, width: 1.5, fill: color + "18" },
     ],
-    plugins: [peakMarkersPlugin(spectrum.peaks, maxFreq)],
+    plugins: [
+      peakMarkersPlugin(spectrum.peaks, maxFreq),
+      filterOverlayPlugin(maxFreq),
+    ],
   };
 
   new uPlot(opts, [xData, yData], container);
+}
+
+function filterOverlayPlugin(maxFreq) {
+  return {
+    hooks: {
+      draw: [
+        (u) => {
+          if (!filterConfig || filterConfig.error) return;
+          const ctx = u.ctx;
+
+          const lines = [
+            { freq: filterConfig.gyro_lpf_hz, label: "LPF1", color: "#e8944a" },
+            { freq: filterConfig.gyro_lpf2_hz, label: "LPF2", color: "#e8944a" },
+            { freq: filterConfig.dterm_lpf_hz, label: "D-LPF", color: "#9b59b6" },
+            { freq: filterConfig.gyro_notch1_hz, label: "Notch1", color: "#e85454" },
+            { freq: filterConfig.gyro_notch2_hz, label: "Notch2", color: "#e85454" },
+          ];
+
+          for (const line of lines) {
+            if (!line.freq || line.freq <= 0 || line.freq > maxFreq) continue;
+            const x = u.valToPos(line.freq, "x", true);
+            ctx.save();
+            ctx.strokeStyle = line.color;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([2, 3]);
+            ctx.globalAlpha = 0.6;
+            ctx.beginPath();
+            ctx.moveTo(x, u.bbox.top);
+            ctx.lineTo(x, u.bbox.top + u.bbox.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 0.8;
+            ctx.fillStyle = line.color;
+            ctx.font = "9px JetBrains Mono, monospace";
+            ctx.textAlign = "center";
+            ctx.fillText(line.label, x, u.bbox.top + u.bbox.height + 12);
+            ctx.restore();
+          }
+
+          if (filterConfig.dyn_notch_min_hz && filterConfig.dyn_notch_max_hz) {
+            const xMin = u.valToPos(filterConfig.dyn_notch_min_hz, "x", true);
+            const xMax = u.valToPos(filterConfig.dyn_notch_max_hz, "x", true);
+            ctx.save();
+            ctx.fillStyle = "rgba(232, 84, 84, 0.06)";
+            ctx.fillRect(xMin, u.bbox.top, xMax - xMin, u.bbox.height);
+            ctx.strokeStyle = "#e85454";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 3]);
+            ctx.globalAlpha = 0.4;
+            ctx.strokeRect(xMin, u.bbox.top, xMax - xMin, u.bbox.height);
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 0.7;
+            ctx.fillStyle = "#e85454";
+            ctx.font = "9px JetBrains Mono, monospace";
+            ctx.textAlign = "center";
+            ctx.fillText("Dyn Notch", (xMin + xMax) / 2, u.bbox.top + 12);
+            ctx.restore();
+          }
+        },
+      ],
+    },
+  };
+}
+
+function renderSpectrogram(sessionIdx) {
+  const container = $("#spectrogram-plots");
+  container.innerHTML = "";
+
+  const json = get_spectrogram(sessionIdx, "roll,pitch,yaw");
+  const data = JSON.parse(json);
+  if (data.error || !data.axes || data.axes.length === 0) {
+    container.innerHTML = '<p class="hint">No spectrogram data available.</p>';
+    return;
+  }
+
+  for (const axis of data.axes) {
+    const row = document.createElement("div");
+    row.className = "spectrogram-row";
+
+    const title = document.createElement("h3");
+    title.textContent = axis.axis.charAt(0).toUpperCase() + axis.axis.slice(1);
+    row.appendChild(title);
+
+    const canvas = document.createElement("canvas");
+    const width = Math.min(container.clientWidth - 32, 880);
+    const height = 160;
+    canvas.width = width;
+    canvas.height = height;
+    canvas.style.width = width + "px";
+    canvas.style.height = height + "px";
+    row.appendChild(canvas);
+
+    drawSpectrogram(canvas, axis);
+
+    const legend = document.createElement("div");
+    legend.className = "spectrogram-legend";
+    legend.innerHTML = `<span>0s</span><span>${axis.time_s[axis.time_s.length - 1]?.toFixed(1) || 0}s</span>`;
+    row.appendChild(legend);
+
+    container.appendChild(row);
+  }
+}
+
+function drawSpectrogram(canvas, axis) {
+  const ctx = canvas.getContext("2d");
+  const { width, height } = canvas;
+  const nTime = axis.time_s.length;
+  const nFreq = axis.frequencies_hz.length;
+
+  if (nTime === 0 || nFreq === 0) return;
+
+  let dbMin = Infinity;
+  let dbMax = -Infinity;
+  for (const row of axis.magnitudes_db) {
+    for (const v of row) {
+      if (v > -120) {
+        if (v < dbMin) dbMin = v;
+        if (v > dbMax) dbMax = v;
+      }
+    }
+  }
+
+  const dbRange = dbMax - dbMin || 1;
+  const img = ctx.createImageData(nTime, nFreq);
+
+  for (let t = 0; t < nTime; t++) {
+    const row = axis.magnitudes_db[t];
+    for (let f = 0; f < nFreq; f++) {
+      const val = (row[f] - dbMin) / dbRange;
+      const clamped = Math.max(0, Math.min(1, val));
+      const [r, g, b] = heatColor(clamped);
+      const yFlipped = nFreq - 1 - f;
+      const idx = (yFlipped * nTime + t) * 4;
+      img.data[idx] = r;
+      img.data[idx + 1] = g;
+      img.data[idx + 2] = b;
+      img.data[idx + 3] = 255;
+    }
+  }
+
+  const tmpCanvas = document.createElement("canvas");
+  tmpCanvas.width = nTime;
+  tmpCanvas.height = nFreq;
+  tmpCanvas.getContext("2d").putImageData(img, 0, 0);
+
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(tmpCanvas, 0, 0, width, height);
+
+  ctx.fillStyle = "#e0e0e6";
+  ctx.font = "10px JetBrains Mono, monospace";
+  ctx.textAlign = "right";
+  ctx.fillText(`${axis.frequencies_hz[nFreq - 1]?.toFixed(0) || ""} Hz`, width - 4, 12);
+  ctx.fillText("0 Hz", width - 4, height - 4);
+}
+
+function heatColor(t) {
+  if (t < 0.25) {
+    const s = t / 0.25;
+    return [0, 0, Math.round(80 + 175 * s)];
+  }
+  if (t < 0.5) {
+    const s = (t - 0.25) / 0.25;
+    return [0, Math.round(255 * s), 255];
+  }
+  if (t < 0.75) {
+    const s = (t - 0.5) / 0.25;
+    return [Math.round(255 * s), 255, Math.round(255 * (1 - s))];
+  }
+  const s = (t - 0.75) / 0.25;
+  return [255, Math.round(255 * (1 - s)), 0];
 }
 
 function renderThrottleBands(vibration) {

@@ -39,6 +39,20 @@
         <div id="summary-grid" class="summary-grid"></div>
       </section>
 
+      <section id="timeseries-panel" class="panel">
+        <h2>Flight Data</h2>
+        <div class="ts-controls">
+          <div class="ts-tabs" id="ts-tabs">
+            <button class="ts-tab active" data-group="gyro">Gyro</button>
+            <button class="ts-tab" data-group="motors">Motors</button>
+            <button class="ts-tab" data-group="rc">RC</button>
+            <button class="ts-tab" data-group="pids">PIDs</button>
+          </div>
+          <button id="ts-reset-zoom" class="ts-reset-zoom">Reset zoom</button>
+        </div>
+        <div id="ts-charts"></div>
+      </section>
+
       <section id="diagnostics-panel" class="panel">
         <h2>Diagnostics</h2>
         <div id="diagnostics-list"></div>
@@ -47,6 +61,11 @@
       <section id="spectrum-panel" class="panel">
         <h2>Gyro Frequency Spectrum</h2>
         <div id="spectrum-plots"></div>
+      </section>
+
+      <section id="spectrogram-panel" class="panel">
+        <h2>Spectrogram</h2>
+        <div id="spectrogram-plots"></div>
       </section>
 
       <section id="throttle-panel" class="panel">
