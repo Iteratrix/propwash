@@ -434,6 +434,45 @@ footer a {
 /* Chart sizing */
 .u-wrap { margin: 0 auto; }
 
+/* Comparison */
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.compare-table th {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.compare-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid rgba(42, 45, 58, 0.5);
+}
+
+.compare-table .delta { font-weight: 700; font-size: 0.8rem; }
+.delta.better { color: var(--green); }
+.delta.worse { color: var(--red); }
+.delta.neutral { color: var(--text-dim); }
+
+.diag-diff-section { margin-bottom: 1rem; }
+
+.diag-diff-section h3 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.diag-diff-section h3.fixed { color: var(--green); }
+.diag-diff-section h3.new-issue { color: var(--red); }
+.diag-diff-section h3.unchanged { color: var(--text-dim); }
+
 /* Responsive */
 @media (max-width: 640px) {
   header { padding: 1.5rem 0.5rem 0.75rem; }
