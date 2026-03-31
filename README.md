@@ -36,7 +36,11 @@ $ propwash analyze flight.bbl
     !!  [mechanical] Extreme pitch gyro spike (2032°/s)
 ```
 
-## Install
+## Web UI
+
+**[propwash.deltave.org](https://propwash.deltave.org)** — drop a `.bbl` file in your browser and get instant analysis. No install, no uploads. Everything runs locally via WebAssembly.
+
+## Install (CLI)
 
 Download a prebuilt binary from [Releases](https://github.com/Iteratrix/propwash/releases), or build from source:
 
@@ -99,6 +103,8 @@ propwash-core/          Parser library (can be used independently)
   format/bf/            Betaflight-family format decoder
   analysis/             Event detection, FFT, diagnostics
 propwash/               CLI binary
+propwash-web/           WASM bridge (powers the web UI)
+web/                    Browser frontend (vanilla JS + uPlot)
 ```
 
 Three-layer API for library consumers:
