@@ -1,15 +1,5 @@
 use crate::reader::{InternalError, Reader};
 
-/// Encoding type IDs from the blackbox format.
-pub(crate) const ENC_SIGNED_VB: u8 = 0;
-pub(crate) const ENC_UNSIGNED_VB: u8 = 1;
-pub(crate) const ENC_NEG_14BIT: u8 = 3;
-pub(crate) const ENC_TAG8_8SVB: u8 = 6;
-pub(crate) const ENC_TAG2_3S32: u8 = 7;
-pub(crate) const ENC_TAG8_4S16: u8 = 8;
-pub(crate) const ENC_NULL: u8 = 9;
-pub(crate) const ENC_TAG2_3SVARIABLE: u8 = 10;
-
 /// Sign-extend a value from `bits` width to `i32`.
 fn sign_extend(value: u32, bits: u8) -> i32 {
     let shift = 32 - u32::from(bits);
