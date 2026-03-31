@@ -3,6 +3,7 @@ use rustfft::FftPlanner;
 use serde::Serialize;
 
 use crate::format::bf::types::BfRawSession;
+use crate::types::{Axis, MotorIndex, RcChannel, SensorField};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
@@ -60,11 +61,7 @@ const MIN_FREQ_HZ: f64 = 10.0;
 #[allow(clippy::cast_precision_loss)]
 pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationAnalysis {
     let axis_names = ["roll", "pitch", "yaw"];
-    let gyro_indices = [
-        session.main_field_defs.index_of("gyroADC[0]"),
-        session.main_field_defs.index_of("gyroADC[1]"),
-        session.main_field_defs.index_of("gyroADC[2]"),
-    ];
+    let gyro_indices = Axis::ALL.map(|a| session.main_field_defs.index_of(&SensorField::Gyro(a)));
 
     let mut spectra = Vec::new();
     let mut noise_floor_db = [0.0; 3];
@@ -105,9 +102,9 @@ pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationA
 #[allow(clippy::cast_precision_loss)]
 fn analyze_accel(session: &BfRawSession, sample_rate: f64) -> Option<AccelVibration> {
     let acc_indices = [
-        session.main_field_defs.index_of("accSmooth[0]")?,
-        session.main_field_defs.index_of("accSmooth[1]")?,
-        session.main_field_defs.index_of("accSmooth[2]")?,
+        session.main_field_defs.index_of(&SensorField::Accel(Axis::Roll))?,
+        session.main_field_defs.index_of(&SensorField::Accel(Axis::Pitch))?,
+        session.main_field_defs.index_of(&SensorField::Accel(Axis::Yaw))?,
     ];
 
     let axis_names = ["X", "Y", "Z"];
@@ -153,7 +150,7 @@ fn compute_throttle_bands(
     gyro_indices: &[Option<usize>; 3],
     axis_names: &[&'static str; 3],
 ) -> Vec<ThrottleBand> {
-    let Some(throttle_idx) = session.main_field_defs.index_of("rcCommand[3]") else {
+    let Some(throttle_idx) = session.main_field_defs.index_of(&SensorField::Rc(RcChannel::Throttle)) else {
         return Vec::new();
     };
 

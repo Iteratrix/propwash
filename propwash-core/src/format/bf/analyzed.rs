@@ -1,6 +1,7 @@
 use std::fmt;
 
 use super::types::{BfParseStats, BfRawSession};
+use crate::types::SensorField;
 
 /// Betaflight-specific analyzed view. Borrows raw data.
 pub struct BfAnalyzedView<'a> {
@@ -20,7 +21,7 @@ impl BfAnalyzedView<'_> {
             .main_field_defs
             .fields
             .iter()
-            .filter(|f| f.name.starts_with("motor["))
+            .filter(|f| f.name.is_motor())
             .count()
     }
 
@@ -30,7 +31,7 @@ impl BfAnalyzedView<'_> {
             .main_field_defs
             .fields
             .iter()
-            .any(|f| f.name.starts_with("eRPM["))
+            .any(|f| f.name.is_erpm())
     }
 
     /// Returns whether unfiltered gyro data is logged.
@@ -39,7 +40,7 @@ impl BfAnalyzedView<'_> {
             .main_field_defs
             .fields
             .iter()
-            .any(|f| f.name.starts_with("gyroUnfilt["))
+            .any(|f| matches!(f.name, SensorField::GyroUnfilt(_)))
     }
 
     /// Returns the debug mode from headers (determines what `debug[0-3]` fields mean).

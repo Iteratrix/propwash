@@ -1,4 +1,5 @@
 use super::types::{BfFieldSign, BfRawSession, Predictor};
+use crate::types::{MotorIndex, SensorField};
 
 /// Frame scheduling: determines which PID loop iterations are logged.
 /// Mirrors the firmware's `shouldHaveFrame()` logic.
@@ -196,7 +197,7 @@ pub(crate) fn apply_p_predictor(
             p1.wrapping_add(skip + 1).wrapping_add(decoded)
         }
         Predictor::Motor0 => {
-            let motor0_idx = session.main_field_defs.index_of("motor[0]");
+            let motor0_idx = session.main_field_defs.index_of(&SensorField::Motor(MotorIndex(0)));
             let motor0 = motor0_idx
                 .and_then(|idx| prev1.get(idx))
                 .copied()

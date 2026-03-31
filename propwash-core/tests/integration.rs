@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use propwash_core::types::{Axis, SensorField};
 use propwash_core::{decode_file, Analyzed, Log};
 
 fn fixtures_dir() -> &'static Path {
@@ -93,7 +94,7 @@ fn unified_duration() {
 fn unified_field_extraction() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let unified = log.sessions[0].unified();
-    let gyro = unified.field("gyroADC[0]");
+    let gyro = unified.field(&SensorField::Gyro(Axis::Roll));
     assert_eq!(gyro.len(), unified.frame_count());
 }
 
@@ -101,7 +102,7 @@ fn unified_field_extraction() {
 fn unified_fields_prefix() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let unified = log.sessions[0].unified();
-    let gyro_fields = unified.fields("gyroADC");
+    let gyro_fields = unified.fields_by_prefix("gyroADC");
     assert!(
         gyro_fields.len() >= 3,
         "expected ≥3 gyroADC fields, got {}",
@@ -134,9 +135,9 @@ fn unified_field_names() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let unified = log.sessions[0].unified();
     let names = unified.field_names();
-    assert!(names.contains(&"time"));
-    assert!(names.contains(&"gyroADC[0]"));
-    assert!(names.contains(&"motor[0]"));
+    assert!(names.iter().any(|n| n == "time"));
+    assert!(names.iter().any(|n| n == "gyroADC[0]"));
+    assert!(names.iter().any(|n| n == "motor[0]"));
 }
 
 // ── Analyzed view tests ─────────────────────────────────────────────
@@ -263,7 +264,7 @@ macro_rules! invariant_test {
 
                 // Field extraction length matches frame count
                 if unified.frame_count() > 0 {
-                    let time = unified.field("time");
+                    let time = unified.field(&SensorField::Time);
                     assert_eq!(
                         time.len(),
                         unified.frame_count(),
@@ -335,7 +336,7 @@ fn three_layer_access() {
 
     // Layer 1: Unified (recommended)
     let unified = session.unified();
-    let _gyro = unified.field("gyroADC[0]");
+    let _gyro = unified.field(&SensorField::Gyro(Axis::Roll));
 
     // Layer 2: Analyzed (format-specific)
     match session.analyzed() {
@@ -368,7 +369,7 @@ fn field_val(
     frame_idx: usize,
     name: &str,
 ) -> i64 {
-    let idx = bf.main_field_defs.index_of(name).unwrap();
+    let idx = bf.main_field_defs.index_of(&SensorField::from_header(name)).unwrap();
     bf.frames[frame_idx].values[idx]
 }
 
@@ -442,7 +443,7 @@ fn golden_sample_rate() {
 fn golden_loop_iteration_matches_official_decoder() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
-    let iter_idx = bf.main_field_defs.index_of("loopIteration").unwrap();
+    let iter_idx = bf.main_field_defs.index_of(&SensorField::LoopIteration).unwrap();
     use propwash_core::format::bf::types::BfFrameKind;
 
     assert_eq!(bf.frames[0].values[iter_idx], 0);
@@ -476,7 +477,7 @@ fn golden_loop_iteration_matches_official_decoder() {
 fn golden_time_deltas_are_sane() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
-    let time_idx = bf.main_field_defs.index_of("time").unwrap();
+    let time_idx = bf.main_field_defs.index_of(&SensorField::Time).unwrap();
 
     for i in 1..bf.frames.len().min(1000) {
         let t0 = bf.frames[i - 1].values[time_idx];
@@ -496,7 +497,7 @@ fn golden_time_deltas_are_sane() {
 fn regression_time_not_doubling() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
-    let time_idx = bf.main_field_defs.index_of("time").unwrap();
+    let time_idx = bf.main_field_defs.index_of(&SensorField::Time).unwrap();
 
     let t0 = bf.frames[0].values[time_idx];
     let t1 = bf.frames[1].values[time_idx];
@@ -537,7 +538,7 @@ fn regression_average2_rounding() {
 fn regression_loop_iteration_uses_frame_schedule() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
-    let iter_idx = bf.main_field_defs.index_of("loopIteration").unwrap();
+    let iter_idx = bf.main_field_defs.index_of(&SensorField::LoopIteration).unwrap();
 
     let delta = bf.frames[1].values[iter_idx] - bf.frames[0].values[iter_idx];
     assert_eq!(

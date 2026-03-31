@@ -4,6 +4,7 @@ use super::encoding::{
 };
 use super::predictor::{apply_i_predictor, apply_p_predictor, DecodeContext};
 use super::types::{BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Encoding, Predictor};
+use crate::types::{MotorIndex, SensorField};
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
 
@@ -55,9 +56,9 @@ pub(crate) fn parse_session_frames(
     let p_encodings = &session.p_encodings;
     let p_predictors = &session.p_predictors;
 
-    let motor0_idx = session.main_field_defs.index_of("motor[0]");
-    let time_idx = session.main_field_defs.index_of("time");
-    let iter_idx = session.main_field_defs.index_of("loopIteration");
+    let motor0_idx = session.main_field_defs.index_of(&SensorField::Motor(MotorIndex(0)));
+    let time_idx = session.main_field_defs.index_of(&SensorField::Time);
+    let iter_idx = session.main_field_defs.index_of(&SensorField::LoopIteration);
 
     let mut ctx = DecodeContext::new(session);
     let mut frame_index: usize = 0;
