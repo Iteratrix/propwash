@@ -1,4 +1,4 @@
-import init, { analyze, get_timeseries, get_spectrogram, get_filter_config } from "./pkg/propwash_web.js";
+import init, { analyze, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "./pkg/propwash_web.js";
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -351,6 +351,7 @@ function showSession(idx) {
   renderSpectrogram(idx);
   renderThrottleBands(s.analysis.vibration);
   renderAccel(s.analysis.vibration);
+  renderRawData(idx);
   renderEvents(s.analysis.events);
 }
 
@@ -957,6 +958,78 @@ function renderAccel(vibration) {
     createMultiAxisPlot(plotDiv, accel.spectra);
   }
 }
+
+const RAW_PAGE_SIZE = 200;
+const RAW_DEFAULT_FIELDS = ["time", "gyroADC[0]", "gyroADC[1]", "gyroADC[2]", "motor[0]", "motor[1]", "motor[2]", "motor[3]", "rcCommand[3]"];
+
+function renderRawData(sessionIdx) {
+  const s = result.sessions[sessionIdx];
+  const allFields = s.analysis.summary ? result.sessions[sessionIdx] : null;
+
+  const select = $("#raw-field-select");
+  select.innerHTML = "";
+
+  const fieldNames = get_timeseries(sessionIdx, 1, "time");
+  const ts = JSON.parse(fieldNames);
+  const unified = result.sessions[sessionIdx];
+
+  const defaultFields = RAW_DEFAULT_FIELDS;
+  const available = defaultFields;
+
+  for (const name of available) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    opt.selected = true;
+    select.appendChild(opt);
+  }
+
+  select.onchange = () => loadRawPage(sessionIdx, 0);
+  loadRawPage(sessionIdx, 0);
+}
+
+function loadRawPage(sessionIdx, start) {
+  const select = $("#raw-field-select");
+  const selected = Array.from(select.selectedOptions).map((o) => o.value);
+  if (selected.length === 0) return;
+
+  const json = get_raw_frames(sessionIdx, start, RAW_PAGE_SIZE, selected.join(","));
+  const data = JSON.parse(json);
+  if (data.error) return;
+
+  $("#raw-frame-info").textContent = `Frames ${data.start}–${data.start + data.frames.length} of ${data.total.toLocaleString()}`;
+
+  const wrap = $("#raw-table-wrap");
+  let html = `<table class="raw-table"><thead><tr><th>#</th>`;
+  for (const name of data.field_names) {
+    html += `<th>${name}</th>`;
+  }
+  html += "</tr></thead><tbody>";
+
+  for (let i = 0; i < data.frames.length; i++) {
+    html += `<tr><td>${data.start + i}</td>`;
+    for (const val of data.frames[i]) {
+      html += `<td>${val}</td>`;
+    }
+    html += "</tr>";
+  }
+  html += "</tbody></table>";
+
+  if (data.total > RAW_PAGE_SIZE) {
+    html += `<div style="display:flex;gap:0.5rem;margin-top:0.5rem;justify-content:center;">`;
+    if (start > 0) {
+      html += `<button class="ts-tab" onclick="window._rawPage(${sessionIdx},${Math.max(0, start - RAW_PAGE_SIZE)})">Prev</button>`;
+    }
+    if (start + RAW_PAGE_SIZE < data.total) {
+      html += `<button class="ts-tab" onclick="window._rawPage(${sessionIdx},${start + RAW_PAGE_SIZE})">Next</button>`;
+    }
+    html += "</div>";
+  }
+
+  wrap.innerHTML = html;
+}
+
+window._rawPage = loadRawPage;
 
 function renderEvents(events) {
   const list = $("#events-list");

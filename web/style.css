@@ -434,6 +434,65 @@ footer a {
 /* Chart sizing */
 .u-wrap { margin: 0 auto; }
 
+/* Raw data table */
+.raw-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.raw-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.75rem;
+  padding: 0.25rem;
+  min-width: 200px;
+  max-height: 100px;
+}
+
+.raw-table-wrap {
+  max-height: 400px;
+  overflow: auto;
+  border-radius: 4px;
+}
+
+.raw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.raw-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  text-align: right;
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.raw-table th:first-child { text-align: left; }
+
+.raw-table td {
+  padding: 0.2rem 0.5rem;
+  text-align: right;
+  border-bottom: 1px solid rgba(42, 45, 58, 0.3);
+  white-space: nowrap;
+}
+
+.raw-table td:first-child { text-align: left; color: var(--text-dim); }
+
+.raw-table tr:hover td { background: rgba(91, 141, 239, 0.05); }
+
 /* Comparison */
 .compare-table {
   width: 100%;

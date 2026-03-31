@@ -310,6 +310,55 @@ pub fn get_filter_config(session_idx: usize) -> String {
     })
 }
 
+#[derive(Serialize)]
+struct RawFramesResult {
+    field_names: Vec<String>,
+    frames: Vec<Vec<i64>>,
+    start: usize,
+    total: usize,
+}
+
+#[wasm_bindgen]
+pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list: &str) -> String {
+    CURRENT_LOG.with(|cell| {
+        let borrow = cell.borrow();
+        let Some(log) = borrow.as_ref() else {
+            return r#"{"error":"no log loaded"}"#.to_string();
+        };
+
+        let Some(session) = log.sessions.get(session_idx) else {
+            return r#"{"error":"invalid session index"}"#.to_string();
+        };
+
+        let unified = session.unified();
+        let total = unified.frame_count();
+        let requested: Vec<&str> = field_list.split(',').collect();
+
+        let end = (start + count).min(total);
+        let mut frames = Vec::with_capacity(end - start);
+
+        for frame_idx in start..end {
+            let mut row = Vec::with_capacity(requested.len());
+            for &name in &requested {
+                let field_data = unified.field(name);
+                row.push(field_data.get(frame_idx).copied().unwrap_or(0));
+            }
+            frames.push(row);
+        }
+
+        let result = RawFramesResult {
+            field_names: requested.iter().map(|s| (*s).to_string()).collect(),
+            frames,
+            start,
+            total,
+        };
+
+        serde_json::to_string(&result).unwrap_or_else(|e| {
+            format!(r#"{{"error":"serialization failed: {e}"}}"#)
+        })
+    })
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn hann_window(size: usize) -> Vec<f64> {
     (0..size)
