@@ -5,7 +5,10 @@
 #![doc = "- **Raw** (`session.raw`) — format-specific parsed data, faithful to the file"]
 
 pub mod analysis;
+#[cfg(feature = "raw")]
 pub mod format;
+#[cfg(not(feature = "raw"))]
+pub(crate) mod format;
 mod reader;
 pub mod types;
 
