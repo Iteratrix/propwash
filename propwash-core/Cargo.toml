@@ -4,6 +4,12 @@ version = "0.2.0"
 edition.workspace = true
 description = "Lenient parser for flight controller blackbox logs"
 
+[features]
+default = []
+## Expose format-specific raw types (BfRawSession, etc.).
+## These types may change between minor versions.
+raw = []
+
 [dependencies]
 memchr = "2"
 rustfft = "6"
