@@ -1,6 +1,6 @@
 # propwash
 
-Flight log vibration analyzer for FPV drones. Parses Betaflight-family blackbox logs and tells you what's wrong.
+Flight log analyzer for drones. Parses Betaflight and ArduPilot blackbox logs and tells you what's wrong.
 
 ```
 $ propwash analyze flight.bbl
@@ -38,7 +38,9 @@ $ propwash analyze flight.bbl
 
 ## Web UI
 
-**[propwash.deltave.org](https://propwash.deltave.org)** — drop a `.bbl` file in your browser and get instant analysis. No install, no uploads. Everything runs locally via WebAssembly.
+**[propwash.deltave.org](https://propwash.deltave.org)** — drop a `.bbl` or `.bin` file in your browser and get instant analysis. No install, no uploads. Everything runs locally via WebAssembly.
+
+Features: tabbed interface (Overview, Timeline, Spectrum, Raw Data), interactive ECharts plots with zoom/pan, spectrogram heatmaps, filter overlay, throttle-band analysis, side-by-side flight comparison.
 
 ## Install (CLI)
 
@@ -59,9 +61,14 @@ propwash analyze flight.bbl --output json
 
 # Log metadata and field inventory
 propwash info flight.bbl
-propwash info flight.bbl --json
 
-# Raw frame dump (for agentic analysis / debugging)
+# Batch triage of multiple files
+propwash scan *.bbl *.bin
+
+# Side-by-side comparison of two flights
+propwash compare before.bbl after.bbl
+
+# Raw frame dump (for debugging / agentic analysis)
 propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 ```
 
@@ -72,12 +79,14 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 - Motor saturation (motor hitting max output)
 - Gyro spikes (extreme rotation rates)
 - Setpoint overshoot (PID tracking errors)
+- ESC desync (single motor spike)
 
 **Vibration:**
 - Frequency spectrum per axis (FFT with Hann windowing)
-- Top 5 frequency peaks in dB
+- Top 5 frequency peaks with noise classification (motor noise vs frame resonance)
 - Throttle-windowed analysis (how vibration changes with motor speed)
-- Noise floor measurement
+- Spectrogram (frequency vs time heatmap)
+- Accelerometer vibration (FC mounting quality)
 
 **Diagnostics:**
 - Asymmetric motor saturation → mechanical issue on one side
@@ -85,36 +94,45 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 - Extreme gyro spikes → crash/damage detection
 - Frame resonance → notch filter recommendation
 - Throttle-dependent frequency shift → motor noise (RPM filtering)
+- FC mounting issues → accelerometer RMS analysis
 
 ## Supported formats
 
-| Firmware | Status |
-|----------|--------|
-| Betaflight | Full support |
-| EmuFlight | Full support |
-| Rotorflight | Full support |
-| INAV | Full support |
-| Cleanflight | Partial (legacy format) |
+| Firmware | Format | Status |
+|----------|--------|--------|
+| Betaflight | `.bbl` blackbox | Full support |
+| EmuFlight | `.bbl` blackbox | Full support |
+| Rotorflight | `.bbl` blackbox | Full support |
+| INAV | `.bbl` blackbox | Full support |
+| Cleanflight | `.bbl` blackbox | Full support |
+| ArduPilot (Copter/Plane/Rover) | `.bin` DataFlash | Full support |
 
 ## Architecture
 
 ```
 propwash-core/          Parser library (can be used independently)
-  format/bf/            Betaflight-family format decoder
+  format/bf/            Betaflight-family blackbox decoder
+  format/ap/            ArduPilot DataFlash decoder
   analysis/             Event detection, FFT, diagnostics
 propwash/               CLI binary
 propwash-web/           WASM bridge (powers the web UI)
-web/                    Browser frontend (vanilla JS + uPlot)
+web/                    Browser frontend (vanilla JS + ECharts + uPlot)
 ```
 
-Three-layer API for library consumers:
-- **`session.unified()`** — format-agnostic sensor data
-- **`session.analyzed()`** — firmware-specific insights
-- **`session.raw`** — direct access to parsed frames
+Two-layer API for library consumers:
+- **`session.unified()`** — format-agnostic sensor data via the `Unified` trait
+- **`session.raw`** — format-specific parsed data (behind `features = ["raw"]`)
+
+Typed field access:
+```rust
+use propwash_core::types::{SensorField, Axis};
+
+let gyro = session.unified().field(&SensorField::Gyro(Axis::Roll));
+```
 
 ## Performance
 
-Parses a 15MB log (472K frames) in 250ms. 45x faster than Python parsers.
+Parses a 15MB Betaflight log (472K frames) in 250ms. 45x faster than Python parsers.
 
 ## License
 
