@@ -292,12 +292,12 @@ pub trait Unified {
     fn craft_name(&self) -> &str;
     fn sample_rate_hz(&self) -> f64;
     fn duration_seconds(&self) -> f64;
-    fn field(&self, field: &SensorField) -> Vec<i64>;
+    fn field(&self, field: &SensorField) -> Vec<f64>;
     fn motor_count(&self) -> usize;
 
     /// Extracts one field by header string name.
     /// Convenience for system boundaries (WASM bridge, CLI user input).
-    fn field_by_name(&self, name: &str) -> Vec<i64> {
+    fn field_by_name(&self, name: &str) -> Vec<f64> {
         self.field(&SensorField::from_header(name))
     }
 }

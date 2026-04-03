@@ -778,3 +778,19 @@ fn regression_log_end_requires_marker_string() {
         _ => panic!("expected Betaflight"),
     }
 }
+
+/// Verify PX4 gyro data is accessible with float precision preserved.
+#[test]
+fn px4_gyro_float_precision() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let unified = log.sessions[0].unified();
+    let gyro = unified.field(&SensorField::Gyro(Axis::Roll));
+    assert!(!gyro.is_empty(), "should have gyro data");
+    // Ground log — values are small but nonzero (sub-1 deg/s).
+    // With Vec<f64>, these survive. With Vec<i64>, they'd all be zero.
+    let any_nonzero = gyro.iter().any(|&v| v.abs() > 0.001);
+    assert!(
+        any_nonzero,
+        "gyro values should preserve float precision, got all near-zero"
+    );
+}

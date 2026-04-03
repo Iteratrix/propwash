@@ -170,26 +170,19 @@ impl Px4RawSession {
             })
             .collect()
     }
-
-    fn extract_series_i64(&self, topic: &str, field: &str) -> Vec<(u64, i64)> {
-        self.topic_data(topic)
-            .iter()
-            .filter_map(|msg| {
-                let val = msg.values.get(field)?;
-                Some((msg.timestamp_us, val.as_i64()))
-            })
-            .collect()
-    }
 }
 
 impl Unified for Px4RawSession {
     fn frame_count(&self) -> usize {
-        // Use sensor_combined or sensor_gyro as the primary sensor stream
-        let count = self.topic_data("sensor_combined").len();
-        if count > 0 {
-            return count;
+        // Use highest-rate gyro source as frame count
+        let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
+        for topic in candidates {
+            let count = self.topic_data(topic).len();
+            if count > 0 {
+                return count;
+            }
         }
-        self.topic_data("sensor_gyro").len()
+        0
     }
 
     fn field_names(&self) -> Vec<String> {
@@ -240,9 +233,13 @@ impl Unified for Px4RawSession {
 
     #[allow(clippy::cast_precision_loss)]
     fn sample_rate_hz(&self) -> f64 {
-        let mut series = self.extract_series("sensor_combined", "timestamp");
-        if series.len() < 2 {
-            series = self.extract_series("sensor_gyro", "timestamp");
+        let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
+        let mut series = Vec::new();
+        for topic in candidates {
+            series = self.extract_series(topic, "timestamp");
+            if series.len() >= 2 {
+                break;
+            }
         }
         if series.len() < 2 {
             return 0.0;
@@ -277,24 +274,29 @@ impl Unified for Px4RawSession {
         clippy::too_many_lines,
         clippy::cast_possible_truncation
     )]
-    fn field(&self, field: &SensorField) -> Vec<i64> {
+    fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => {
-                let series = self.extract_series_i64("sensor_combined", "timestamp");
-                if !series.is_empty() {
-                    return series.into_iter().map(|(_, v)| v).collect();
+                let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
+                for topic in candidates {
+                    let series = self.extract_series(topic, "timestamp");
+                    if !series.is_empty() {
+                        return series.into_iter().map(|(_, v)| v).collect();
+                    }
                 }
-                self.extract_series_i64("sensor_gyro", "timestamp")
-                    .into_iter()
-                    .map(|(_, v)| v)
-                    .collect()
+                Vec::new()
             }
-            // PX4 gyro is in rad/s — convert to deg/s
+            // PX4 gyro is in rad/s — convert to deg/s (rounded to nearest integer)
             SensorField::Gyro(axis) => {
                 let idx = axis.index();
-                // sensor_combined has gyro_rad[3]
+                // Try sensor_combined (gyro_rad[N]), then vehicle_angular_velocity (xyz[N]),
+                // then sensor_gyro (x/y/z)
                 let mut series =
                     self.extract_series("sensor_combined", &format!("gyro_rad[{idx}]"));
+                if series.is_empty() {
+                    series =
+                        self.extract_series("vehicle_angular_velocity", &format!("xyz[{idx}]"));
+                }
                 if series.is_empty() {
                     let field_name = match axis {
                         Axis::Roll => "x",
@@ -305,7 +307,7 @@ impl Unified for Px4RawSession {
                 }
                 series
                     .into_iter()
-                    .map(|(_, v)| (v * 57.295_779_513_082_32) as i64)
+                    .map(|(_, v)| v * 57.295_779_513_082_32)
                     .collect()
             }
             SensorField::Accel(axis) => {
@@ -320,46 +322,37 @@ impl Unified for Px4RawSession {
                     };
                     series = self.extract_series("sensor_accel", field_name);
                 }
-                series
-                    .into_iter()
-                    .map(|(_, v)| (v * 1000.0) as i64)
-                    .collect()
+                series.into_iter().map(|(_, v)| v).collect()
             }
             SensorField::Motor(idx) => {
                 let field_name = format!("output[{}]", idx.0);
                 let series = self.extract_series("actuator_outputs", &field_name);
-                series.into_iter().map(|(_, v)| v as i64).collect()
+                series.into_iter().map(|(_, v)| v).collect()
             }
             SensorField::Rc(ch) => {
                 let field_name = format!("values[{}]", ch.index());
                 let series = self.extract_series("input_rc", &field_name);
-                series.into_iter().map(|(_, v)| v as i64).collect()
+                series.into_iter().map(|(_, v)| v).collect()
             }
             SensorField::Altitude => {
                 let series = self.extract_series("vehicle_global_position", "alt");
-                series
-                    .into_iter()
-                    .map(|(_, v)| (v * 100.0) as i64)
-                    .collect()
+                series.into_iter().map(|(_, v)| v).collect()
             }
             SensorField::GpsLat => {
                 let series = self.extract_series("vehicle_gps_position", "lat");
-                series.into_iter().map(|(_, v)| v as i64).collect()
+                series.into_iter().map(|(_, v)| v).collect()
             }
             SensorField::GpsLng => {
                 let series = self.extract_series("vehicle_gps_position", "lon");
-                series.into_iter().map(|(_, v)| v as i64).collect()
+                series.into_iter().map(|(_, v)| v).collect()
             }
             SensorField::Vbat => {
                 let series = self.extract_series("battery_status", "voltage_v");
-                series
-                    .into_iter()
-                    .map(|(_, v)| (v * 100.0) as i64)
-                    .collect()
+                series.into_iter().map(|(_, v)| v).collect()
             }
             SensorField::Unknown(name) => {
                 if let Some((topic, fld)) = name.split_once('.') {
-                    self.extract_series_i64(topic, fld)
+                    self.extract_series(topic, fld)
                         .into_iter()
                         .map(|(_, v)| v)
                         .collect()
@@ -372,13 +365,20 @@ impl Unified for Px4RawSession {
     }
 
     fn motor_count(&self) -> usize {
+        // Use MOT_COUNT parameter if available
+        if let Some(&count) = self.params.get("MOT_COUNT") {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            return (count as usize).min(8);
+        }
+        // Count actuator_outputs fields with non-zero values in first message
         let msgs = self.topic_data("actuator_outputs");
         if let Some(msg) = msgs.first() {
-            // Count output[N] fields that have non-zero values
             let mut count = 0;
             for i in 0..16 {
-                if msg.values.contains_key(&format!("output[{i}]")) {
-                    count = i + 1;
+                let key = format!("output[{i}]");
+                match msg.values.get(&key) {
+                    Some(v) if v.as_f64().abs() > 0.0 => count += 1,
+                    _ => break,
                 }
             }
             count

@@ -135,16 +135,16 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
 
         for &name in &requested {
             let raw = unified.field_by_name(name);
-            let decimated: Vec<f64> = raw.iter().step_by(step).map(|&v| v as f64).collect();
+            let decimated: Vec<f64> = raw.iter().step_by(step).copied().collect();
             fields.insert(name.to_string(), decimated);
         }
 
         let time_raw = unified.field_by_name("time");
-        let t0 = time_raw.first().copied().unwrap_or(0) as f64;
+        let t0 = time_raw.first().copied().unwrap_or(0.0);
         let time_s: Vec<f64> = time_raw
             .iter()
             .step_by(step)
-            .map(|&v| (v as f64 - t0) / 1_000_000.0)
+            .map(|&v| (v - t0) / 1_000_000.0)
             .collect();
 
         let result = TimeseriesResult {
@@ -189,7 +189,7 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
 
         let time_raw = unified.field_by_name("time");
-        let t0 = time_raw.first().copied().unwrap_or(0) as f64;
+        let t0 = time_raw.first().copied().unwrap_or(0.0);
 
         let hann = hann_window(SPEC_WINDOW);
         let mut planner = FftPlanner::new();
@@ -226,14 +226,14 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
                 let mid = start + SPEC_WINDOW / 2;
 
                 let t = if mid < time_raw.len() {
-                    (time_raw[mid] as f64 - t0) / 1_000_000.0
+                    (time_raw[mid] - t0) / 1_000_000.0
                 } else {
                     0.0
                 };
                 time_s.push(t);
 
                 let mut buffer: Vec<Complex<f64>> = (0..SPEC_WINDOW)
-                    .map(|i| Complex::new(raw[start + i] as f64 * hann[i], 0.0))
+                    .map(|i| Complex::new(raw[start + i] * hann[i], 0.0))
                     .collect();
 
                 fft.process(&mut buffer);
@@ -314,7 +314,7 @@ pub fn get_filter_config(session_idx: usize) -> String {
 #[derive(Serialize)]
 struct RawFramesResult {
     field_names: Vec<String>,
-    frames: Vec<Vec<i64>>,
+    frames: Vec<Vec<f64>>,
     start: usize,
     total: usize,
 }
@@ -342,7 +342,7 @@ pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list
             let mut row = Vec::with_capacity(requested.len());
             for &name in &requested {
                 let field_data = unified.field_by_name(name);
-                row.push(field_data.get(frame_idx).copied().unwrap_or(0));
+                row.push(field_data.get(frame_idx).copied().unwrap_or(0.0));
             }
             frames.push(row);
         }
