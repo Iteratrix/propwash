@@ -145,7 +145,7 @@ async function handleCompareFile(file) {
 }
 
 function renderComparison() {
-  const a = result.sessions[0];
+  const a = result.sessions[activeSessionIdx] || result.sessions[0];
   const b = compareResult.sessions[0];
 
   renderComparisonSummary(a, b);

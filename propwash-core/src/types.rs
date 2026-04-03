@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 
 use crate::format::ap::types::ApRawSession;
@@ -86,6 +85,11 @@ pub enum SensorField {
     ERpm(MotorIndex),
     GyroUnfilt(Axis),
     Vbat,
+    Altitude,
+    GpsSpeed,
+    GpsLat,
+    GpsLng,
+    Heading,
     Unknown(String),
 }
 
@@ -97,6 +101,9 @@ impl SensorField {
             "time" => Self::Time,
             "loopIteration" => Self::LoopIteration,
             "vbatLatest" | "vbat" => Self::Vbat,
+            "altitude" | "BarAlt" | "Alt" => Self::Altitude,
+            "gpsSpeed" | "Spd" => Self::GpsSpeed,
+            "heading" | "Yaw" => Self::Heading,
 
             _ if name.starts_with("gyroADC[") || name.starts_with("gyroData[") => {
                 parse_axis_field(name).map_or_else(|| Self::Unknown(name.to_string()), Self::Gyro)
@@ -168,6 +175,11 @@ impl fmt::Display for SensorField {
             Self::ERpm(m) => write!(f, "eRPM[{m}]"),
             Self::GyroUnfilt(a) => write!(f, "gyroUnfilt[{}]", a.index()),
             Self::Vbat => write!(f, "vbatLatest"),
+            Self::Altitude => write!(f, "altitude"),
+            Self::GpsSpeed => write!(f, "gpsSpeed"),
+            Self::GpsLat => write!(f, "gpsLat"),
+            Self::GpsLng => write!(f, "gpsLng"),
+            Self::Heading => write!(f, "heading"),
             Self::Unknown(s) => write!(f, "{s}"),
         }
     }

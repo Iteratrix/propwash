@@ -3,7 +3,7 @@ use rustfft::FftPlanner;
 use serde::Serialize;
 
 use crate::format::bf::types::BfRawSession;
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField};
+use crate::types::{Axis, RcChannel, SensorField};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
@@ -81,7 +81,7 @@ pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationA
             continue;
         }
 
-        let spectrum = compute_spectrum(&samples, sample_rate, axis_names[axis_idx]);
+        let spectrum = compute_spectrum_from_samples(&samples, sample_rate, axis_names[axis_idx]);
         noise_floor_db[axis_idx] = compute_noise_floor(&spectrum.magnitudes_db);
         spectra.push(spectrum);
     }
@@ -129,7 +129,7 @@ fn analyze_accel(session: &BfRawSession, sample_rate: f64) -> Option<AccelVibrat
         rms[i] = variance.sqrt();
 
         if ac_coupled.len() >= FFT_WINDOW_SIZE {
-            spectra.push(compute_spectrum(&ac_coupled, sample_rate, axis_names[i]));
+            spectra.push(compute_spectrum_from_samples(&ac_coupled, sample_rate, axis_names[i]));
         }
     }
 
@@ -185,7 +185,7 @@ fn compute_throttle_bands(
                 .collect();
 
             if samples.len() >= FFT_WINDOW_SIZE {
-                spectra.push(compute_spectrum(
+                spectra.push(compute_spectrum_from_samples(
                     &samples,
                     sample_rate,
                     axis_names[axis_idx],
@@ -206,7 +206,7 @@ fn compute_throttle_bands(
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn compute_spectrum(samples: &[f64], sample_rate: f64, axis: &'static str) -> FrequencySpectrum {
+pub(crate) fn compute_spectrum_from_samples(samples: &[f64], sample_rate: f64, axis: &'static str) -> FrequencySpectrum {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(FFT_WINDOW_SIZE);
 

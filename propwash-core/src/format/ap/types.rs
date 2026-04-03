@@ -165,7 +165,7 @@ impl ApRawSession {
             .field_names.iter().position(|n| n == field_name)
     }
 
-    /// Extracts a time-series of one field from one message type.
+    /// Extracts a time-series of one field from one message type as integers.
     fn extract_series(&self, msg_name: &str, field_name: &str) -> Vec<(u64, i64)> {
         let Some(msg_type) = self.msg_type_for_name(msg_name) else {
             return Vec::new();
@@ -178,6 +178,24 @@ impl ApRawSession {
             .filter(|m| m.msg_type == msg_type)
             .map(|m| {
                 let val = m.values.get(field_idx).map_or(0, ApValue::as_i64);
+                (m.time_us, val)
+            })
+            .collect()
+    }
+
+    /// Extracts a time-series of one field from one message type as floats.
+    fn extract_float_series(&self, msg_name: &str, field_name: &str) -> Vec<(u64, f64)> {
+        let Some(msg_type) = self.msg_type_for_name(msg_name) else {
+            return Vec::new();
+        };
+        let Some(field_idx) = self.field_index(msg_type, field_name) else {
+            return Vec::new();
+        };
+        self.messages
+            .iter()
+            .filter(|m| m.msg_type == msg_type)
+            .map(|m| {
+                let val = m.values.get(field_idx).map_or(0.0, ApValue::as_f64);
                 (m.time_us, val)
             })
             .collect()
@@ -208,14 +226,9 @@ impl Unified for ApRawSession {
                 names.push(SensorField::Accel(axis).to_string());
             }
         }
-        if self.msg_type_for_name("RCOU").is_some() {
-            for i in 0..8 {
-                let msg_type = self.msg_type_for_name("RCOU").unwrap();
-                let field = format!("C{}", i + 1);
-                if self.field_index(msg_type, &field).is_some() {
-                    names.push(SensorField::Motor(MotorIndex(i)).to_string());
-                }
-            }
+        let n_motors = self.motor_count();
+        for i in 0..n_motors {
+            names.push(SensorField::Motor(MotorIndex(i)).to_string());
         }
         if self.msg_type_for_name("RCIN").is_some() {
             for (i, ch) in [RcChannel::Roll, RcChannel::Pitch, RcChannel::Yaw, RcChannel::Throttle].iter().enumerate() {
@@ -239,18 +252,24 @@ impl Unified for ApRawSession {
 
     #[allow(clippy::cast_precision_loss)]
     fn sample_rate_hz(&self) -> f64 {
-        // Estimate from IMU timestamps
-        let series = self.extract_series("IMU", "TimeUS");
+        // Estimate from IMU timestamps — try TimeUS first, fall back to TimeMS
+        let mut series = self.extract_series("IMU", "TimeUS");
+        let mut is_ms = false;
+        if series.len() < 2 {
+            series = self.extract_series("IMU", "TimeMS");
+            is_ms = true;
+        }
         if series.len() < 2 {
             return 0.0;
         }
         let t0 = series.first().unwrap().0;
         let tn = series.last().unwrap().0;
-        let dt_us = tn.saturating_sub(t0);
-        if dt_us == 0 {
+        let dt = tn.saturating_sub(t0);
+        if dt == 0 {
             return 0.0;
         }
-        (series.len() - 1) as f64 / (dt_us as f64 / 1_000_000.0)
+        let divisor = if is_ms { 1_000.0 } else { 1_000_000.0 };
+        (series.len() - 1) as f64 / (dt as f64 / divisor)
     }
 
     #[allow(clippy::cast_precision_loss)]
@@ -280,7 +299,7 @@ impl Unified for ApRawSession {
                     { t as i64 }
                 }).collect()
             }
-            // ArduPilot IMU gyro is in rad/s — convert to deg/s to match Betaflight
+            // ArduPilot IMU gyro is in rad/s as float — convert to deg/s integer to match Betaflight
             SensorField::Gyro(axis) => {
                 let field_name = match axis {
                     Axis::Roll => "GyrX",
@@ -288,11 +307,13 @@ impl Unified for ApRawSession {
                     Axis::Yaw => "GyrZ",
                 };
                 // Try IMU first (lower rate), then GYR (raw, higher rate)
-                let mut series = self.extract_series("IMU", field_name);
+                let mut series = self.extract_float_series("IMU", field_name);
                 if series.is_empty() {
-                    series = self.extract_series("GYR", field_name);
+                    series = self.extract_float_series("GYR", field_name);
                 }
-                series.into_iter().map(|(_, v)| v).collect()
+                // Convert rad/s to deg/s
+                #[allow(clippy::cast_possible_truncation)]
+                series.into_iter().map(|(_, v)| (v * 57.295_779_513_082_32) as i64).collect()
             }
             SensorField::Accel(axis) => {
                 let field_name = match axis {
@@ -324,6 +345,29 @@ impl Unified for ApRawSession {
                 };
                 let series = self.extract_series("RATE", field_name);
                 series.into_iter().map(|(_, v)| v).collect()
+            }
+            SensorField::Altitude => {
+                let series = self.extract_float_series("BARO", "Alt");
+                #[allow(clippy::cast_possible_truncation)]
+                series.into_iter().map(|(_, v)| (v * 100.0) as i64).collect() // m → cm
+            }
+            SensorField::GpsSpeed => {
+                let series = self.extract_float_series("GPS", "Spd");
+                #[allow(clippy::cast_possible_truncation)]
+                series.into_iter().map(|(_, v)| (v * 100.0) as i64).collect() // m/s → cm/s
+            }
+            SensorField::GpsLat => {
+                let series = self.extract_series("GPS", "Lat");
+                series.into_iter().map(|(_, v)| v).collect()
+            }
+            SensorField::GpsLng => {
+                let series = self.extract_series("GPS", "Lng");
+                series.into_iter().map(|(_, v)| v).collect()
+            }
+            SensorField::Heading => {
+                let series = self.extract_float_series("ATT", "Yaw");
+                #[allow(clippy::cast_possible_truncation)]
+                series.into_iter().map(|(_, v)| (v * 100.0) as i64).collect()
             }
             SensorField::Unknown(name) => {
                 // Try to parse "MSGNAME.FieldName" format
