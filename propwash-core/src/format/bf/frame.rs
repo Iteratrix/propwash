@@ -295,6 +295,7 @@ fn decode_fields(
                 let count = count_consecutive(encodings, i, enc, 4);
                 let raw = read_tag8_4s16(reader)?;
                 values[i..i + count].copy_from_slice(&raw[..count]);
+                reader.byte_align();
                 i += count;
             }
             Encoding::Tag8_8Svb => {
