@@ -339,13 +339,30 @@ impl Unified for ApRawSession {
     }
 
     fn motor_count(&self) -> usize {
-        let Some(msg_type) = self.msg_type_for_name("RCOU") else {
-            return 0;
-        };
-        let Some(def) = self.msg_defs.get(&msg_type) else {
-            return 0;
-        };
-        // Count C1..C14 fields that exist
-        def.field_names.iter().filter(|n| n.starts_with('C') && n[1..].parse::<usize>().is_ok()).count()
+        // Use MOT_PWM_COUNT parameter if available, otherwise check SERVO_FUNCTION params
+        // to count outputs configured as motors (function 33-36 = Motor1-4, 37-40 = Motor5-8)
+        if let Some(&count) = self.params.get("MOT_PWM_COUNT") {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            return (count as usize).min(8);
+        }
+
+        // Count SERVOx_FUNCTION params set to motor functions (33-40)
+        let mut count = 0;
+        for i in 1..=14 {
+            let key = format!("SERVO{i}_FUNCTION");
+            if let Some(&func) = self.params.get(&key) {
+                #[allow(clippy::cast_possible_truncation)]
+                let f = func as i32;
+                if (33..=40).contains(&f) {
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            return count;
+        }
+
+        // Fallback: assume 4 for copters, 0 for unknown
+        if self.firmware_version.contains("Copter") { 4 } else { 0 }
     }
 }
