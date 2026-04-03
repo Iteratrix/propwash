@@ -62,6 +62,38 @@ fixture_test!(inav_log00005, "inav/LOG00005.TXT");
 // Rotorflight
 fixture_test!(rtfl_log246, "rotorflight/LOG246.TXT");
 
+// ArduPilot
+fixture_test!(ap_pymavlink_plane, "ardupilot/pymavlink-plane-v3.8.bin");
+fixture_test!(ap_pyflightcoach_plane, "ardupilot/pyflightcoach-plane-v4.3.5.bin");
+fixture_test!(ap_erasial, "ardupilot/erasial-00000001.bin");
+fixture_test!(ap_dronekit_copter, "ardupilot/dronekit-copter-log171.bin");
+fixture_test!(ap_methodic_copter, "ardupilot/methodic-copter-tarot-x4.bin");
+
+#[test]
+fn ardupilot_parses_metadata() {
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    let session = &log.sessions[0];
+    let unified = session.unified();
+
+    assert!(unified.frame_count() > 0, "should have IMU frames");
+    assert!(!unified.firmware_version().is_empty(), "should have firmware version");
+    assert!(unified.duration_seconds() > 0.0, "should have nonzero duration");
+    assert!(unified.motor_count() > 0, "should detect motors");
+
+    let gyro = unified.field(&SensorField::Gyro(Axis::Roll));
+    assert!(!gyro.is_empty(), "should have gyro data");
+}
+
+#[test]
+fn ardupilot_old_format_parses() {
+    let log = parse_fixture("ardupilot/pymavlink-plane-v3.8.bin");
+    let session = &log.sessions[0];
+    let unified = session.unified();
+
+    assert!(unified.frame_count() > 0, "old format should still produce frames");
+    assert!(unified.duration_seconds() > 0.0);
+}
+
 // Error recovery
 fixture_test!(error_recovery, "error-recovery.bbl");
 

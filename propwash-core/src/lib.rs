@@ -15,12 +15,17 @@ pub mod types;
 pub use types::{Log, ParseError, RawSession, Session, Unified, Warning};
 
 const BETAFLIGHT_MARKER: &[u8] = b"H Product:Blackbox flight data recorder";
+const ARDUPILOT_MARKER: &[u8] = &[0xA3, 0x95, 0x80]; // HEAD1 HEAD2 FMT_TYPE
 
 /// Decodes a blackbox log from raw bytes.
 /// Never panics on corrupt data. Collects warnings instead.
 pub fn decode(data: &[u8]) -> Log {
     if memchr::memmem::find(data, BETAFLIGHT_MARKER).is_some() {
         return format::bf::decode(data);
+    }
+
+    if data.len() >= 3 && data[..3] == *ARDUPILOT_MARKER {
+        return format::ap::decode(data);
     }
 
     Log {
