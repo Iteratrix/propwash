@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::format::ap::types::ApRawSession;
 use crate::format::bf::types::BfRawSession;
+use crate::format::px4::types::Px4RawSession;
 
 /// Rotational axis: roll, pitch, or yaw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -308,6 +309,7 @@ pub trait Unified {
 pub enum RawSession {
     Betaflight(BfRawSession),
     ArduPilot(ApRawSession),
+    Px4(Px4RawSession),
 }
 
 impl RawSession {
@@ -317,6 +319,7 @@ impl RawSession {
         match self {
             Self::Betaflight(bf) => bf,
             Self::ArduPilot(ap) => ap,
+            Self::Px4(px4) => px4,
         }
     }
 }

@@ -16,6 +16,7 @@ pub use types::{Log, ParseError, RawSession, Session, Unified, Warning};
 
 const BETAFLIGHT_MARKER: &[u8] = b"H Product:Blackbox flight data recorder";
 const ARDUPILOT_MARKER: &[u8] = &[0xA3, 0x95, 0x80]; // HEAD1 HEAD2 FMT_TYPE
+const ULOG_MAGIC: &[u8] = b"\x55\x4c\x6f\x67\x01\x12\x35";
 
 /// Decodes a blackbox log from raw bytes.
 /// Never panics on corrupt data. Collects warnings instead.
@@ -26,6 +27,10 @@ pub fn decode(data: &[u8]) -> Log {
 
     if data.len() >= 3 && data[..3] == *ARDUPILOT_MARKER {
         return format::ap::decode(data);
+    }
+
+    if data.len() >= 7 && data[..7] == *ULOG_MAGIC {
+        return format::px4::decode(data);
     }
 
     Log {
