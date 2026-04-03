@@ -85,6 +85,22 @@ fn ardupilot_parses_metadata() {
 }
 
 #[test]
+fn ardupilot_motor_count_from_servo_params() {
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    let unified = log.sessions[0].unified();
+    assert_eq!(unified.motor_count(), 4, "Tarot X4 is a quadcopter");
+}
+
+#[test]
+fn ardupilot_craft_name_skips_rtos() {
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    let unified = log.sessions[0].unified();
+    let craft = unified.craft_name();
+    assert!(!craft.contains("ChibiOS"), "craft name should not be the RTOS string, got: {craft}");
+    assert!(!craft.contains("NuttX"), "craft name should not be NuttX, got: {craft}");
+}
+
+#[test]
 fn ardupilot_old_format_parses() {
     let log = parse_fixture("ardupilot/pymavlink-plane-v3.8.bin");
     let session = &log.sessions[0];
@@ -92,6 +108,13 @@ fn ardupilot_old_format_parses() {
 
     assert!(unified.frame_count() > 0, "old format should still produce frames");
     assert!(unified.duration_seconds() > 0.0);
+}
+
+#[test]
+fn ardupilot_plane_zero_motors() {
+    let log = parse_fixture("ardupilot/pymavlink-plane-v3.8.bin");
+    let unified = log.sessions[0].unified();
+    assert_eq!(unified.motor_count(), 0, "plane without SERVO params should report 0 motors");
 }
 
 // Error recovery
