@@ -72,6 +72,14 @@ fixture_test!(ap_erasial, "ardupilot/erasial-00000001.bin");
 fixture_test!(ap_dronekit_copter, "ardupilot/dronekit-copter-log171.bin");
 fixture_test!(ap_methodic_copter, "ardupilot/methodic-copter-tarot-x4.bin");
 
+// PX4
+fixture_test!(px4_small, "px4/sample_log_small.ulg");
+fixture_test!(px4_appended, "px4/sample_appended_multiple.ulg");
+fixture_test!(
+    px4_tagged,
+    "px4/sample_logging_tagged_and_default_params.ulg"
+);
+
 #[test]
 fn ardupilot_parses_metadata() {
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
@@ -137,6 +145,27 @@ fn ardupilot_plane_zero_motors() {
         0,
         "plane without SERVO params should report 0 motors"
     );
+}
+
+#[test]
+fn px4_parses_metadata() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let session = &log.sessions[0];
+    let unified = session.unified();
+
+    assert!(unified.frame_count() > 0, "should have sensor frames");
+    assert!(
+        unified.duration_seconds() > 0.0,
+        "should have nonzero duration"
+    );
+    assert!(unified.sample_rate_hz() > 0.0, "should have sample rate");
+}
+
+#[test]
+fn px4_appended_data_parses() {
+    let log = parse_fixture("px4/sample_appended_multiple.ulg");
+    let unified = log.sessions[0].unified();
+    assert!(unified.frame_count() > 0, "appended log should have frames");
 }
 
 // Error recovery
