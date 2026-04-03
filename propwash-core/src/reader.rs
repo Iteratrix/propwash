@@ -19,6 +19,7 @@ pub(crate) struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    #[cfg(test)]
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             data,
@@ -37,6 +38,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Current position within the slice.
+    #[cfg(test)]
     pub fn pos(&self) -> usize {
         self.pos
     }

@@ -3,7 +3,6 @@ mod episodes;
 use std::process;
 
 use clap::{Parser, Subcommand};
-use propwash_core::Unified;
 use serde::Serialize;
 
 #[derive(Parser)]

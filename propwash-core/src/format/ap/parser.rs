@@ -60,7 +60,9 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
         let payload = &data[pos + 3..pos + msg_len];
         let values = decode_payload(payload, &def.field_types);
 
-        let time_us = values.first().map_or(0, |v| match v {
+        // Extract timestamp — first field is typically TimeUS (u64) or TimeMS (u32)
+        let first_field_name = def.field_names.first().map(String::as_str).unwrap_or("");
+        let raw_time = values.first().map_or(0u64, |v| match v {
             ApValue::UInt(t) => *t,
             ApValue::Int(t) => {
                 #[allow(clippy::cast_sign_loss)]
@@ -68,6 +70,11 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
             }
             _ => 0,
         });
+        let time_us = if first_field_name == "TimeMS" {
+            raw_time * 1000 // Convert ms to us
+        } else {
+            raw_time
+        };
 
         let msg = ApMessage {
             msg_type,
@@ -246,6 +253,8 @@ fn extract_msg_info(
                 && !text.contains("SITL")
                 && !text.starts_with("Param ")
                 && !text.starts_with("RC Protocol")
+                && !text.starts_with("Throttle ")
+                && !text.starts_with("Frame")
             {
                 *vehicle_name = text.clone();
             }
