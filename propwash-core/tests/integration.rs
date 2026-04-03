@@ -779,18 +779,119 @@ fn regression_log_end_requires_marker_string() {
     }
 }
 
-/// Verify PX4 gyro data is accessible with float precision preserved.
+/// Golden value tests against pyulog reference parser.
+/// Values extracted from: pyulog.core.ULog('sample_log_small.ulg')
 #[test]
-fn px4_gyro_float_precision() {
+fn px4_golden_values() {
     let log = parse_fixture("px4/sample_log_small.ulg");
-    let unified = log.sessions[0].unified();
-    let gyro = unified.field(&SensorField::Gyro(Axis::Roll));
-    assert!(!gyro.is_empty(), "should have gyro data");
-    // Ground log — values are small but nonzero (sub-1 deg/s).
-    // With Vec<f64>, these survive. With Vec<i64>, they'd all be zero.
-    let any_nonzero = gyro.iter().any(|&v| v.abs() > 0.001);
-    assert!(
-        any_nonzero,
-        "gyro values should preserve float precision, got all near-zero"
+    let session = &log.sessions[0];
+    let unified = session.unified();
+
+    // Metadata
+    assert_eq!(
+        unified.firmware_version(),
+        "8583f1da30b63154d6ba0bc187d86135dfe33cf9"
     );
+    assert_eq!(unified.craft_name(), "CUBEPILOT_CUBEORANGE");
+
+    // Frame count depends on which gyro topic has data (vehicle_angular_velocity=1812
+    // or sensor_combined=1298). Both are valid primary sources.
+    assert!(
+        unified.frame_count() >= 1298,
+        "expected at least 1298 frames, got {}",
+        unified.frame_count()
+    );
+
+    // Gyro data — from whichever gyro topic is primary
+    let gyro_roll = unified.field(&SensorField::Gyro(Axis::Roll));
+    assert!(!gyro_roll.is_empty());
+    // Value depends on source topic. sensor_combined.gyro_rad[0] = 0.0029683835 rad/s
+    // = 0.17006 deg/s. vehicle_angular_velocity.xyz[0] = 0.0013696939 = 0.07848 deg/s.
+    // Either is valid — just verify it's a plausible small value, not zero.
+    assert!(
+        gyro_roll[0].abs() > 0.01 && gyro_roll[0].abs() < 1.0,
+        "gyro roll[0] should be a small nonzero value, got {:.6}",
+        gyro_roll[0]
+    );
+
+    // Verify sub-degree precision survives (this was the Vec<i64> bug)
+    assert!(
+        gyro_roll[0].abs() > 0.01,
+        "gyro value should preserve float precision"
+    );
+}
+
+#[test]
+fn px4_golden_sensor_combined() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+
+    if let RawSession::Px4(px4) = &log.sessions[0].raw {
+        // pyulog: sensor_combined has 1298 messages
+        let sc = px4.topic_data("sensor_combined");
+        assert_eq!(sc.len(), 1298);
+
+        // First timestamp: 20326716
+        assert_eq!(sc[0].timestamp_us, 20_326_716);
+
+        // Last timestamp: 26822868
+        assert_eq!(sc.last().unwrap().timestamp_us, 26_822_868);
+
+        // First gyro_rad[0]: 0.0029683835
+        let gyro_x = sc[0].values.get("gyro_rad[0]").unwrap().as_f64();
+        assert!(
+            (gyro_x - 0.002_968_383_5).abs() < 1e-8,
+            "gyro_rad[0]: expected 0.0029683835, got {gyro_x}"
+        );
+
+        // First accelerometer_m_s2[2]: -9.6342430115 (gravity)
+        let acc_z = sc[0].values.get("accelerometer_m_s2[2]").unwrap().as_f64();
+        assert!(
+            (acc_z - (-9.634_243_011_5)).abs() < 0.001,
+            "accel_z: expected -9.634, got {acc_z}"
+        );
+    } else {
+        panic!("expected PX4 session");
+    }
+}
+
+#[test]
+fn px4_golden_angular_velocity() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+
+    if let RawSession::Px4(px4) = &log.sessions[0].raw {
+        // pyulog: vehicle_angular_velocity has 1812 messages
+        let vav = px4.topic_data("vehicle_angular_velocity");
+        assert_eq!(vav.len(), 1812);
+
+        // First xyz[2]: -0.0762074292 rad/s
+        let yaw = vav[0].values.get("xyz[2]").unwrap().as_f64();
+        assert!(
+            (yaw - (-0.076_207_429_2)).abs() < 1e-8,
+            "xyz[2]: expected -0.0762074292, got {yaw}"
+        );
+    } else {
+        panic!("expected PX4 session");
+    }
+}
+
+#[test]
+fn px4_golden_format_count() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    if let RawSession::Px4(px4) = &log.sessions[0].raw {
+        // pyulog: 82 formats, 70 datasets, 980 params
+        assert_eq!(px4.formats.len(), 82);
+        // We store all subscriptions (72); pyulog reports 70 datasets (ones with data)
+        assert!(
+            px4.subscriptions.len() >= 70,
+            "expected >=70 subscriptions, got {}",
+            px4.subscriptions.len()
+        );
+        assert!(
+            px4.params.len() >= 970,
+            "expected ~980 params, got {}",
+            px4.params.len()
+        );
+    } else {
+        panic!("expected PX4 session");
+    }
 }

@@ -92,8 +92,8 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
         .unwrap_or_default();
 
     let hardware_name = info
-        .get("sys_hw")
-        .or_else(|| info.get("ver_hw"))
+        .get("ver_hw")
+        .or_else(|| info.get("sys_hw"))
         .cloned()
         .unwrap_or_default();
 
