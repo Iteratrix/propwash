@@ -6,12 +6,13 @@
 |--------|-----------|----------|--------|
 | Betaflight Blackbox | `.bbl` | Betaflight, EmuFlight, Rotorflight, INAV, Cleanflight | Full support |
 | ArduPilot DataFlash | `.bin` | ArduCopter, ArduPlane, ArduRover, ArduSub | Full support |
+| PX4 ULog | `.ulg` | PX4 Autopilot | Full support |
 
 ## Planned
 
 | Priority | Format | Extension | Firmware | Difficulty | Notes |
 |----------|--------|-----------|----------|------------|-------|
-| 1 | PX4 ULog | `.ulg` | PX4 Autopilot | Medium | Second largest open-source autopilot. Self-describing, no prediction encoding. `pyulog` reference parser. |
+| ~~1~~ | ~~PX4 ULog~~ | ~~`.ulg`~~ | ~~PX4 Autopilot~~ | ~~Done~~ | ~~Shipped in v0.3.0~~ |
 | 2 | DJI Flight Logs | `.DAT`, `.txt` | DJI Phantom/Mavic/Mini/Air/FPV | Hard | 70%+ market share. Encrypted in newer versions. `DatCon` (Java) reverse-engineered parser exists. |
 | 3 | MAVLink Telemetry | `.tlog` | ArduPilot, PX4 (ground station side) | Easy | Timestamped MAVLink packets logged by Mission Planner/QGC. Low rate (~10Hz). |
 | 4 | KISS FC | binary | KISS FC, KISS Ultra | Easy | Simple fixed-width fields. Racing niche, no good standalone parser. |
