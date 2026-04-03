@@ -99,7 +99,7 @@ pub(crate) fn read_tag2_3s32(r: &mut Reader<'_>) -> Result<[i32; 3], InternalErr
 
 /// Read `TAG8_4S16` encoded values (encoding ID 8).
 /// Packs exactly 4 signed 16-bit values using nibble-aligned bitstream.
-/// IMPORTANT: Uses BIG-ENDIAN byte order (unlike `TAG2_3S32`).
+/// Uses bit-level reads to match the firmware's stream positioning.
 #[allow(clippy::needless_range_loop)]
 pub(crate) fn read_tag8_4s16(r: &mut Reader<'_>) -> Result<[i32; 4], InternalError> {
     let tags = r.read_byte()?;
@@ -108,8 +108,6 @@ pub(crate) fn read_tag8_4s16(r: &mut Reader<'_>) -> Result<[i32; 4], InternalErr
     }
 
     let mut result = [0i32; 4];
-    let mut aligned = true;
-    let mut buf: u8 = 0;
 
     for i in 0..4 {
         let tag = (tags >> (i * 2)) & 3;
@@ -119,43 +117,21 @@ pub(crate) fn read_tag8_4s16(r: &mut Reader<'_>) -> Result<[i32; 4], InternalErr
 
             1 => {
                 // 4-bit signed nibble
-                let nibble = if aligned {
-                    buf = r.read_byte()?;
-                    buf >> 4
-                } else {
-                    buf & 0x0F
-                };
-                aligned = !aligned;
+                let nibble = r.read_bits(4)?;
                 result[i] = sign_extend(u32::from(nibble), 4);
             }
 
             2 => {
                 // 8-bit signed
-                if aligned {
-                    let b = r.read_byte()?;
-                    result[i] = i32::from(b.cast_signed());
-                } else {
-                    let upper = (buf & 0x0F) << 4;
-                    buf = r.read_byte()?;
-                    let combined = upper | (buf >> 4);
-                    result[i] = i32::from(combined.cast_signed());
-                }
-                // aligned state unchanged for 8-bit
+                let byte = r.read_bits(8)?;
+                result[i] = i32::from(byte as i8);
             }
 
             _ => {
                 // 16-bit signed, big-endian
-                if aligned {
-                    let b = r.read_bytes(2)?;
-                    result[i] = i32::from(i16::from_be_bytes([b[0], b[1]]));
-                } else {
-                    let upper = u32::from(buf & 0x0F) << 12;
-                    let b = r.read_bytes(2)?;
-                    let combined = upper | (u32::from(b[0]) << 4) | (u32::from(b[1]) >> 4);
-                    result[i] = sign_extend(combined, 16);
-                    buf = b[1];
-                    // stays unaligned
-                }
+                let hi = r.read_bits(8)?;
+                let lo = r.read_bits(8)?;
+                result[i] = i32::from(i16::from_be_bytes([hi, lo]));
             }
         }
     }
