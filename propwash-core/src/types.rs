@@ -304,30 +304,13 @@ pub enum RawSession {
     Betaflight(BfRawSession),
 }
 
-impl Unified for RawSession {
-    fn frame_count(&self) -> usize {
-        match self { Self::Betaflight(bf) => bf.frame_count() }
-    }
-    fn field_names(&self) -> Vec<String> {
-        match self { Self::Betaflight(bf) => bf.field_names() }
-    }
-    fn firmware_version(&self) -> &str {
-        match self { Self::Betaflight(bf) => bf.firmware_version() }
-    }
-    fn craft_name(&self) -> &str {
-        match self { Self::Betaflight(bf) => bf.craft_name() }
-    }
-    fn sample_rate_hz(&self) -> f64 {
-        match self { Self::Betaflight(bf) => bf.sample_rate_hz() }
-    }
-    fn duration_seconds(&self) -> f64 {
-        match self { Self::Betaflight(bf) => bf.duration_seconds() }
-    }
-    fn field(&self, field: &SensorField) -> Vec<i64> {
-        match self { Self::Betaflight(bf) => bf.field(field) }
-    }
-    fn motor_count(&self) -> usize {
-        match self { Self::Betaflight(bf) => bf.motor_count() }
+impl RawSession {
+    /// Single dispatch point: returns the Unified implementation for this format.
+    /// Adding a new format = adding one line here.
+    fn as_unified(&self) -> &dyn Unified {
+        match self {
+            Self::Betaflight(bf) => bf,
+        }
     }
 }
 
@@ -345,7 +328,7 @@ pub struct Session {
 impl Session {
     /// Returns the unified interface for format-agnostic sensor data access.
     pub fn unified(&self) -> &dyn Unified {
-        &self.raw
+        self.raw.as_unified()
     }
 }
 
