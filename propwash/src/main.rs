@@ -751,11 +751,7 @@ fn build_info_json(log: &propwash_core::Log) -> InfoJson {
                 sample_rate_hz: unified.sample_rate_hz(),
                 frame_count: unified.frame_count(),
                 motor_count: unified.motor_count(),
-                field_names: unified
-                    .field_names()
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect(),
+                field_names: unified.field_names(),
                 warnings: s.warnings.iter().map(ToString::to_string).collect(),
             }
         })

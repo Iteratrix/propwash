@@ -55,6 +55,7 @@ struct SpectrogramResponse {
 }
 
 #[derive(Serialize)]
+#[allow(clippy::struct_field_names)]
 struct FilterConfig {
     gyro_lpf_hz: Option<f64>,
     gyro_lpf2_hz: Option<f64>,
@@ -183,6 +184,7 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         }
 
         let freq_res = sample_rate / SPEC_WINDOW as f64;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let max_bin = ((SPEC_MAX_FREQ / freq_res) as usize).min(SPEC_WINDOW / 2);
         let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
 
