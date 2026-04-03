@@ -3,6 +3,8 @@ name = "propwash-web"
 version = "0.2.0"
 edition.workspace = true
 description = "WASM bridge for propwash-core"
+repository = "https://github.com/Iteratrix/propwash"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib"]
