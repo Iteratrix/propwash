@@ -31,7 +31,7 @@ jobs:
         run: wasm-pack build propwash-web --target web --out-dir ../web/pkg
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: web
 
@@ -44,4 +44,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
