@@ -124,7 +124,7 @@ pub(crate) fn read_tag8_4s16(r: &mut Reader<'_>) -> Result<[i32; 4], InternalErr
             2 => {
                 // 8-bit signed
                 let byte = r.read_bits(8)?;
-                result[i] = i32::from(byte as i8);
+                result[i] = i32::from(byte.cast_signed());
             }
 
             _ => {

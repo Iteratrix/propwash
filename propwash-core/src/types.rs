@@ -304,6 +304,7 @@ pub trait Unified {
 /// Format-specific raw session data.
 /// Adding a variant is a breaking change — consumers should handle every format.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum RawSession {
     Betaflight(BfRawSession),
     ArduPilot(ApRawSession),

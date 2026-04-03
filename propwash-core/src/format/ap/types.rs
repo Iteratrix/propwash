@@ -114,13 +114,13 @@ impl ApValue {
 pub struct ApMessage {
     /// Message type ID.
     pub msg_type: u8,
-    /// Timestamp in microseconds (from TimeUS field, if present).
+    /// Timestamp in microseconds (from `TimeUS` field, if present).
     pub time_us: u64,
     /// Field values in order matching the FMT definition.
     pub values: Vec<ApValue>,
 }
 
-/// Complete raw data for one ArduPilot session.
+/// Complete raw data for one `ArduPilot` session.
 #[derive(Debug)]
 pub struct ApRawSession {
     /// Message type definitions (FMT messages), keyed by type ID.
@@ -307,7 +307,7 @@ impl Unified for ApRawSession {
         (max_t - min_t) as f64 / 1_000_000.0
     }
 
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     fn field(&self, field: &SensorField) -> Vec<i64> {
         match field {
             SensorField::Time => {

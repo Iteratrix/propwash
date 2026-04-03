@@ -9,7 +9,7 @@ pub(crate) enum InternalError {
 }
 
 /// Zero-copy byte reader over a borrowed slice with bit-level positioning.
-/// Supports sub-byte reads for TAG8_4S16 nibble-aligned encoding,
+/// Supports sub-byte reads for `TAG8_4S16` nibble-aligned encoding,
 /// and `byte_align()` to match the firmware's `streamByteAlign()`.
 pub(crate) struct Reader<'a> {
     data: &'a [u8],
@@ -94,8 +94,8 @@ impl<'a> Reader<'a> {
         Ok(slice)
     }
 
-    /// Read `n` bits (1-8) from the stream. Returns them right-aligned in a u8.
-    /// Used by TAG8_4S16 for nibble-aligned reads.
+    /// Read `n` bits (1-8) from the stream. Returns them right-aligned in a `u8`.
+    /// Used by `TAG8_4S16` for nibble-aligned reads.
     pub fn read_bits(&mut self, n: u8) -> Result<u8, InternalError> {
         debug_assert!(n > 0 && n <= 8);
 
