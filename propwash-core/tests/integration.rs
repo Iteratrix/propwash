@@ -600,6 +600,84 @@ fn regression_loop_iteration_uses_frame_schedule() {
     );
 }
 
+/// Regression: TAG8_4S16 nibble-aligned reads left the byte stream
+/// misaligned, causing P-frame time predictions to diverge from the
+/// official decoder on ~5% of frames.
+/// Fixed by implementing bit-level reader with byte_align() after TAG8_4S16.
+#[test]
+fn regression_bitreader_btfl_002_time_monotonic() {
+    let log = parse_fixture("fc-blackbox/btfl_002.bbl");
+    for session in &log.sessions {
+        let RawSession::Betaflight(bf) = &session.raw else { continue };
+        let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else { continue };
+        if bf.frames.len() < 2 {
+            continue;
+        }
+        let mut prev_time = bf.frames[0].values[time_idx];
+        for (i, frame) in bf.frames.iter().enumerate().skip(1) {
+            let t = frame.values[time_idx];
+            assert!(
+                t >= prev_time,
+                "session {}: frame {i} time went backwards: {} -> {} (delta {})",
+                session.index, prev_time, t, t - prev_time
+            );
+            prev_time = t;
+        }
+    }
+}
+
+#[test]
+fn regression_bitreader_btfl_all_time_monotonic() {
+    let log = parse_fixture("fc-blackbox/btfl_all.bbl");
+    for session in &log.sessions {
+        let RawSession::Betaflight(bf) = &session.raw else { continue };
+        let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else { continue };
+        if bf.frames.len() < 2 {
+            continue;
+        }
+        let mut prev_time = bf.frames[0].values[time_idx];
+        for (i, frame) in bf.frames.iter().enumerate().skip(1) {
+            let t = frame.values[time_idx];
+            assert!(
+                t >= prev_time,
+                "session {}: frame {i} time went backwards: {} -> {} (delta {})",
+                session.index, prev_time, t, t - prev_time
+            );
+            prev_time = t;
+        }
+    }
+}
+
+/// Verify Cleanflight files parse all frames with monotonic time.
+/// Previously diverged mid-flight due to stream alignment issues.
+#[test]
+fn regression_cleanflight_time_monotonic() {
+    for fixture in &["cleanflight/LOG00568.TXT", "cleanflight/LOG00570.TXT", "cleanflight/LOG00572.TXT"] {
+        let log = parse_fixture(fixture);
+        for session in &log.sessions {
+            let RawSession::Betaflight(bf) = &session.raw else { continue };
+            let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else { continue };
+            if bf.frames.len() < 2 {
+                continue;
+            }
+            let mut prev_time = bf.frames[0].values[time_idx];
+            let mut backwards_count = 0;
+            for frame in bf.frames.iter().skip(1) {
+                let t = frame.values[time_idx];
+                if t < prev_time {
+                    backwards_count += 1;
+                }
+                prev_time = t;
+            }
+            assert!(
+                backwards_count == 0,
+                "{fixture} session {}: {backwards_count} frames with backwards time out of {}",
+                session.index, bf.frames.len()
+            );
+        }
+    }
+}
+
 /// Regression: LOG_END event accepted any 0xFF byte without verifying
 /// the "End of log\0" string, causing false clean-end detection on
 /// corrupt data.
