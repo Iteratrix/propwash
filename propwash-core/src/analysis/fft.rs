@@ -102,9 +102,15 @@ pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationA
 #[allow(clippy::cast_precision_loss)]
 fn analyze_accel(session: &BfRawSession, sample_rate: f64) -> Option<AccelVibration> {
     let acc_indices = [
-        session.main_field_defs.index_of(&SensorField::Accel(Axis::Roll))?,
-        session.main_field_defs.index_of(&SensorField::Accel(Axis::Pitch))?,
-        session.main_field_defs.index_of(&SensorField::Accel(Axis::Yaw))?,
+        session
+            .main_field_defs
+            .index_of(&SensorField::Accel(Axis::Roll))?,
+        session
+            .main_field_defs
+            .index_of(&SensorField::Accel(Axis::Pitch))?,
+        session
+            .main_field_defs
+            .index_of(&SensorField::Accel(Axis::Yaw))?,
     ];
 
     let axis_names = ["X", "Y", "Z"];
@@ -129,7 +135,11 @@ fn analyze_accel(session: &BfRawSession, sample_rate: f64) -> Option<AccelVibrat
         rms[i] = variance.sqrt();
 
         if ac_coupled.len() >= FFT_WINDOW_SIZE {
-            spectra.push(compute_spectrum_from_samples(&ac_coupled, sample_rate, axis_names[i]));
+            spectra.push(compute_spectrum_from_samples(
+                &ac_coupled,
+                sample_rate,
+                axis_names[i],
+            ));
         }
     }
 
@@ -150,7 +160,10 @@ fn compute_throttle_bands(
     gyro_indices: &[Option<usize>; 3],
     axis_names: &[&'static str; 3],
 ) -> Vec<ThrottleBand> {
-    let Some(throttle_idx) = session.main_field_defs.index_of(&SensorField::Rc(RcChannel::Throttle)) else {
+    let Some(throttle_idx) = session
+        .main_field_defs
+        .index_of(&SensorField::Rc(RcChannel::Throttle))
+    else {
         return Vec::new();
     };
 
@@ -206,7 +219,11 @@ fn compute_throttle_bands(
 }
 
 #[allow(clippy::cast_precision_loss)]
-pub(crate) fn compute_spectrum_from_samples(samples: &[f64], sample_rate: f64, axis: &'static str) -> FrequencySpectrum {
+pub(crate) fn compute_spectrum_from_samples(
+    samples: &[f64],
+    sample_rate: f64,
+    axis: &'static str,
+) -> FrequencySpectrum {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(FFT_WINDOW_SIZE);
 

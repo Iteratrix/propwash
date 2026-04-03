@@ -168,8 +168,14 @@ fn cmd_compare(path_a: &str, path_b: &str) {
     let log_a = load_log(path_a);
     let log_b = load_log(path_b);
 
-    let session_a = log_a.sessions.iter().find(|s| s.unified().frame_count() > 0);
-    let session_b = log_b.sessions.iter().find(|s| s.unified().frame_count() > 0);
+    let session_a = log_a
+        .sessions
+        .iter()
+        .find(|s| s.unified().frame_count() > 0);
+    let session_b = log_b
+        .sessions
+        .iter()
+        .find(|s| s.unified().frame_count() > 0);
 
     let (Some(sa), Some(sb)) = (session_a, session_b) else {
         eprintln!("Both files must contain at least one session with frames.");

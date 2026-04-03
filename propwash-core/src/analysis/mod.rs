@@ -47,7 +47,11 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
                     if gyro.len() >= 1024 {
                         #[allow(clippy::cast_precision_loss)]
                         let samples: Vec<f64> = gyro.iter().map(|&v| v as f64).collect();
-                        spectra.push(fft::compute_spectrum_from_samples(&samples, sample_rate, axis_names[i]));
+                        spectra.push(fft::compute_spectrum_from_samples(
+                            &samples,
+                            sample_rate,
+                            axis_names[i],
+                        ));
                     }
                 }
                 if spectra.is_empty() {
@@ -57,7 +61,9 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
                         spectra.get(i).map_or(0.0, |s| {
                             let sum: f64 = s.magnitudes_db.iter().sum();
                             #[allow(clippy::cast_precision_loss)]
-                            { sum / s.magnitudes_db.len() as f64 }
+                            {
+                                sum / s.magnitudes_db.len() as f64
+                            }
                         })
                     });
                     Some(fft::VibrationAnalysis {
@@ -97,8 +103,16 @@ fn detect_ardupilot_events(ap: &ApRawSession) -> Vec<FlightEvent> {
     for msg in ap.messages_by_name("EV") {
         let id = msg.values.get(1).map_or(0, |v| v.as_i64());
         let kind = match id {
-            10 => EventKind::ThrottlePunch { from_percent: 0.0, to_percent: 100.0, duration_ms: 0.0 },
-            11 => EventKind::ThrottleChop { from_percent: 100.0, to_percent: 0.0, duration_ms: 0.0 },
+            10 => EventKind::ThrottlePunch {
+                from_percent: 0.0,
+                to_percent: 100.0,
+                duration_ms: 0.0,
+            },
+            11 => EventKind::ThrottleChop {
+                from_percent: 100.0,
+                to_percent: 0.0,
+                duration_ms: 0.0,
+            },
             _ => continue,
         };
         events.push(FlightEvent {

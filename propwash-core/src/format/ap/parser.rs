@@ -66,7 +66,9 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
             ApValue::UInt(t) => *t,
             ApValue::Int(t) => {
                 #[allow(clippy::cast_sign_loss)]
-                { *t as u64 }
+                {
+                    *t as u64
+                }
             }
             _ => 0,
         });
@@ -165,12 +167,24 @@ fn decode_payload(payload: &[u8], field_types: &[FieldType]) -> Vec<ApValue> {
             FieldType::U8 | FieldType::FlightMode => ApValue::UInt(u64::from(bytes[0])),
             FieldType::I16 => ApValue::Int(i64::from(i16::from_le_bytes([bytes[0], bytes[1]]))),
             FieldType::U16 => ApValue::UInt(u64::from(u16::from_le_bytes([bytes[0], bytes[1]]))),
-            FieldType::I32 => ApValue::Int(i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))),
-            FieldType::U32 => ApValue::UInt(u64::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))),
-            FieldType::I64 => ApValue::Int(i64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]])),
-            FieldType::U64 => ApValue::UInt(u64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]])),
-            FieldType::Float => ApValue::Float(f64::from(f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))),
-            FieldType::Double => ApValue::Float(f64::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]])),
+            FieldType::I32 => ApValue::Int(i64::from(i32::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3],
+            ]))),
+            FieldType::U32 => ApValue::UInt(u64::from(u32::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3],
+            ]))),
+            FieldType::I64 => ApValue::Int(i64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
+            FieldType::U64 => ApValue::UInt(u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
+            FieldType::Float => ApValue::Float(f64::from(f32::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3],
+            ]))),
+            FieldType::Double => ApValue::Float(f64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
             FieldType::Float16 => {
                 let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
                 ApValue::Float(f64::from(decode_f16(bits)))
@@ -204,13 +218,21 @@ fn decode_f16(bits: u16) -> f32 {
         let m = f32::from(mantissa) / 1024.0;
         m * 2.0f32.powi(-14)
     } else if exponent == 31 {
-        if mantissa == 0 { f32::INFINITY } else { f32::NAN }
+        if mantissa == 0 {
+            f32::INFINITY
+        } else {
+            f32::NAN
+        }
     } else {
         let m = 1.0 + f32::from(mantissa) / 1024.0;
         m * 2.0f32.powi(i32::from(exponent) - 15)
     };
 
-    if sign == 1 { -val } else { val }
+    if sign == 1 {
+        -val
+    } else {
+        val
+    }
 }
 
 /// Read a null-padded fixed-length string.
@@ -238,10 +260,14 @@ fn extract_msg_info(
     let msg_idx = def.field_names.iter().position(|n| n == "Message");
     if let Some(idx) = msg_idx {
         if let Some(ApValue::Str(text)) = msg.values.get(idx) {
-            if text.contains("ArduCopter") || text.contains("ArduPlane")
-                || text.contains("ArduRover") || text.contains("ArduSub")
-                || text.contains("Rover") || text.contains("Copter")
-                || text.contains("Plane") || text.contains("AntennaTracker")
+            if text.contains("ArduCopter")
+                || text.contains("ArduPlane")
+                || text.contains("ArduRover")
+                || text.contains("ArduSub")
+                || text.contains("Rover")
+                || text.contains("Copter")
+                || text.contains("Plane")
+                || text.contains("AntennaTracker")
             {
                 if firmware_version.is_empty() {
                     *firmware_version = text.clone();

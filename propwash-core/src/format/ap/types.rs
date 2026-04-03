@@ -151,18 +151,27 @@ impl ApRawSession {
         let Some(msg_type) = self.msg_type_for_name(name) else {
             return Vec::new();
         };
-        self.messages.iter().filter(|m| m.msg_type == msg_type).collect()
+        self.messages
+            .iter()
+            .filter(|m| m.msg_type == msg_type)
+            .collect()
     }
 
     /// Looks up the type ID for a message name.
     pub fn msg_type_for_name(&self, name: &str) -> Option<u8> {
-        self.msg_defs.values().find(|d| d.name == name).map(|d| d.msg_type)
+        self.msg_defs
+            .values()
+            .find(|d| d.name == name)
+            .map(|d| d.msg_type)
     }
 
     /// Looks up the field index within a message type by field name.
     pub fn field_index(&self, msg_type: u8, field_name: &str) -> Option<usize> {
-        self.msg_defs.get(&msg_type)?
-            .field_names.iter().position(|n| n == field_name)
+        self.msg_defs
+            .get(&msg_type)?
+            .field_names
+            .iter()
+            .position(|n| n == field_name)
     }
 
     /// Extracts a time-series of one field from one message type as integers.
@@ -205,7 +214,8 @@ impl ApRawSession {
 impl Unified for ApRawSession {
     fn frame_count(&self) -> usize {
         // Use IMU message count as the "frame count" — it's the primary sensor stream
-        let imu_type = self.msg_type_for_name("IMU")
+        let imu_type = self
+            .msg_type_for_name("IMU")
             .or_else(|| self.msg_type_for_name("ACC"));
         match imu_type {
             Some(t) => self.messages.iter().filter(|m| m.msg_type == t).count(),
@@ -231,7 +241,15 @@ impl Unified for ApRawSession {
             names.push(SensorField::Motor(MotorIndex(i)).to_string());
         }
         if self.msg_type_for_name("RCIN").is_some() {
-            for (i, ch) in [RcChannel::Roll, RcChannel::Pitch, RcChannel::Yaw, RcChannel::Throttle].iter().enumerate() {
+            for (i, ch) in [
+                RcChannel::Roll,
+                RcChannel::Pitch,
+                RcChannel::Yaw,
+                RcChannel::Throttle,
+            ]
+            .iter()
+            .enumerate()
+            {
                 let msg_type = self.msg_type_for_name("RCIN").unwrap();
                 let field = format!("C{}", i + 1);
                 if self.field_index(msg_type, &field).is_some() {
@@ -294,10 +312,15 @@ impl Unified for ApRawSession {
         match field {
             SensorField::Time => {
                 let series = self.extract_series("IMU", "TimeUS");
-                series.into_iter().map(|(t, _)| {
-                    #[allow(clippy::cast_possible_wrap)]
-                    { t as i64 }
-                }).collect()
+                series
+                    .into_iter()
+                    .map(|(t, _)| {
+                        #[allow(clippy::cast_possible_wrap)]
+                        {
+                            t as i64
+                        }
+                    })
+                    .collect()
             }
             // ArduPilot IMU gyro is in rad/s as float — convert to deg/s integer to match Betaflight
             SensorField::Gyro(axis) => {
@@ -313,7 +336,10 @@ impl Unified for ApRawSession {
                 }
                 // Convert rad/s to deg/s
                 #[allow(clippy::cast_possible_truncation)]
-                series.into_iter().map(|(_, v)| (v * 57.295_779_513_082_32) as i64).collect()
+                series
+                    .into_iter()
+                    .map(|(_, v)| (v * 57.295_779_513_082_32) as i64)
+                    .collect()
             }
             SensorField::Accel(axis) => {
                 let field_name = match axis {
@@ -349,12 +375,18 @@ impl Unified for ApRawSession {
             SensorField::Altitude => {
                 let series = self.extract_float_series("BARO", "Alt");
                 #[allow(clippy::cast_possible_truncation)]
-                series.into_iter().map(|(_, v)| (v * 100.0) as i64).collect() // m → cm
+                series
+                    .into_iter()
+                    .map(|(_, v)| (v * 100.0) as i64)
+                    .collect() // m → cm
             }
             SensorField::GpsSpeed => {
                 let series = self.extract_float_series("GPS", "Spd");
                 #[allow(clippy::cast_possible_truncation)]
-                series.into_iter().map(|(_, v)| (v * 100.0) as i64).collect() // m/s → cm/s
+                series
+                    .into_iter()
+                    .map(|(_, v)| (v * 100.0) as i64)
+                    .collect() // m/s → cm/s
             }
             SensorField::GpsLat => {
                 let series = self.extract_series("GPS", "Lat");
@@ -367,7 +399,10 @@ impl Unified for ApRawSession {
             SensorField::Heading => {
                 let series = self.extract_float_series("ATT", "Yaw");
                 #[allow(clippy::cast_possible_truncation)]
-                series.into_iter().map(|(_, v)| (v * 100.0) as i64).collect()
+                series
+                    .into_iter()
+                    .map(|(_, v)| (v * 100.0) as i64)
+                    .collect()
             }
             SensorField::Unknown(name) => {
                 // Try to parse "MSGNAME.FieldName" format
@@ -407,6 +442,10 @@ impl Unified for ApRawSession {
         }
 
         // Fallback: assume 4 for copters, 0 for unknown
-        if self.firmware_version.contains("Copter") { 4 } else { 0 }
+        if self.firmware_version.contains("Copter") {
+            4
+        } else {
+            0
+        }
     }
 }
