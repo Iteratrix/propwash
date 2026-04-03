@@ -298,8 +298,8 @@ pub trait Unified {
 }
 
 /// Format-specific raw session data.
+/// Adding a variant is a breaking change — consumers should handle every format.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum RawSession {
     Betaflight(BfRawSession),
 }
