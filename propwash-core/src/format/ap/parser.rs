@@ -9,7 +9,7 @@ const HEAD2: u8 = 0x95;
 const FMT_TYPE: u8 = 128;
 const FMT_LEN: usize = 89;
 
-/// Parse an ArduPilot DataFlash binary log.
+/// Parse an `ArduPilot` `DataFlash` binary log.
 pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
     let mut msg_defs: HashMap<u8, ApMsgDef> = HashMap::new();
     let mut messages: Vec<ApMessage> = Vec::new();
@@ -61,7 +61,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
         let values = decode_payload(payload, &def.field_types);
 
         // Extract timestamp — first field is typically TimeUS (u64) or TimeMS (u32)
-        let first_field_name = def.field_names.first().map(String::as_str).unwrap_or("");
+        let first_field_name = def.field_names.first().map_or("", String::as_str);
         let raw_time = values.first().map_or(0u64, |v| match v {
             ApValue::UInt(t) => *t,
             ApValue::Int(t) => {
@@ -189,9 +189,9 @@ fn decode_payload(payload: &[u8], field_types: &[FieldType]) -> Vec<ApValue> {
                 let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
                 ApValue::Float(f64::from(decode_f16(bits)))
             }
-            FieldType::Char4 => ApValue::Str(read_fixed_str(bytes)),
-            FieldType::Char16 => ApValue::Str(read_fixed_str(bytes)),
-            FieldType::Char64 => ApValue::Str(read_fixed_str(bytes)),
+            FieldType::Char4 | FieldType::Char16 | FieldType::Char64 => {
+                ApValue::Str(read_fixed_str(bytes))
+            }
             FieldType::I16Array32 => {
                 // Store as the first element for now — arrays are rarely needed
                 let v = i16::from_le_bytes([bytes[0], bytes[1]]);
@@ -270,7 +270,7 @@ fn extract_msg_info(
                 || text.contains("AntennaTracker")
             {
                 if firmware_version.is_empty() {
-                    *firmware_version = text.clone();
+                    firmware_version.clone_from(text);
                 }
             } else if vehicle_name.is_empty()
                 && !text.is_empty()
@@ -282,7 +282,7 @@ fn extract_msg_info(
                 && !text.starts_with("Throttle ")
                 && !text.starts_with("Frame")
             {
-                *vehicle_name = text.clone();
+                vehicle_name.clone_from(text);
             }
         }
     }
@@ -294,7 +294,7 @@ fn extract_version(msg: &ApMessage, def: &ApMsgDef, firmware_version: &mut Strin
     if let Some(idx) = fws_idx {
         if let Some(ApValue::Str(text)) = msg.values.get(idx) {
             if !text.is_empty() {
-                *firmware_version = text.clone();
+                firmware_version.clone_from(text);
             }
         }
     }
