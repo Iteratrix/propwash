@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use crate::format::ap::types::ApRawSession;
 use crate::format::bf::types::BfRawSession;
 
 /// Rotational axis: roll, pitch, or yaw.
@@ -302,6 +303,7 @@ pub trait Unified {
 #[derive(Debug)]
 pub enum RawSession {
     Betaflight(BfRawSession),
+    ArduPilot(ApRawSession),
 }
 
 impl RawSession {
@@ -310,6 +312,7 @@ impl RawSession {
     fn as_unified(&self) -> &dyn Unified {
         match self {
             Self::Betaflight(bf) => bf,
+            Self::ArduPilot(ap) => ap,
         }
     }
 }

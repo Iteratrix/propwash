@@ -33,6 +33,10 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
             };
             (events, vib)
         }
+        RawSession::ArduPilot(_) => {
+            // TODO: ArduPilot-specific event detection and vibration analysis
+            (Vec::new(), None)
+        }
     };
     let summary = summary::summarize(session, &detected);
     let diags = diagnostics::diagnose(
