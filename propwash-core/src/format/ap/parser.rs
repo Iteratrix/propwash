@@ -239,7 +239,14 @@ fn extract_msg_info(
                 if firmware_version.is_empty() {
                     *firmware_version = text.clone();
                 }
-            } else if vehicle_name.is_empty() && !text.is_empty() {
+            } else if vehicle_name.is_empty()
+                && !text.is_empty()
+                && !text.contains("ChibiOS")
+                && !text.contains("NuttX")
+                && !text.contains("SITL")
+                && !text.starts_with("Param ")
+                && !text.starts_with("RC Protocol")
+            {
                 *vehicle_name = text.clone();
             }
         }
