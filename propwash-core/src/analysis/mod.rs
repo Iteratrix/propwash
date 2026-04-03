@@ -8,7 +8,7 @@ use events::{EventKind, FlightEvent};
 use fft::VibrationAnalysis;
 use summary::FlightSummary;
 
-use crate::format::ap::types::ApRawSession;
+use crate::format::ap::types::{ApRawSession, ApValue};
 use crate::types::{RawSession, Session};
 
 use serde::Serialize;
@@ -94,14 +94,14 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
     }
 }
 
-/// Detect events from ArduPilot EV/ERR messages.
+/// Detect events from `ArduPilot` EV/ERR messages.
 #[allow(clippy::cast_precision_loss)]
 fn detect_ardupilot_events(ap: &ApRawSession) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
     // EV messages: arm/disarm, land, etc.
     for msg in ap.messages_by_name("EV") {
-        let id = msg.values.get(1).map_or(0, |v| v.as_i64());
+        let id = msg.values.get(1).map_or(0, ApValue::as_i64);
         let kind = match id {
             10 => EventKind::ThrottlePunch {
                 from_percent: 0.0,
@@ -117,7 +117,7 @@ fn detect_ardupilot_events(ap: &ApRawSession) -> Vec<FlightEvent> {
         };
         events.push(FlightEvent {
             frame_index: 0,
-            time_us: msg.time_us as i64,
+            time_us: msg.time_us.cast_signed(),
             time_seconds: msg.time_us as f64 / 1_000_000.0,
             kind,
         });
