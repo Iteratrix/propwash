@@ -72,10 +72,8 @@ fn analyze_vibration_via_unified(unified: &dyn Unified) -> Option<VibrationAnaly
     for (i, axis) in crate::types::Axis::ALL.iter().enumerate() {
         let gyro = unified.field(&crate::types::SensorField::Gyro(*axis));
         if gyro.len() >= 1024 {
-            #[allow(clippy::cast_precision_loss)]
-            let samples: Vec<f64> = gyro.iter().map(|&v| v as f64).collect();
             spectra.push(fft::compute_spectrum_from_samples(
-                &samples,
+                &gyro,
                 sample_rate,
                 axis_names[i],
             ));

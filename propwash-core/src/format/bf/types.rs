@@ -428,14 +428,15 @@ impl BfRawSession {
         dt_us as f64 / 1_000_000.0
     }
 
-    /// Extracts one field as a `Vec<i64>` across all main frames.
-    pub fn field(&self, sensor_field: &SensorField) -> Vec<i64> {
+    /// Extracts one field as a `Vec<f64>` across all main frames.
+    #[allow(clippy::cast_precision_loss)]
+    pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
         let Some(idx) = self.main_field_defs.index_of(sensor_field) else {
-            return vec![0; self.frames.len()];
+            return vec![0.0; self.frames.len()];
         };
         self.frames
             .iter()
-            .map(|f| f.values.get(idx).copied().unwrap_or(0))
+            .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
             .collect()
     }
 
@@ -491,7 +492,7 @@ impl Unified for BfRawSession {
     fn duration_seconds(&self) -> f64 {
         self.duration_seconds()
     }
-    fn field(&self, field: &SensorField) -> Vec<i64> {
+    fn field(&self, field: &SensorField) -> Vec<f64> {
         self.field(field)
     }
     fn motor_count(&self) -> usize {
