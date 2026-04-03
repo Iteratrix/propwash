@@ -108,42 +108,33 @@ impl SensorField {
             _ if name.starts_with("gyroADC[") || name.starts_with("gyroData[") => {
                 parse_axis_field(name).map_or_else(|| Self::Unknown(name.to_string()), Self::Gyro)
             }
-            _ if name.starts_with("gyroUnfilt[") => {
-                parse_axis_field(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), Self::GyroUnfilt)
-            }
-            _ if name.starts_with("motor[") => {
-                parse_index(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), |i| Self::Motor(MotorIndex(i)))
-            }
+            _ if name.starts_with("gyroUnfilt[") => parse_axis_field(name)
+                .map_or_else(|| Self::Unknown(name.to_string()), Self::GyroUnfilt),
+            _ if name.starts_with("motor[") => parse_index(name).map_or_else(
+                || Self::Unknown(name.to_string()),
+                |i| Self::Motor(MotorIndex(i)),
+            ),
             _ if name.starts_with("rcCommand[") => {
-                parse_rc_channel(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), Self::Rc)
+                parse_rc_channel(name).map_or_else(|| Self::Unknown(name.to_string()), Self::Rc)
             }
-            _ if name.starts_with("setpoint[") => {
-                parse_axis_field(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), Self::Setpoint)
-            }
+            _ if name.starts_with("setpoint[") => parse_axis_field(name)
+                .map_or_else(|| Self::Unknown(name.to_string()), Self::Setpoint),
             _ if name.starts_with("accSmooth[") => {
-                parse_axis_field(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), Self::Accel)
+                parse_axis_field(name).map_or_else(|| Self::Unknown(name.to_string()), Self::Accel)
             }
             _ if name.starts_with("axisP[") => {
-                parse_axis_field(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), Self::PidP)
+                parse_axis_field(name).map_or_else(|| Self::Unknown(name.to_string()), Self::PidP)
             }
             _ if name.starts_with("axisI[") => {
-                parse_axis_field(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), Self::PidI)
+                parse_axis_field(name).map_or_else(|| Self::Unknown(name.to_string()), Self::PidI)
             }
             _ if name.starts_with("axisD[") => {
-                parse_axis_field(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), Self::PidD)
+                parse_axis_field(name).map_or_else(|| Self::Unknown(name.to_string()), Self::PidD)
             }
-            _ if name.starts_with("eRPM[") => {
-                parse_index(name)
-                    .map_or_else(|| Self::Unknown(name.to_string()), |i| Self::ERpm(MotorIndex(i)))
-            }
+            _ if name.starts_with("eRPM[") => parse_index(name).map_or_else(
+                || Self::Unknown(name.to_string()),
+                |i| Self::ERpm(MotorIndex(i)),
+            ),
             other => Self::Unknown(other.to_string()),
         }
     }

@@ -125,8 +125,14 @@ pub(crate) fn parse_headers(
     let main_signed = get_u8_list(i_defs, "signed", n);
     let main_predictors = get_u8_list(i_defs, "predictor", n);
     let main_encodings = get_u8_list(i_defs, "encoding", n);
-    let p_predictors: Vec<Predictor> = get_u8_list(p_defs, "predictor", n).into_iter().map(Predictor::from).collect();
-    let p_encodings: Vec<Encoding> = get_u8_list(p_defs, "encoding", n).into_iter().map(Encoding::from).collect();
+    let p_predictors: Vec<Predictor> = get_u8_list(p_defs, "predictor", n)
+        .into_iter()
+        .map(Predictor::from)
+        .collect();
+    let p_encodings: Vec<Encoding> = get_u8_list(p_defs, "encoding", n)
+        .into_iter()
+        .map(Encoding::from)
+        .collect();
 
     let main_field_defs =
         build_field_defs(&main_names, &main_signed, &main_predictors, &main_encodings);

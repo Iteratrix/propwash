@@ -64,7 +64,10 @@ fixture_test!(rtfl_log246, "rotorflight/LOG246.TXT");
 
 // ArduPilot
 fixture_test!(ap_pymavlink_plane, "ardupilot/pymavlink-plane-v3.8.bin");
-fixture_test!(ap_pyflightcoach_plane, "ardupilot/pyflightcoach-plane-v4.3.5.bin");
+fixture_test!(
+    ap_pyflightcoach_plane,
+    "ardupilot/pyflightcoach-plane-v4.3.5.bin"
+);
 fixture_test!(ap_erasial, "ardupilot/erasial-00000001.bin");
 fixture_test!(ap_dronekit_copter, "ardupilot/dronekit-copter-log171.bin");
 fixture_test!(ap_methodic_copter, "ardupilot/methodic-copter-tarot-x4.bin");
@@ -76,8 +79,14 @@ fn ardupilot_parses_metadata() {
     let unified = session.unified();
 
     assert!(unified.frame_count() > 0, "should have IMU frames");
-    assert!(!unified.firmware_version().is_empty(), "should have firmware version");
-    assert!(unified.duration_seconds() > 0.0, "should have nonzero duration");
+    assert!(
+        !unified.firmware_version().is_empty(),
+        "should have firmware version"
+    );
+    assert!(
+        unified.duration_seconds() > 0.0,
+        "should have nonzero duration"
+    );
     assert!(unified.motor_count() > 0, "should detect motors");
 
     let gyro = unified.field(&SensorField::Gyro(Axis::Roll));
@@ -96,8 +105,14 @@ fn ardupilot_craft_name_skips_rtos() {
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
     let unified = log.sessions[0].unified();
     let craft = unified.craft_name();
-    assert!(!craft.contains("ChibiOS"), "craft name should not be the RTOS string, got: {craft}");
-    assert!(!craft.contains("NuttX"), "craft name should not be NuttX, got: {craft}");
+    assert!(
+        !craft.contains("ChibiOS"),
+        "craft name should not be the RTOS string, got: {craft}"
+    );
+    assert!(
+        !craft.contains("NuttX"),
+        "craft name should not be NuttX, got: {craft}"
+    );
 }
 
 #[test]
@@ -106,7 +121,10 @@ fn ardupilot_old_format_parses() {
     let session = &log.sessions[0];
     let unified = session.unified();
 
-    assert!(unified.frame_count() > 0, "old format should still produce frames");
+    assert!(
+        unified.frame_count() > 0,
+        "old format should still produce frames"
+    );
     assert!(unified.duration_seconds() > 0.0);
 }
 
@@ -114,7 +132,11 @@ fn ardupilot_old_format_parses() {
 fn ardupilot_plane_zero_motors() {
     let log = parse_fixture("ardupilot/pymavlink-plane-v3.8.bin");
     let unified = log.sessions[0].unified();
-    assert_eq!(unified.motor_count(), 0, "plane without SERVO params should report 0 motors");
+    assert_eq!(
+        unified.motor_count(),
+        0,
+        "plane without SERVO params should report 0 motors"
+    );
 }
 
 // Error recovery
@@ -422,7 +444,10 @@ fn field_val(
     frame_idx: usize,
     name: &str,
 ) -> i64 {
-    let idx = bf.main_field_defs.index_of(&SensorField::from_header(name)).unwrap();
+    let idx = bf
+        .main_field_defs
+        .index_of(&SensorField::from_header(name))
+        .unwrap();
     bf.frames[frame_idx].values[idx]
 }
 
@@ -496,7 +521,10 @@ fn golden_sample_rate() {
 fn golden_loop_iteration_matches_official_decoder() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
-    let iter_idx = bf.main_field_defs.index_of(&SensorField::LoopIteration).unwrap();
+    let iter_idx = bf
+        .main_field_defs
+        .index_of(&SensorField::LoopIteration)
+        .unwrap();
     use propwash_core::format::bf::types::BfFrameKind;
 
     assert_eq!(bf.frames[0].values[iter_idx], 0);
@@ -591,7 +619,10 @@ fn regression_average2_rounding() {
 fn regression_loop_iteration_uses_frame_schedule() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
-    let iter_idx = bf.main_field_defs.index_of(&SensorField::LoopIteration).unwrap();
+    let iter_idx = bf
+        .main_field_defs
+        .index_of(&SensorField::LoopIteration)
+        .unwrap();
 
     let delta = bf.frames[1].values[iter_idx] - bf.frames[0].values[iter_idx];
     assert_eq!(
@@ -608,8 +639,12 @@ fn regression_loop_iteration_uses_frame_schedule() {
 fn regression_bitreader_btfl_002_time_monotonic() {
     let log = parse_fixture("fc-blackbox/btfl_002.bbl");
     for session in &log.sessions {
-        let RawSession::Betaflight(bf) = &session.raw else { continue };
-        let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else { continue };
+        let RawSession::Betaflight(bf) = &session.raw else {
+            continue;
+        };
+        let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else {
+            continue;
+        };
         if bf.frames.len() < 2 {
             continue;
         }
@@ -619,7 +654,10 @@ fn regression_bitreader_btfl_002_time_monotonic() {
             assert!(
                 t >= prev_time,
                 "session {}: frame {i} time went backwards: {} -> {} (delta {})",
-                session.index, prev_time, t, t - prev_time
+                session.index,
+                prev_time,
+                t,
+                t - prev_time
             );
             prev_time = t;
         }
@@ -630,8 +668,12 @@ fn regression_bitreader_btfl_002_time_monotonic() {
 fn regression_bitreader_btfl_all_time_monotonic() {
     let log = parse_fixture("fc-blackbox/btfl_all.bbl");
     for session in &log.sessions {
-        let RawSession::Betaflight(bf) = &session.raw else { continue };
-        let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else { continue };
+        let RawSession::Betaflight(bf) = &session.raw else {
+            continue;
+        };
+        let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else {
+            continue;
+        };
         if bf.frames.len() < 2 {
             continue;
         }
@@ -641,7 +683,10 @@ fn regression_bitreader_btfl_all_time_monotonic() {
             assert!(
                 t >= prev_time,
                 "session {}: frame {i} time went backwards: {} -> {} (delta {})",
-                session.index, prev_time, t, t - prev_time
+                session.index,
+                prev_time,
+                t,
+                t - prev_time
             );
             prev_time = t;
         }
@@ -652,11 +697,19 @@ fn regression_bitreader_btfl_all_time_monotonic() {
 /// Previously diverged mid-flight due to stream alignment issues.
 #[test]
 fn regression_cleanflight_time_monotonic() {
-    for fixture in &["cleanflight/LOG00568.TXT", "cleanflight/LOG00570.TXT", "cleanflight/LOG00572.TXT"] {
+    for fixture in &[
+        "cleanflight/LOG00568.TXT",
+        "cleanflight/LOG00570.TXT",
+        "cleanflight/LOG00572.TXT",
+    ] {
         let log = parse_fixture(fixture);
         for session in &log.sessions {
-            let RawSession::Betaflight(bf) = &session.raw else { continue };
-            let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else { continue };
+            let RawSession::Betaflight(bf) = &session.raw else {
+                continue;
+            };
+            let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else {
+                continue;
+            };
             if bf.frames.len() < 2 {
                 continue;
             }
@@ -672,7 +725,8 @@ fn regression_cleanflight_time_monotonic() {
             assert!(
                 backwards_count == 0,
                 "{fixture} session {}: {backwards_count} frames with backwards time out of {}",
-                session.index, bf.frames.len()
+                session.index,
+                bf.frames.len()
             );
         }
     }

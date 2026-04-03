@@ -111,7 +111,10 @@ impl BfFrameDefs {
             .enumerate()
             .map(|(i, f)| (f.name.clone(), i))
             .collect();
-        Self { fields, field_index }
+        Self {
+            fields,
+            field_index,
+        }
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -382,8 +385,16 @@ impl BfRawSession {
         let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
             return 0.0;
         };
-        let t0 = self.frames.first().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
-        let tn = self.frames.last().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
+        let t0 = self
+            .frames
+            .first()
+            .and_then(|f| f.values.get(time_idx).copied())
+            .unwrap_or(0);
+        let tn = self
+            .frames
+            .last()
+            .and_then(|f| f.values.get(time_idx).copied())
+            .unwrap_or(0);
         let dt_us = tn - t0;
         if dt_us <= 0 {
             return 0.0;
@@ -400,8 +411,16 @@ impl BfRawSession {
         let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
             return 0.0;
         };
-        let t0 = self.frames.first().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
-        let tn = self.frames.last().and_then(|f| f.values.get(time_idx).copied()).unwrap_or(0);
+        let t0 = self
+            .frames
+            .first()
+            .and_then(|f| f.values.get(time_idx).copied())
+            .unwrap_or(0);
+        let tn = self
+            .frames
+            .last()
+            .and_then(|f| f.values.get(time_idx).copied())
+            .unwrap_or(0);
         let dt_us = tn - t0;
         if dt_us <= 0 {
             return 0.0;
@@ -414,7 +433,10 @@ impl BfRawSession {
         let Some(idx) = self.main_field_defs.index_of(sensor_field) else {
             return vec![0; self.frames.len()];
         };
-        self.frames.iter().map(|f| f.values.get(idx).copied().unwrap_or(0)).collect()
+        self.frames
+            .iter()
+            .map(|f| f.values.get(idx).copied().unwrap_or(0))
+            .collect()
     }
 
     /// Returns the number of motors detected from field definitions.
@@ -428,10 +450,7 @@ impl BfRawSession {
 
     /// Returns whether bidirectional `DShot` RPM telemetry is present.
     pub fn has_rpm_telemetry(&self) -> bool {
-        self.main_field_defs
-            .fields
-            .iter()
-            .any(|f| f.name.is_erpm())
+        self.main_field_defs.fields.iter().any(|f| f.name.is_erpm())
     }
 
     /// Returns whether unfiltered gyro data is logged.
@@ -454,12 +473,28 @@ impl BfRawSession {
 }
 
 impl Unified for BfRawSession {
-    fn frame_count(&self) -> usize { self.frame_count() }
-    fn field_names(&self) -> Vec<String> { self.field_names() }
-    fn firmware_version(&self) -> &str { self.firmware_version() }
-    fn craft_name(&self) -> &str { self.craft_name() }
-    fn sample_rate_hz(&self) -> f64 { self.sample_rate_hz() }
-    fn duration_seconds(&self) -> f64 { self.duration_seconds() }
-    fn field(&self, field: &SensorField) -> Vec<i64> { self.field(field) }
-    fn motor_count(&self) -> usize { self.motor_count() }
+    fn frame_count(&self) -> usize {
+        self.frame_count()
+    }
+    fn field_names(&self) -> Vec<String> {
+        self.field_names()
+    }
+    fn firmware_version(&self) -> &str {
+        self.firmware_version()
+    }
+    fn craft_name(&self) -> &str {
+        self.craft_name()
+    }
+    fn sample_rate_hz(&self) -> f64 {
+        self.sample_rate_hz()
+    }
+    fn duration_seconds(&self) -> f64 {
+        self.duration_seconds()
+    }
+    fn field(&self, field: &SensorField) -> Vec<i64> {
+        self.field(field)
+    }
+    fn motor_count(&self) -> usize {
+        self.motor_count()
+    }
 }

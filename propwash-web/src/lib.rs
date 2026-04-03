@@ -95,18 +95,14 @@ pub fn analyze(data: &[u8]) -> String {
         warnings.push(w.to_string());
     }
 
-    let result = AnalysisResult {
-        sessions,
-        warnings,
-    };
+    let result = AnalysisResult { sessions, warnings };
 
     CURRENT_LOG.with(|cell| {
         *cell.borrow_mut() = Some(log);
     });
 
-    serde_json::to_string(&result).unwrap_or_else(|e| {
-        format!(r#"{{"error":"serialization failed: {e}"}}"#)
-    })
+    serde_json::to_string(&result)
+        .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
 }
 
 #[wasm_bindgen]
@@ -138,16 +134,14 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
 
         for &name in &requested {
             let raw = unified.field_by_name(name);
-            let decimated: Vec<f64> = raw.iter()
-                .step_by(step)
-                .map(|&v| v as f64)
-                .collect();
+            let decimated: Vec<f64> = raw.iter().step_by(step).map(|&v| v as f64).collect();
             fields.insert(name.to_string(), decimated);
         }
 
         let time_raw = unified.field_by_name("time");
         let t0 = time_raw.first().copied().unwrap_or(0) as f64;
-        let time_s: Vec<f64> = time_raw.iter()
+        let time_s: Vec<f64> = time_raw
+            .iter()
             .step_by(step)
             .map(|&v| (v as f64 - t0) / 1_000_000.0)
             .collect();
@@ -160,9 +154,8 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
             decimation: step,
         };
 
-        serde_json::to_string(&result).unwrap_or_else(|e| {
-            format!(r#"{{"error":"serialization failed: {e}"}}"#)
-        })
+        serde_json::to_string(&result)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
 
@@ -247,7 +240,11 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
                     .map(|i| {
                         let c = buffer[i];
                         let mag = (c.re * c.re + c.im * c.im).sqrt();
-                        if mag > 0.0 { 20.0 * mag.log10() } else { -120.0 }
+                        if mag > 0.0 {
+                            20.0 * mag.log10()
+                        } else {
+                            -120.0
+                        }
                     })
                     .collect();
                 magnitudes_db.push(row);
@@ -267,9 +264,8 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
             sample_rate_hz: sample_rate,
         };
 
-        serde_json::to_string(&response).unwrap_or_else(|e| {
-            format!(r#"{{"error":"serialization failed: {e}"}}"#)
-        })
+        serde_json::to_string(&response)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
 
@@ -290,7 +286,11 @@ pub fn get_filter_config(session_idx: usize) -> String {
         };
 
         let non_zero = |v: i32| -> Option<f64> {
-            if v > 0 { Some(f64::from(v)) } else { None }
+            if v > 0 {
+                Some(f64::from(v))
+            } else {
+                None
+            }
         };
 
         let config = FilterConfig {
@@ -304,9 +304,8 @@ pub fn get_filter_config(session_idx: usize) -> String {
             gyro_notch2_hz: non_zero(bf.get_header_int("gyro_notch2_hz", 0)),
         };
 
-        serde_json::to_string(&config).unwrap_or_else(|e| {
-            format!(r#"{{"error":"serialization failed: {e}"}}"#)
-        })
+        serde_json::to_string(&config)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
 
@@ -353,9 +352,8 @@ pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list
             total,
         };
 
-        serde_json::to_string(&result).unwrap_or_else(|e| {
-            format!(r#"{{"error":"serialization failed: {e}"}}"#)
-        })
+        serde_json::to_string(&result)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
 

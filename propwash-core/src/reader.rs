@@ -145,7 +145,11 @@ impl<'a> Reader<'a> {
 
     /// Peek at the next byte without consuming it. Auto-aligns.
     pub fn peek(&self) -> Option<u8> {
-        let pos = if self.bit_pos > 0 { self.pos + 1 } else { self.pos };
+        let pos = if self.bit_pos > 0 {
+            self.pos + 1
+        } else {
+            self.pos
+        };
         self.data.get(pos).copied()
     }
 
@@ -271,7 +275,7 @@ mod tests {
         // 0xAB = 1010_1011, 0xCD = 1100_1101
         let mut r = Reader::new(&[0xAB, 0xCD]);
         assert_eq!(r.read_bits(4).unwrap(), 0x0A); // 1010
-        // Now at bit_pos=4, read 8 bits spanning both bytes
+                                                   // Now at bit_pos=4, read 8 bits spanning both bytes
         assert_eq!(r.read_bits(8).unwrap(), 0xBC); // 1011_1100
         assert_eq!(r.read_bits(4).unwrap(), 0x0D); // 1101
     }
@@ -288,7 +292,7 @@ mod tests {
     fn read_byte_auto_aligns() {
         let mut r = Reader::new(&[0xAB, 0xCD]);
         r.read_bits(4).unwrap(); // mid-byte
-        // read_byte should align past remainder of 0xAB
+                                 // read_byte should align past remainder of 0xAB
         assert_eq!(r.read_byte().unwrap(), 0xCD);
     }
 }

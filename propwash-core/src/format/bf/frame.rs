@@ -3,10 +3,12 @@ use super::encoding::{
     read_tag8_8svb, read_unsigned_vb,
 };
 use super::predictor::{apply_i_predictor, apply_p_predictor, DecodeContext};
-use super::types::{BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Encoding, Predictor};
-use crate::types::{MotorIndex, SensorField};
+use super::types::{
+    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Encoding, Predictor,
+};
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
+use crate::types::{MotorIndex, SensorField};
 
 // Frame marker bytes
 const MARKER_I: u8 = b'I';
@@ -56,9 +58,13 @@ pub(crate) fn parse_session_frames(
     let p_encodings = &session.p_encodings;
     let p_predictors = &session.p_predictors;
 
-    let motor0_idx = session.main_field_defs.index_of(&SensorField::Motor(MotorIndex(0)));
+    let motor0_idx = session
+        .main_field_defs
+        .index_of(&SensorField::Motor(MotorIndex(0)));
     let time_idx = session.main_field_defs.index_of(&SensorField::Time);
-    let iter_idx = session.main_field_defs.index_of(&SensorField::LoopIteration);
+    let iter_idx = session
+        .main_field_defs
+        .index_of(&SensorField::LoopIteration);
 
     let mut ctx = DecodeContext::new(session);
     let mut frame_index: usize = 0;
@@ -319,7 +325,12 @@ fn decode_fields(
     Ok(values)
 }
 
-fn count_consecutive(encodings: &[Encoding], start: usize, target: Encoding, max_n: usize) -> usize {
+fn count_consecutive(
+    encodings: &[Encoding],
+    start: usize,
+    target: Encoding,
+    max_n: usize,
+) -> usize {
     let mut count = 0;
     for &enc in encodings.iter().skip(start).take(max_n) {
         if enc == target {
