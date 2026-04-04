@@ -498,4 +498,13 @@ impl Unified for BfRawSession {
     fn motor_count(&self) -> usize {
         self.motor_count()
     }
+    fn motor_range(&self) -> (f64, f64) {
+        let motor_output = self.get_header_int_list("motorOutput");
+        let max = match motor_output.len() {
+            0 => 2047,
+            1 => motor_output[0],
+            _ => motor_output[1],
+        };
+        (0.0, f64::from(max))
+    }
 }

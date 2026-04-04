@@ -555,38 +555,40 @@ fn cmd_dump(
             }
         }
 
-        let propwash_core::RawSession::Betaflight(bf) = &session.raw else {
-            continue;
-        };
+        let unified = session.unified();
+        let field_names = unified.field_names();
 
-        let field_names: Vec<String> = bf.main_field_defs.names();
-        let time_idx = bf.main_field_defs.index_of_str("time");
-
-        let selected_fields: Vec<(usize, &str)> = field_names
+        let selected_fields: Vec<&str> = field_names
             .iter()
-            .enumerate()
-            .filter(|(_, name)| {
+            .filter(|name| {
                 if field_prefixes.is_empty() {
                     return true;
                 }
                 field_prefixes.iter().any(|prefix| name.starts_with(prefix))
             })
-            .map(|(i, name)| (i, name.as_str()))
+            .map(String::as_str)
             .collect();
 
+        // Fetch all selected field data as columns
+        let columns: Vec<Vec<f64>> = selected_fields
+            .iter()
+            .map(|name| unified.field_by_name(name))
+            .collect();
+
+        let n_frames = unified.frame_count();
+        let time_data = unified.field_by_name("time");
+
         let mut frames = Vec::new();
-        for frame in &bf.frames {
-            if frame.frame_index < frame_start {
-                continue;
-            }
+        for i in frame_start..n_frames {
             if let Some(end) = frame_end {
-                if frame.frame_index > end {
+                if i > end {
                     break;
                 }
             }
 
-            if let (Some(t_idx), Some(t_start)) = (time_idx, time_start_us) {
-                let t = frame.values.get(t_idx).copied().unwrap_or(0);
+            if let Some(t_start) = time_start_us {
+                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+                let t = time_data.get(i).copied().unwrap_or(0.0) as i64;
                 if t < t_start {
                     continue;
                 }
@@ -598,34 +600,27 @@ fn cmd_dump(
             }
 
             let mut field_values = serde_json::Map::new();
-            for &(idx, name) in &selected_fields {
-                let val = frame.values.get(idx).copied().unwrap_or(0);
-                field_values.insert(
-                    name.to_string(),
-                    serde_json::Value::Number(serde_json::Number::from(val)),
-                );
+            for (col_idx, &name) in selected_fields.iter().enumerate() {
+                let val = columns[col_idx].get(i).copied().unwrap_or(0.0);
+                let json_val = serde_json::Number::from_f64(val)
+                    .map_or(serde_json::Value::Null, serde_json::Value::Number);
+                field_values.insert(name.to_string(), json_val);
             }
 
             frames.push(DumpFrame {
-                index: frame.frame_index,
-                byte_offset: frame.byte_offset,
-                kind: match frame.kind {
-                    propwash_core::format::bf::types::BfFrameKind::Intra => "I",
-                    propwash_core::format::bf::types::BfFrameKind::Inter => "P",
-                },
+                index: i,
+                byte_offset: None,
+                kind: None,
                 values: field_values,
             });
         }
 
         output.sessions.push(DumpSession {
             index: session.index,
-            firmware: bf.firmware_version.clone(),
-            total_frames: bf.frames.len(),
+            firmware: unified.firmware_version().to_string(),
+            total_frames: n_frames,
             dumped_frames: frames.len(),
-            fields: selected_fields
-                .iter()
-                .map(|(_, n)| (*n).to_string())
-                .collect(),
+            fields: selected_fields.iter().map(|s| (*s).to_string()).collect(),
             frames,
         });
     }
@@ -732,8 +727,10 @@ struct DumpSession {
 #[derive(Serialize)]
 struct DumpFrame {
     index: usize,
-    byte_offset: usize,
-    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    byte_offset: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<&'static str>,
     values: serde_json::Map<String, serde_json::Value>,
 }
 

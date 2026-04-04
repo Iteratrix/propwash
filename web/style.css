@@ -201,6 +201,8 @@ footer a {
   background: var(--bg);
   border-radius: 8px;
   padding: 1rem;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .summary-card .label {
@@ -214,6 +216,9 @@ footer a {
 .summary-card .value {
   font-size: 1.3rem;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Timeseries controls */
@@ -439,6 +444,7 @@ footer a {
 .event-type.GyroSpike { color: var(--orange); }
 .event-type.Overshoot { color: var(--accent); }
 .event-type.Desync { color: var(--red); }
+.event-type.FirmwareMessage { color: var(--yellow); }
 
 .events-truncated {
   color: var(--text-dim);

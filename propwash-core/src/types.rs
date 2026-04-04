@@ -295,6 +295,11 @@ pub trait Unified {
     fn field(&self, field: &SensorField) -> Vec<f64>;
     fn motor_count(&self) -> usize;
 
+    /// Returns the (min, max) output range for motor values.
+    fn motor_range(&self) -> (f64, f64) {
+        (0.0, 1.0)
+    }
+
     /// Extracts one field by header string name.
     /// Convenience for system boundaries (WASM bridge, CLI user input).
     fn field_by_name(&self, name: &str) -> Vec<f64> {

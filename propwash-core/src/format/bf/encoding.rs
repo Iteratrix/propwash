@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn sign_extend_6bit() {
-        assert_eq!(sign_extend(0b011111, 6), 31);
-        assert_eq!(sign_extend(0b100000, 6), -32);
+        assert_eq!(sign_extend(0b01_1111, 6), 31);
+        assert_eq!(sign_extend(0b10_0000, 6), -32);
     }
 }

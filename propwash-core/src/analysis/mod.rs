@@ -2,6 +2,7 @@ pub mod diagnostics;
 pub mod events;
 pub mod fft;
 pub mod summary;
+pub mod unified_events;
 
 use diagnostics::Diagnostic;
 use events::{EventKind, FlightEvent};
@@ -9,7 +10,8 @@ use fft::VibrationAnalysis;
 use summary::FlightSummary;
 
 use crate::format::ap::types::{ApRawSession, ApValue};
-use crate::types::{RawSession, Session, Unified};
+use crate::format::px4::types::Px4RawSession;
+use crate::types::{RawSession, Session};
 
 use serde::Serialize;
 
@@ -23,26 +25,24 @@ pub struct FlightAnalysis {
 
 /// Analyzes a parsed session, detecting events and producing a summary.
 pub fn analyze(session: &Session) -> FlightAnalysis {
-    let (detected, vibration) = match &session.raw {
-        RawSession::Betaflight(bf) => {
-            let events = events::detect_events(bf);
-            let sample_rate = session.unified().sample_rate_hz();
-            let vib = if sample_rate > 0.0 {
-                Some(fft::analyze_vibration(bf, sample_rate))
-            } else {
-                None
-            };
-            (events, vib)
+    let unified = session.unified();
+    let (detected, vibration) = {
+        let mut events = unified_events::detect_all(unified);
+        let vib = fft::analyze_vibration_unified(unified);
+
+        // Format-specific event sources
+        match &session.raw {
+            RawSession::Betaflight(_) => {}
+            RawSession::ArduPilot(ap) => {
+                events.extend(detect_ardupilot_events(ap));
+                events.extend(detect_ardupilot_firmware_messages(ap));
+            }
+            RawSession::Px4(px4) => {
+                events.extend(detect_px4_log_events(px4));
+            }
         }
-        RawSession::ArduPilot(ap) => {
-            let events = detect_ardupilot_events(ap);
-            let vib = analyze_vibration_via_unified(session.unified());
-            (events, vib)
-        }
-        RawSession::Px4(_) => {
-            let vib = analyze_vibration_via_unified(session.unified());
-            (Vec::new(), vib)
-        }
+
+        (events, vib)
     };
     let summary = summary::summarize(session, &detected);
     let diags = diagnostics::diagnose(
@@ -59,47 +59,39 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
     }
 }
 
-/// Run FFT vibration analysis using the `Unified` trait (format-agnostic).
-fn analyze_vibration_via_unified(unified: &dyn Unified) -> Option<VibrationAnalysis> {
-    let sample_rate = unified.sample_rate_hz();
-    if sample_rate <= 0.0 {
-        return None;
-    }
+/// Detect events from PX4 firmware log messages (warnings/errors).
+#[allow(clippy::cast_precision_loss)]
+fn detect_px4_log_events(px4: &Px4RawSession) -> Vec<FlightEvent> {
+    let mut events = Vec::new();
 
-    let axis_names = ["roll", "pitch", "yaw"];
-    let mut spectra = Vec::new();
-
-    for (i, axis) in crate::types::Axis::ALL.iter().enumerate() {
-        let gyro = unified.field(&crate::types::SensorField::Gyro(*axis));
-        if gyro.len() >= 1024 {
-            spectra.push(fft::compute_spectrum_from_samples(
-                &gyro,
-                sample_rate,
-                axis_names[i],
-            ));
+    for msg in &px4.log_messages {
+        // Skip debug messages (level 7), show everything else
+        if msg.level >= 7 {
+            continue;
         }
+        let level_name = match msg.level {
+            0 => "emergency",
+            1 => "alert",
+            2 => "critical",
+            3 => "error",
+            4 => "warning",
+            5 => "notice",
+            6 => "info",
+            _ => "debug",
+        };
+        events.push(FlightEvent {
+            frame_index: 0,
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+            time_us: msg.timestamp_us as i64,
+            time_seconds: msg.timestamp_us as f64 / 1_000_000.0,
+            kind: EventKind::FirmwareMessage {
+                level: level_name.to_string(),
+                message: msg.message.clone(),
+            },
+        });
     }
 
-    if spectra.is_empty() {
-        return None;
-    }
-
-    let noise_floor_db = std::array::from_fn(|i| {
-        spectra.get(i).map_or(0.0, |s| {
-            let sum: f64 = s.magnitudes_db.iter().sum();
-            #[allow(clippy::cast_precision_loss)]
-            {
-                sum / s.magnitudes_db.len() as f64
-            }
-        })
-    });
-
-    Some(VibrationAnalysis {
-        spectra,
-        noise_floor_db,
-        throttle_bands: Vec::new(),
-        accel: None,
-    })
+    events
 }
 
 /// Detect events from `ArduPilot` EV/ERR messages.
@@ -127,6 +119,28 @@ fn detect_ardupilot_events(ap: &ApRawSession) -> Vec<FlightEvent> {
             time_us: msg.time_us.cast_signed(),
             time_seconds: msg.time_us as f64 / 1_000_000.0,
             kind,
+        });
+    }
+
+    events
+}
+
+/// Detect firmware messages from `ArduPilot` ERR log messages.
+#[allow(clippy::cast_precision_loss)]
+fn detect_ardupilot_firmware_messages(ap: &ApRawSession) -> Vec<FlightEvent> {
+    let mut events = Vec::new();
+
+    for msg in ap.messages_by_name("ERR") {
+        let subsys = msg.values.get(1).map_or(0, ApValue::as_i64);
+        let code = msg.values.get(2).map_or(0, ApValue::as_i64);
+        events.push(FlightEvent {
+            frame_index: 0,
+            time_us: msg.time_us.cast_signed(),
+            time_seconds: msg.time_us as f64 / 1_000_000.0,
+            kind: EventKind::FirmwareMessage {
+                level: "error".to_string(),
+                message: format!("Subsystem {subsys} error code {code}"),
+            },
         });
     }
 

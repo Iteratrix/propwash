@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use propwash_core::types::{Axis, SensorField};
-use propwash_core::{decode_file, Log, RawSession, Unified};
+use propwash_core::{decode_file, Log, RawSession};
 
 fn fixtures_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
@@ -548,13 +548,13 @@ fn golden_sample_rate() {
 
 #[test]
 fn golden_loop_iteration_matches_official_decoder() {
+    use propwash_core::format::bf::types::BfFrameKind;
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     let bf = get_bf(&log.sessions[1]);
     let iter_idx = bf
         .main_field_defs
         .index_of(&SensorField::LoopIteration)
         .unwrap();
-    use propwash_core::format::bf::types::BfFrameKind;
 
     assert_eq!(bf.frames[0].values[iter_idx], 0);
     assert_eq!(bf.frames[1].values[iter_idx], 1);
@@ -600,7 +600,7 @@ fn golden_time_deltas_are_sane() {
     }
 }
 
-/// Regression: STRAIGHT_LINE predictor doubled time values when
+/// Regression: `STRAIGHT_LINE` predictor doubled time values when
 /// prev2 was zero (I-frame didn't reset both history slots).
 /// Fixed in commit b40cc1a.
 #[test]
@@ -622,7 +622,7 @@ fn regression_time_not_doubling() {
     );
 }
 
-/// Regression: AVERAGE_2 predictor used (p1>>1)+(p2>>1) which
+/// Regression: `AVERAGE_2` predictor used `(p1>>1)+(p2>>1)` which
 /// rounds differently from firmware's (p1+p2)/2 when both are odd.
 /// Caused off-by-one on motor values.
 /// Fixed in commit c1ef151.
@@ -640,8 +640,8 @@ fn regression_average2_rounding() {
     assert_eq!(field_val(bf2, 1, "motor[1]"), 157);
 }
 
-/// Regression: INCREMENT predictor added 1 per frame instead of
-/// (skipped_frames + 1). With P_ratio=16, loopIteration should
+/// Regression: `INCREMENT` predictor added 1 per frame instead of
+/// `(skipped_frames + 1)`. With `P_ratio=16`, `loopIteration` should
 /// jump by 16 per logged frame, not by 1.
 /// Fixed in commit c2f443a.
 #[test]
@@ -660,10 +660,10 @@ fn regression_loop_iteration_uses_frame_schedule() {
     );
 }
 
-/// Regression: TAG8_4S16 nibble-aligned reads left the byte stream
+/// Regression: `TAG8_4S16` nibble-aligned reads left the byte stream
 /// misaligned, causing P-frame time predictions to diverge from the
 /// official decoder on ~5% of frames.
-/// Fixed by implementing bit-level reader with byte_align() after TAG8_4S16.
+/// Fixed by implementing bit-level reader with `byte_align()` after `TAG8_4S16`.
 #[test]
 fn regression_bitreader_btfl_002_time_monotonic() {
     let log = parse_fixture("fc-blackbox/btfl_002.bbl");
@@ -761,7 +761,7 @@ fn regression_cleanflight_time_monotonic() {
     }
 }
 
-/// Regression: LOG_END event accepted any 0xFF byte without verifying
+/// Regression: `LOG_END` event accepted any 0xFF byte without verifying
 /// the "End of log\0" string, causing false clean-end detection on
 /// corrupt data.
 /// Fixed in commit 0236bdc.
@@ -780,7 +780,7 @@ fn regression_log_end_requires_marker_string() {
 }
 
 /// Golden value tests against pyulog reference parser.
-/// Values extracted from: pyulog.core.ULog('sample_log_small.ulg')
+/// Values extracted from: `pyulog.core.ULog('sample_log_small.ulg')`
 #[test]
 fn px4_golden_values() {
     let log = parse_fixture("px4/sample_log_small.ulg");
@@ -891,6 +891,65 @@ fn px4_golden_format_count() {
             "expected ~980 params, got {}",
             px4.params.len()
         );
+    } else {
+        panic!("expected PX4 session");
+    }
+}
+
+#[test]
+fn px4_logging_messages_parsed() {
+    let log = parse_fixture("px4/sample_logging_tagged_and_default_params.ulg");
+    if let RawSession::Px4(px4) = &log.sessions[0].raw {
+        assert!(
+            !px4.log_messages.is_empty(),
+            "should have parsed logging messages"
+        );
+        // Tagged messages should have tag set
+        let tagged = px4.log_messages.iter().filter(|m| m.tag.is_some()).count();
+        assert!(tagged > 0, "should have tagged logging messages");
+        // All messages should have non-empty text
+        for msg in &px4.log_messages {
+            assert!(!msg.message.is_empty(), "log message should have text");
+        }
+    } else {
+        panic!("expected PX4 session");
+    }
+}
+
+#[test]
+fn px4_nested_types_decoded() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    if let RawSession::Px4(px4) = &log.sessions[0].raw {
+        // Check if any format has fields referencing other formats (nested types)
+        let nested_formats: Vec<_> = px4
+            .formats
+            .values()
+            .filter(|fmt| fmt.fields.iter().any(|f| f.primitive.is_none()))
+            .collect();
+
+        if !nested_formats.is_empty() {
+            // Verify that nested fields produce dot-notation keys in data messages
+            for fmt in &nested_formats {
+                let msgs = px4.topic_data(&fmt.name);
+                if let Some(msg) = msgs.first() {
+                    let nested_field = fmt.fields.iter().find(|f| f.primitive.is_none()).unwrap();
+                    // Nested fields appear as "field.child" or "field[N].child"
+                    let prefix_dot = format!("{}.", nested_field.name);
+                    let prefix_idx = format!("{}[", nested_field.name);
+                    let has_nested = msg
+                        .values
+                        .keys()
+                        .any(|k| k.starts_with(&prefix_dot) || k.starts_with(&prefix_idx));
+                    assert!(
+                        has_nested,
+                        "topic {} should have nested keys for field {}, got keys: {:?}",
+                        fmt.name,
+                        nested_field.name,
+                        msg.values.keys().collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
     } else {
         panic!("expected PX4 session");
     }
