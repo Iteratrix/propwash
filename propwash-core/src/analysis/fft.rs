@@ -2,8 +2,7 @@ use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 use serde::Serialize;
 
-use crate::format::bf::types::BfRawSession;
-use crate::types::{Axis, RcChannel, SensorField};
+use crate::types::{Axis, RcChannel, SensorField, Unified};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
@@ -57,166 +56,12 @@ const FFT_OVERLAP: usize = 512;
 const PEAK_COUNT: usize = 5;
 const MIN_FREQ_HZ: f64 = 10.0;
 
-/// Runs FFT vibration analysis on gyro data from a Betaflight session.
-#[allow(clippy::cast_precision_loss)]
-pub fn analyze_vibration(session: &BfRawSession, sample_rate: f64) -> VibrationAnalysis {
-    let axis_names = ["roll", "pitch", "yaw"];
-    let gyro_indices = Axis::ALL.map(|a| session.main_field_defs.index_of(&SensorField::Gyro(a)));
-
-    let mut spectra = Vec::new();
-    let mut noise_floor_db = [0.0; 3];
-
-    for (axis_idx, gyro_idx) in gyro_indices.iter().enumerate() {
-        let Some(idx) = *gyro_idx else {
-            continue;
-        };
-
-        let samples: Vec<f64> = session
-            .frames
-            .iter()
-            .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-            .collect();
-
-        if samples.len() < FFT_WINDOW_SIZE {
-            continue;
-        }
-
-        let spectrum = compute_spectrum_from_samples(&samples, sample_rate, axis_names[axis_idx]);
-        noise_floor_db[axis_idx] = compute_noise_floor(&spectrum.magnitudes_db);
-        spectra.push(spectrum);
-    }
-
-    let throttle_bands = compute_throttle_bands(session, sample_rate, &gyro_indices, &axis_names);
-    let accel = analyze_accel(session, sample_rate);
-
-    classify_peaks(&mut spectra, &throttle_bands);
-
-    VibrationAnalysis {
-        spectra,
-        noise_floor_db,
-        throttle_bands,
-        accel,
-    }
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn analyze_accel(session: &BfRawSession, sample_rate: f64) -> Option<AccelVibration> {
-    let acc_indices = [
-        session
-            .main_field_defs
-            .index_of(&SensorField::Accel(Axis::Roll))?,
-        session
-            .main_field_defs
-            .index_of(&SensorField::Accel(Axis::Pitch))?,
-        session
-            .main_field_defs
-            .index_of(&SensorField::Accel(Axis::Yaw))?,
-    ];
-
-    let axis_names = ["X", "Y", "Z"];
-    let mut rms = [0.0; 3];
-    let mut spectra = Vec::new();
-
-    for (i, &idx) in acc_indices.iter().enumerate() {
-        let samples: Vec<f64> = session
-            .frames
-            .iter()
-            .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-            .collect();
-
-        if samples.is_empty() {
-            continue;
-        }
-
-        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
-        let ac_coupled: Vec<f64> = samples.iter().map(|&s| s - mean).collect();
-
-        let variance = ac_coupled.iter().map(|v| v * v).sum::<f64>() / ac_coupled.len() as f64;
-        rms[i] = variance.sqrt();
-
-        if ac_coupled.len() >= FFT_WINDOW_SIZE {
-            spectra.push(compute_spectrum_from_samples(
-                &ac_coupled,
-                sample_rate,
-                axis_names[i],
-            ));
-        }
-    }
-
-    Some(AccelVibration { rms, spectra })
-}
-
 const THROTTLE_BANDS: [(f64, f64, &str); 4] = [
     (0.0, 25.0, "0-25%"),
     (25.0, 50.0, "25-50%"),
     (50.0, 75.0, "50-75%"),
     (75.0, 100.0, "75-100%"),
 ];
-
-#[allow(clippy::cast_precision_loss)]
-fn compute_throttle_bands(
-    session: &BfRawSession,
-    sample_rate: f64,
-    gyro_indices: &[Option<usize>; 3],
-    axis_names: &[&'static str; 3],
-) -> Vec<ThrottleBand> {
-    let Some(throttle_idx) = session
-        .main_field_defs
-        .index_of(&SensorField::Rc(RcChannel::Throttle))
-    else {
-        return Vec::new();
-    };
-
-    let mut bands = Vec::new();
-
-    for &(t_min, t_max, label) in &THROTTLE_BANDS {
-        let band_frames: Vec<usize> = session
-            .frames
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| {
-                let throttle = f.values.get(throttle_idx).copied().unwrap_or(0);
-                let pct = (throttle - 1000) as f64 / 10.0;
-                pct >= t_min && pct < t_max
-            })
-            .map(|(i, _)| i)
-            .collect();
-
-        if band_frames.len() < FFT_WINDOW_SIZE {
-            continue;
-        }
-
-        let mut spectra = Vec::new();
-        for (axis_idx, gyro_idx) in gyro_indices.iter().enumerate() {
-            let Some(idx) = *gyro_idx else {
-                continue;
-            };
-
-            let samples: Vec<f64> = band_frames
-                .iter()
-                .map(|&i| session.frames[i].values.get(idx).copied().unwrap_or(0) as f64)
-                .collect();
-
-            if samples.len() >= FFT_WINDOW_SIZE {
-                spectra.push(compute_spectrum_from_samples(
-                    &samples,
-                    sample_rate,
-                    axis_names[axis_idx],
-                ));
-            }
-        }
-
-        bands.push(ThrottleBand {
-            label: label.to_string(),
-            throttle_min: t_min,
-            throttle_max: t_max,
-            frame_count: band_frames.len(),
-            spectra,
-        });
-    }
-
-    bands
-}
 
 #[allow(clippy::cast_precision_loss)]
 pub(crate) fn compute_spectrum_from_samples(
@@ -373,4 +218,153 @@ fn compute_noise_floor(magnitudes_db: &[f64]) -> f64 {
     let mut sorted = magnitudes_db.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
     sorted[sorted.len() / 2]
+}
+
+/// Format-agnostic vibration analysis using the `Unified` trait.
+/// Includes throttle-banded FFT and accelerometer analysis.
+#[allow(clippy::cast_precision_loss)]
+pub fn analyze_vibration_unified(unified: &dyn Unified) -> Option<VibrationAnalysis> {
+    let sample_rate = unified.sample_rate_hz();
+    if sample_rate <= 0.0 {
+        return None;
+    }
+
+    let axis_names = ["roll", "pitch", "yaw"];
+    let mut spectra = Vec::new();
+
+    for (i, axis) in Axis::ALL.iter().enumerate() {
+        let gyro = unified.field(&SensorField::Gyro(*axis));
+        if gyro.len() >= FFT_WINDOW_SIZE {
+            spectra.push(compute_spectrum_from_samples(
+                &gyro,
+                sample_rate,
+                axis_names[i],
+            ));
+        }
+    }
+
+    if spectra.is_empty() {
+        return None;
+    }
+
+    let noise_floor_db = std::array::from_fn(|i| {
+        spectra
+            .get(i)
+            .map_or(-120.0, |s| compute_noise_floor(&s.magnitudes_db))
+    });
+
+    let throttle_bands = compute_throttle_bands_unified(unified, sample_rate);
+    let accel = analyze_accel_unified(unified, sample_rate);
+
+    classify_peaks(&mut spectra, &throttle_bands);
+
+    Some(VibrationAnalysis {
+        spectra,
+        noise_floor_db,
+        throttle_bands,
+        accel,
+    })
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn compute_throttle_bands_unified(unified: &dyn Unified, sample_rate: f64) -> Vec<ThrottleBand> {
+    let throttle = unified.field(&SensorField::Rc(RcChannel::Throttle));
+    if throttle.is_empty() {
+        return Vec::new();
+    }
+
+    // Normalize throttle to percentage using data range
+    let t_min_val = throttle.iter().copied().fold(f64::MAX, f64::min);
+    let t_max_val = throttle.iter().copied().fold(f64::MIN, f64::max);
+    let t_range = (t_max_val - t_min_val).max(1.0);
+    let throttle_pct: Vec<f64> = throttle
+        .iter()
+        .map(|&v| (v - t_min_val) / t_range * 100.0)
+        .collect();
+
+    let axis_names: [&str; 3] = ["roll", "pitch", "yaw"];
+    let gyro_data: Vec<Vec<f64>> = Axis::ALL
+        .iter()
+        .map(|a| unified.field(&SensorField::Gyro(*a)))
+        .collect();
+
+    let mut bands = Vec::new();
+
+    for &(band_min, band_max, label) in &THROTTLE_BANDS {
+        let band_indices: Vec<usize> = throttle_pct
+            .iter()
+            .enumerate()
+            .filter(|(_, &pct)| pct >= band_min && pct < band_max)
+            .map(|(i, _)| i)
+            .collect();
+
+        if band_indices.len() < FFT_WINDOW_SIZE {
+            continue;
+        }
+
+        let mut band_spectra = Vec::new();
+        for (axis_idx, gyro) in gyro_data.iter().enumerate() {
+            if gyro.is_empty() {
+                continue;
+            }
+            let samples: Vec<f64> = band_indices
+                .iter()
+                .filter_map(|&i| gyro.get(i).copied())
+                .collect();
+
+            if samples.len() >= FFT_WINDOW_SIZE {
+                band_spectra.push(compute_spectrum_from_samples(
+                    &samples,
+                    sample_rate,
+                    axis_names[axis_idx],
+                ));
+            }
+        }
+
+        bands.push(ThrottleBand {
+            label: label.to_string(),
+            throttle_min: band_min,
+            throttle_max: band_max,
+            frame_count: band_indices.len(),
+            spectra: band_spectra,
+        });
+    }
+
+    bands
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn analyze_accel_unified(unified: &dyn Unified, sample_rate: f64) -> Option<AccelVibration> {
+    let accel_names = ["X", "Y", "Z"];
+    let mut rms = [0.0; 3];
+    let mut spectra = Vec::new();
+    let mut has_data = false;
+
+    for (i, axis) in Axis::ALL.iter().enumerate() {
+        let samples = unified.field(&SensorField::Accel(*axis));
+        if samples.is_empty() {
+            continue;
+        }
+        has_data = true;
+
+        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let ac_coupled: Vec<f64> = samples.iter().map(|&s| s - mean).collect();
+
+        let variance = ac_coupled.iter().map(|v| v * v).sum::<f64>() / ac_coupled.len() as f64;
+        rms[i] = variance.sqrt();
+
+        if ac_coupled.len() >= FFT_WINDOW_SIZE {
+            spectra.push(compute_spectrum_from_samples(
+                &ac_coupled,
+                sample_rate,
+                accel_names[i],
+            ));
+        }
+    }
+
+    if has_data {
+        Some(AccelVibration { rms, spectra })
+    } else {
+        None
+    }
 }

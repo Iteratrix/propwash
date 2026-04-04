@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use crate::types::Warning;
 
 use super::types::{
-    Px4ParseStats, Px4RawSession, ULogDataMsg, ULogField, ULogFormat, ULogSubscription, ULogType,
-    ULogValue,
+    Px4ParseStats, Px4RawSession, ULogDataMsg, ULogField, ULogFormat, ULogLogMessage,
+    ULogSubscription, ULogType, ULogValue,
 };
 
 const ULOG_MAGIC: &[u8; 7] = b"\x55\x4c\x6f\x67\x01\x12\x35";
@@ -21,7 +21,9 @@ const MSG_ADD_LOGGED: u8 = b'A';
 const MSG_DATA: u8 = b'D';
 const MSG_LOGGING: u8 = b'L';
 const MSG_LOGGING_TAGGED: u8 = b'C';
+const MSG_REMOVE_LOGGED: u8 = b'R';
 const MSG_DROPOUT: u8 = b'O';
+const MSG_SYNC: u8 = b'S';
 
 /// Parse a PX4 `ULog` binary file.
 pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
@@ -30,6 +32,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
     let mut data_messages: Vec<ULogDataMsg> = Vec::new();
     let mut info: HashMap<String, String> = HashMap::new();
     let mut params: HashMap<String, f64> = HashMap::new();
+    let mut log_messages: Vec<ULogLogMessage> = Vec::new();
     let mut stats = Px4ParseStats::default();
 
     if data.len() < HEADER_SIZE || data[..7] != *ULOG_MAGIC {
@@ -62,6 +65,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
         &mut data_messages,
         &mut info,
         &mut params,
+        &mut log_messages,
         &mut stats,
         warnings,
     );
@@ -79,6 +83,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
                 &mut data_messages,
                 &mut info,
                 &mut params,
+                &mut log_messages,
                 &mut stats,
                 warnings,
             );
@@ -103,6 +108,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
         data_messages,
         info,
         params,
+        log_messages,
         firmware_version,
         hardware_name,
         stats,
@@ -151,6 +157,7 @@ fn parse_messages(
     data_messages: &mut Vec<ULogDataMsg>,
     info: &mut HashMap<String, String>,
     params: &mut HashMap<String, f64>,
+    log_messages: &mut Vec<ULogLogMessage>,
     stats: &mut Px4ParseStats,
     warnings: &mut Vec<Warning>,
 ) {
@@ -160,7 +167,11 @@ fn parse_messages(
         let msg_end = *pos + 3 + msg_size;
 
         if msg_end > data.len() {
-            break;
+            // Corrupt or truncated message — try to resync
+            if !try_resync(data, pos, stats, warnings) {
+                break;
+            }
+            continue;
         }
 
         let payload = &data[*pos + 3..msg_end];
@@ -194,7 +205,23 @@ fn parse_messages(
             MSG_DROPOUT => {
                 stats.dropout_count += 1;
             }
-            MSG_LOGGING | MSG_LOGGING_TAGGED => {}
+            MSG_LOGGING => {
+                if let Some(msg) = parse_logging(payload) {
+                    log_messages.push(msg);
+                }
+            }
+            MSG_LOGGING_TAGGED => {
+                if let Some(msg) = parse_logging_tagged(payload) {
+                    log_messages.push(msg);
+                }
+            }
+            MSG_REMOVE_LOGGED => {
+                if payload.len() >= 2 {
+                    let msg_id = u16::from_le_bytes([payload[0], payload[1]]);
+                    subscriptions.remove(&msg_id);
+                }
+            }
+            MSG_SYNC => {}
             _ => {
                 if stats.total_messages < 10 {
                     warnings.push(Warning {
@@ -284,7 +311,10 @@ fn compute_type_size(type_str: &str, formats: &HashMap<String, ULogFormat>) -> u
 }
 
 fn parse_info(payload: &[u8], msg_type: u8, info: &mut HashMap<String, String>) {
-    let offset = usize::from(msg_type == MSG_INFO_MULTI);
+    let is_multi = msg_type == MSG_INFO_MULTI;
+    let offset = usize::from(is_multi);
+    let is_continued = is_multi && !payload.is_empty() && payload[0] != 0;
+
     if payload.len() < offset + 1 {
         return;
     }
@@ -319,7 +349,14 @@ fn parse_info(payload: &[u8], msg_type: u8, info: &mut HashMap<String, String>) 
             .to_string()
     };
 
-    info.insert(key_name.to_string(), value);
+    if is_continued {
+        // Append to existing value for multi-part messages
+        info.entry(key_name.to_string())
+            .and_modify(|existing| existing.push_str(&value))
+            .or_insert(value);
+    } else {
+        info.insert(key_name.to_string(), value);
+    }
 }
 
 fn parse_param(payload: &[u8], msg_type: u8, params: &mut HashMap<String, f64>) {
@@ -389,35 +426,7 @@ fn parse_data(
 
     let mut values = HashMap::new();
     let mut offset = 0;
-
-    for field in &fmt.fields {
-        if offset + field.byte_size > data.len() {
-            break;
-        }
-
-        let field_data = &data[offset..offset + field.byte_size];
-
-        if let Some(array_size) = field.array_size {
-            if let Some(prim) = field.primitive {
-                let elem_size = prim.size();
-                for i in 0..array_size {
-                    let elem_offset = i * elem_size;
-                    if elem_offset + elem_size <= field_data.len() {
-                        let val = decode_primitive(
-                            prim,
-                            &field_data[elem_offset..elem_offset + elem_size],
-                        );
-                        values.insert(format!("{}[{i}]", field.name), val);
-                    }
-                }
-            }
-        } else if let Some(prim) = field.primitive {
-            let val = decode_primitive(prim, field_data);
-            values.insert(field.name.clone(), val);
-        }
-
-        offset += field.byte_size;
-    }
+    decode_fields(&fmt.fields, data, &mut offset, "", &mut values, formats);
 
     let timestamp_us = values.get("timestamp").map_or(0, |v| {
         #[allow(clippy::cast_sign_loss)]
@@ -433,6 +442,75 @@ fn parse_data(
         timestamp_us,
         values,
     })
+}
+
+/// Decode fields from a format definition, recursing into nested types.
+/// Nested field names are flattened with dots (e.g., `attitude.roll`).
+fn decode_fields(
+    fields: &[ULogField],
+    data: &[u8],
+    offset: &mut usize,
+    prefix: &str,
+    values: &mut HashMap<String, ULogValue>,
+    formats: &HashMap<String, ULogFormat>,
+) {
+    for field in fields {
+        if *offset + field.byte_size > data.len() {
+            break;
+        }
+
+        let field_data = &data[*offset..*offset + field.byte_size];
+        let qualified_name = if prefix.is_empty() {
+            field.name.clone()
+        } else {
+            format!("{prefix}.{}", field.name)
+        };
+
+        if let Some(prim) = field.primitive {
+            // Primitive type (scalar or array)
+            if let Some(array_size) = field.array_size {
+                let elem_size = prim.size();
+                for i in 0..array_size {
+                    let elem_offset = i * elem_size;
+                    if elem_offset + elem_size <= field_data.len() {
+                        let val = decode_primitive(
+                            prim,
+                            &field_data[elem_offset..elem_offset + elem_size],
+                        );
+                        values.insert(format!("{qualified_name}[{i}]"), val);
+                    }
+                }
+            } else {
+                let val = decode_primitive(prim, field_data);
+                values.insert(qualified_name, val);
+            }
+        } else {
+            // Nested type — look up its format and recurse
+            let (base_type, array_size) = parse_array_type(&field.type_name);
+            if let Some(nested_fmt) = formats.get(base_type) {
+                let count = array_size.unwrap_or(1);
+                for i in 0..count {
+                    let elem_prefix = if count > 1 {
+                        format!("{qualified_name}[{i}]")
+                    } else {
+                        qualified_name.clone()
+                    };
+                    let elem_start = *offset + i * nested_fmt.total_size;
+                    let mut nested_offset = elem_start;
+                    decode_fields(
+                        &nested_fmt.fields,
+                        data,
+                        &mut nested_offset,
+                        &elem_prefix,
+                        values,
+                        formats,
+                    );
+                }
+            }
+        }
+
+        *offset += field.byte_size;
+    }
 }
 
 fn decode_primitive(prim: ULogType, data: &[u8]) -> ULogValue {
@@ -462,6 +540,110 @@ fn decode_primitive(prim: ULogType, data: &[u8]) -> ULogValue {
     }
 }
 
+/// Scan forward from `pos` to find the next valid message.
+///
+/// A candidate is accepted when it has a known message type byte AND the
+/// message that follows it also has a known type (two-in-a-row guard against
+/// coincidental byte matches).
+fn try_resync(
+    data: &[u8],
+    pos: &mut usize,
+    stats: &mut Px4ParseStats,
+    warnings: &mut Vec<Warning>,
+) -> bool {
+    let start = *pos;
+
+    for candidate in start + 1..data.len().saturating_sub(2) {
+        let msg_type = data[candidate + 2];
+        if !is_known_msg_type(msg_type) {
+            continue;
+        }
+        let msg_size = u16::from_le_bytes([data[candidate], data[candidate + 1]]) as usize;
+        let msg_end = candidate + 3 + msg_size;
+        if msg_end > data.len() {
+            continue;
+        }
+        // Two-in-a-row: verify the next message header also looks valid
+        if msg_end + 3 <= data.len() {
+            let next_type = data[msg_end + 2];
+            if !is_known_msg_type(next_type) {
+                continue;
+            }
+        }
+
+        let corrupt = candidate - start;
+        stats.corrupt_bytes += corrupt;
+        if warnings.len() < 20 {
+            warnings.push(Warning {
+                message: format!("Skipped {corrupt} corrupt bytes at offset {start}"),
+                byte_offset: Some(start),
+            });
+        }
+        *pos = candidate;
+        return true;
+    }
+    false
+}
+
+const fn is_known_msg_type(b: u8) -> bool {
+    matches!(
+        b,
+        MSG_FLAG_BITS
+            | MSG_FORMAT
+            | MSG_INFO
+            | MSG_INFO_MULTI
+            | MSG_PARAM
+            | MSG_PARAM_DEFAULT
+            | MSG_ADD_LOGGED
+            | MSG_REMOVE_LOGGED
+            | MSG_DATA
+            | MSG_LOGGING
+            | MSG_LOGGING_TAGGED
+            | MSG_SYNC
+            | MSG_DROPOUT
+    )
+}
+
+fn parse_logging(payload: &[u8]) -> Option<ULogLogMessage> {
+    if payload.len() < 9 {
+        return None;
+    }
+    // Level byte encodes (level | (thread_id << 3)), mask to get syslog level
+    let level = payload[0] & 0x07;
+    let timestamp_us = u64::from_le_bytes(payload[1..9].try_into().unwrap_or([0; 8]));
+    let message = std::str::from_utf8(&payload[9..])
+        .ok()?
+        .trim_end_matches('\0')
+        .to_string();
+
+    Some(ULogLogMessage {
+        level,
+        timestamp_us,
+        message,
+        tag: None,
+    })
+}
+
+fn parse_logging_tagged(payload: &[u8]) -> Option<ULogLogMessage> {
+    if payload.len() < 11 {
+        return None;
+    }
+    let level = payload[0] & 0x07;
+    let tag = u16::from_le_bytes([payload[1], payload[2]]);
+    let timestamp_us = u64::from_le_bytes(payload[3..11].try_into().unwrap_or([0; 8]));
+    let message = std::str::from_utf8(&payload[11..])
+        .ok()?
+        .trim_end_matches('\0')
+        .to_string();
+
+    Some(ULogLogMessage {
+        level,
+        timestamp_us,
+        message,
+        tag: Some(tag),
+    })
+}
+
 fn empty_session(stats: Px4ParseStats) -> Px4RawSession {
     Px4RawSession {
         formats: HashMap::new(),
@@ -469,6 +651,7 @@ fn empty_session(stats: Px4ParseStats) -> Px4RawSession {
         data_messages: Vec::new(),
         info: HashMap::new(),
         params: HashMap::new(),
+        log_messages: Vec::new(),
         firmware_version: String::new(),
         hardware_name: String::new(),
         stats,

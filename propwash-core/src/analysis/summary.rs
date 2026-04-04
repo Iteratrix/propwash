@@ -40,6 +40,7 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
             EventKind::GyroSpike { .. } => gyro_spikes += 1,
             EventKind::Overshoot { .. } => overshoots += 1,
             EventKind::Desync { .. } => desyncs += 1,
+            EventKind::FirmwareMessage { .. } => {}
         }
     }
 

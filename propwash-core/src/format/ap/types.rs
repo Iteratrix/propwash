@@ -408,4 +408,10 @@ impl Unified for ApRawSession {
             0
         }
     }
+
+    fn motor_range(&self) -> (f64, f64) {
+        let min = self.params.get("MOT_PWM_MIN").copied().unwrap_or(1000.0);
+        let max = self.params.get("MOT_PWM_MAX").copied().unwrap_or(2000.0);
+        (min, max)
+    }
 }

@@ -548,6 +548,7 @@ function eventColor(type) {
     case "Desync": return "#e85454";
     case "Overshoot": return "#5b8def";
     case "ThrottlePunch": return "#4ec88c";
+    case "FirmwareMessage": return "#e8b84a";
     default: return "#ffffff";
   }
 }
@@ -569,7 +570,7 @@ function renderSummary(session) {
     .map(([label, value]) =>
       `<div class="summary-card">
         <div class="label">${label}</div>
-        <div class="value">${value}</div>
+        <div class="value" title="${value}">${value}</div>
       </div>`
     )
     .join("");
@@ -1321,6 +1322,8 @@ function formatEventDetails(kind) {
       return `${kind.axis}: ${kind.overshoot_percent.toFixed(0)}% over setpoint`;
     case "Desync":
       return `Motor ${kind.motor_index} (${kind.motor_value}) vs avg ${kind.average_others.toFixed(0)}`;
+    case "FirmwareMessage":
+      return `[${kind.level}] ${kind.message}`;
     default:
       return "";
   }

@@ -114,6 +114,19 @@ pub struct ULogDataMsg {
     pub values: HashMap<String, ULogValue>,
 }
 
+/// A log message emitted by PX4 firmware (debug/warning/error).
+#[derive(Debug, Clone)]
+pub struct ULogLogMessage {
+    /// Log level (0=emerg, 1=alert, 2=crit, 3=err, 4=warn, 5=notice, 6=info, 7=debug).
+    pub level: u8,
+    /// Timestamp in microseconds.
+    pub timestamp_us: u64,
+    /// Message text.
+    pub message: String,
+    /// Tag value (only set for tagged logging messages).
+    pub tag: Option<u16>,
+}
+
 /// Complete raw data for one `PX4` session.
 #[derive(Debug)]
 pub struct Px4RawSession {
@@ -127,6 +140,8 @@ pub struct Px4RawSession {
     pub info: HashMap<String, String>,
     /// Parameters.
     pub params: HashMap<String, f64>,
+    /// Log messages (debug/warning/error strings from firmware).
+    pub log_messages: Vec<ULogLogMessage>,
     /// Firmware version string.
     pub firmware_version: String,
     /// Hardware name.
@@ -146,8 +161,25 @@ pub struct Px4ParseStats {
 }
 
 impl Px4RawSession {
-    /// Returns all data messages for a given topic name (e.g., `sensor_gyro`).
+    /// Returns data messages for the primary instance of a topic (lowest `multi_id`).
+    ///
+    /// PX4 logs can contain multiple sensor instances (e.g. two gyros).
+    /// This returns only the primary instance to avoid interleaving data
+    /// from different physical sensors.
     pub fn topic_data(&self, topic_name: &str) -> Vec<&ULogDataMsg> {
+        let primary_id = self.primary_msg_id(topic_name);
+        match primary_id {
+            Some(id) => self
+                .data_messages
+                .iter()
+                .filter(|d| d.msg_id == id)
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Returns data messages for all instances of a topic, interleaved in file order.
+    pub fn topic_data_all_instances(&self, topic_name: &str) -> Vec<&ULogDataMsg> {
         let msg_ids: Vec<u16> = self
             .subscriptions
             .values()
@@ -160,7 +192,16 @@ impl Px4RawSession {
             .collect()
     }
 
-    /// Extracts a time-series of one field from one topic.
+    /// Returns the `msg_id` for the primary (lowest `multi_id`) instance of a topic.
+    fn primary_msg_id(&self, topic_name: &str) -> Option<u16> {
+        self.subscriptions
+            .values()
+            .filter(|s| s.format_name == topic_name)
+            .min_by_key(|s| s.multi_id)
+            .map(|s| s.msg_id)
+    }
+
+    /// Extracts a time-series of one field from one topic (primary instance).
     fn extract_series(&self, topic: &str, field: &str) -> Vec<(u64, f64)> {
         self.topic_data(topic)
             .iter()
@@ -360,6 +401,19 @@ impl Unified for Px4RawSession {
                     Vec::new()
                 }
             }
+            SensorField::Setpoint(axis) => {
+                let field_name = match axis {
+                    Axis::Roll => "roll",
+                    Axis::Pitch => "pitch",
+                    Axis::Yaw => "yaw",
+                };
+                // vehicle_rates_setpoint is in rad/s — convert to deg/s
+                let series = self.extract_series("vehicle_rates_setpoint", field_name);
+                series
+                    .into_iter()
+                    .map(|(_, v)| v * 57.295_779_513_082_32)
+                    .collect()
+            }
             _ => Vec::new(),
         }
     }
@@ -384,6 +438,21 @@ impl Unified for Px4RawSession {
             count
         } else {
             0
+        }
+    }
+
+    fn motor_range(&self) -> (f64, f64) {
+        // Detect from actual data: if max < 10, it's normalized (0-1); otherwise PWM
+        let msgs = self.topic_data("actuator_outputs");
+        let max_val = msgs
+            .iter()
+            .flat_map(|m| m.values.values())
+            .map(ULogValue::as_f64)
+            .fold(0.0_f64, f64::max);
+        if max_val > 10.0 {
+            (1000.0, 2000.0) // PWM range
+        } else {
+            (0.0, 1.0) // Normalized
         }
     }
 }

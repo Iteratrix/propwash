@@ -283,27 +283,70 @@ pub fn get_filter_config(session_idx: usize) -> String {
             return r#"{"error":"invalid session index"}"#.to_string();
         };
 
-        let RawSession::Betaflight(bf) = &session.raw else {
-            return r#"{"error":"unsupported format"}"#.to_string();
-        };
-
-        let non_zero = |v: i32| -> Option<f64> {
-            if v > 0 {
-                Some(f64::from(v))
+        let non_zero_f64 = |v: f64| -> Option<f64> {
+            if v > 0.0 {
+                Some(v)
             } else {
                 None
             }
         };
 
-        let config = FilterConfig {
-            gyro_lpf_hz: non_zero(bf.get_header_int("gyro_lowpass_hz", 0)),
-            gyro_lpf2_hz: non_zero(bf.get_header_int("gyro_lowpass2_hz", 0)),
-            dterm_lpf_hz: non_zero(bf.get_header_int("dterm_lpf_hz", 0))
-                .or_else(|| non_zero(bf.get_header_int("dterm_lowpass_hz", 0))),
-            dyn_notch_min_hz: non_zero(bf.get_header_int("dyn_notch_min_hz", 0)),
-            dyn_notch_max_hz: non_zero(bf.get_header_int("dyn_notch_max_hz", 0)),
-            gyro_notch1_hz: non_zero(bf.get_header_int("gyro_notch_hz", 0)),
-            gyro_notch2_hz: non_zero(bf.get_header_int("gyro_notch2_hz", 0)),
+        let config = match &session.raw {
+            RawSession::Betaflight(bf) => {
+                let non_zero = |v: i32| -> Option<f64> {
+                    if v > 0 {
+                        Some(f64::from(v))
+                    } else {
+                        None
+                    }
+                };
+                FilterConfig {
+                    gyro_lpf_hz: non_zero(bf.get_header_int("gyro_lowpass_hz", 0)),
+                    gyro_lpf2_hz: non_zero(bf.get_header_int("gyro_lowpass2_hz", 0)),
+                    dterm_lpf_hz: non_zero(bf.get_header_int("dterm_lpf_hz", 0))
+                        .or_else(|| non_zero(bf.get_header_int("dterm_lowpass_hz", 0))),
+                    dyn_notch_min_hz: non_zero(bf.get_header_int("dyn_notch_min_hz", 0)),
+                    dyn_notch_max_hz: non_zero(bf.get_header_int("dyn_notch_max_hz", 0)),
+                    gyro_notch1_hz: non_zero(bf.get_header_int("gyro_notch_hz", 0)),
+                    gyro_notch2_hz: non_zero(bf.get_header_int("gyro_notch2_hz", 0)),
+                }
+            }
+            RawSession::ArduPilot(ap) => {
+                let p = |k: &str| ap.params.get(k).copied().unwrap_or(0.0);
+                FilterConfig {
+                    gyro_lpf_hz: non_zero_f64(p("INS_GYRO_FILTER")),
+                    gyro_lpf2_hz: None,
+                    dterm_lpf_hz: non_zero_f64(p("ATC_RAT_RLL_FLTE")),
+                    dyn_notch_min_hz: if p("INS_HNTCH_ENABLE") > 0.0 {
+                        non_zero_f64(p("INS_HNTCH_FREQ"))
+                    } else {
+                        None
+                    },
+                    dyn_notch_max_hz: None,
+                    gyro_notch1_hz: if p("INS_NOTCH_ENABLE") > 0.0 {
+                        non_zero_f64(p("INS_NOTCH_FREQ"))
+                    } else {
+                        None
+                    },
+                    gyro_notch2_hz: if p("INS_NOTC2_ENABLE") > 0.0 {
+                        non_zero_f64(p("INS_NOTC2_FREQ"))
+                    } else {
+                        None
+                    },
+                }
+            }
+            RawSession::Px4(px4) => {
+                let p = |k: &str| px4.params.get(k).copied().unwrap_or(0.0);
+                FilterConfig {
+                    gyro_lpf_hz: non_zero_f64(p("IMU_GYRO_CUTOFF")),
+                    gyro_lpf2_hz: None,
+                    dterm_lpf_hz: non_zero_f64(p("IMU_DGYRO_CUTOFF")),
+                    dyn_notch_min_hz: None,
+                    dyn_notch_max_hz: None,
+                    gyro_notch1_hz: non_zero_f64(p("IMU_GYRO_NF0_FRQ")),
+                    gyro_notch2_hz: non_zero_f64(p("IMU_GYRO_NF1_FRQ")),
+                }
+            }
         };
 
         serde_json::to_string(&config)
