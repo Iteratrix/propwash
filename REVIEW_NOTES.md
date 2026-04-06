@@ -98,3 +98,6 @@ Magic byte constants and the `decode()` dispatch logic currently live in the cra
 
 ### 22. [nit] `propwash-core/src/types.rs:144-152` — `is_motor()` and `is_erpm()` are unnecessary
 Trivial wrappers around `matches!()` with only 2 call sites, both in the BF parser. They clutter the public API of `SensorField` for no real value. Delete them; callers can use `matches!` directly.
+
+### 23. [style] `propwash-core/src/types.rs:253-281` — `Value` enum is dead code
+The `Value` enum (`Int`, `Float`, `Str`, `Bool`) and its `as_int()`/`as_float()` methods are defined but never constructed or consumed anywhere. Delete it.
