@@ -89,3 +89,6 @@ Magic byte constants and the `decode()` dispatch logic currently live in the cra
 
 ### 19. [arch] `propwash-core/src/lib.rs:36-43` — unrecognized format should be a `ParseError`, not a warning
 `decode()` returns a valid `Log` with zero sessions and a warning when the input is unrecognizable. This is inconsistent: `decode_file()` returns `Err(ParseError::NoData)` for empty files, but unrecognized data gets silently swallowed. Add a `ParseError::UnrecognizedFormat` variant and make `decode()` return `Result<Log, ParseError>`. Callers shouldn't have to inspect `sessions.is_empty()` to detect failure.
+
+### 20. [nit] `propwash-core/src/types.rs:74` — `#[non_exhaustive]` on `SensorField` is premature
+`Unknown(String)` already handles unrecognized field names at the data level. `#[non_exhaustive]` guards against new *variants* being added, but with no external consumers yet, it just forces unnecessary `_ =>` wildcard arms in internal matches. Remove it; add it back when the API stabilizes and there are real downstream users.
