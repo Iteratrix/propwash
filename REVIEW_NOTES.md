@@ -95,3 +95,6 @@ Magic byte constants and the `decode()` dispatch logic currently live in the cra
 
 ### 21. [arch] `propwash-core/src/types.rs:100` — `SensorField::from_header` is Betaflight-specific
 `from_header` parses Betaflight's naming convention (`gyroADC[0]`, `axisP[1]`, `rcCommand[3]`) as if it's the canonical representation. ArduPilot and PX4 have entirely different native names but their `Unified` impls launder everything through BF-style names (constructing `SensorField` variants directly, then `Display` outputs BF names, then `from_header` parses them back). Betaflight's conventions have leaked into the format-agnostic layer. Fix: rename `from_header` to `from_betaflight_header` and move it to the BF parser, or make it explicitly a display-name parser for the `field_by_name` convenience method. The `SensorField` enum itself is the right abstraction — the string roundtrip through BF names is the problem.
+
+### 22. [nit] `propwash-core/src/types.rs:144-152` — `is_motor()` and `is_erpm()` are unnecessary
+Trivial wrappers around `matches!()` with only 2 call sites, both in the BF parser. They clutter the public API of `SensorField` for no real value. Delete them; callers can use `matches!` directly.
