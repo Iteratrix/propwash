@@ -59,3 +59,12 @@ Full FFT windowing/spectrogram generation is implemented in the WASM bridge. Cor
 
 ### 11. [nit] `propwash/` directory — should be renamed `propwash-cli`
 The binary crate directory is `propwash/` while sibling crates follow the `propwash-core`, `propwash-web` naming convention. Rename to `propwash-cli/` for consistency. Keep the binary name as `propwash` via `[[bin]] name = "propwash"` so the installed command doesn't change.
+
+### 12. [arch] Both CLI and web should drop the `raw` feature and use only `Unified`
+Both consumer crates enable `features = ["raw"]` and reach into format-specific types. This defeats the purpose of the `Unified` abstraction. To eliminate raw access, the `Unified` trait needs to grow:
+- `fn filter_config(&self) -> FilterConfig` (covers web `get_filter_config` and is generally useful)
+- `fn has_rpm_telemetry(&self) -> bool`
+- `fn has_gyro_unfiltered(&self) -> bool`
+- `fn is_truncated(&self) -> bool`
+- `fn corrupt_bytes(&self) -> usize` (or a `fn parse_stats(&self) -> ParseStats`)
+Consider grouping the metadata methods into a `Capabilities` or `ParseStats` struct to avoid trait bloat. Once done, remove `features = ["raw"]` from both `propwash/Cargo.toml` and `propwash-web/Cargo.toml`. Supersedes #10.
