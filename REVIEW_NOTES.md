@@ -101,3 +101,6 @@ Trivial wrappers around `matches!()` with only 2 call sites, both in the BF pars
 
 ### 23. [style] `propwash-core/src/types.rs:253-281` — `Value` enum is dead code
 The `Value` enum (`Int`, `Float`, `Str`, `Bool`) and its `as_int()`/`as_float()` methods are defined but never constructed or consumed anywhere. Delete it.
+
+### 24. [arch] `propwash-core/src/types.rs:304-307` — `field_by_name` is a code smell
+`field_by_name` encourages stringly-typed field access when `SensorField` already provides a type-safe enum. Internal code uses hardcoded strings like `"time"` and `"gyroADC[0]"` instead of `field(&SensorField::Time)`. The method's own doc comment acknowledges it's for "system boundaries (WASM bridge, CLI user input)" — but it's leaked into internal usage. Fix: remove `field_by_name` from the `Unified` trait. Make it a free function or keep it only at the WASM/CLI boundary layer. Internal code should always use `field()` with typed `SensorField` variants. Related to #21 (BF naming leak).
