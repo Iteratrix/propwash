@@ -32,3 +32,21 @@ Fine as-is. Thin LTO gives most perf/size benefits without the compile time cost
 
 ### 5. [arch] `web/app.js` — should be TypeScript
 The web frontend is ~44KB of vanilla JS. Given WASM interop and UI complexity, TypeScript would add meaningful type safety, especially for enforcing the WASM bridge contract. Tradeoff: adds a build step to what is currently a zero-build frontend.
+
+### 6. [nit] `propwash-web/src/lib.rs:12-14` — `thread_local!` + `RefCell` for WASM state
+Canonical pattern for single-threaded WASM. No action needed.
+
+### 7. [arch] `propwash-web/src/lib.rs` + `propwash/src/main.rs` — DTO duplication between web and CLI
+Both crates define nearly identical session-info structs (`SessionResult` in web, `SessionInfo`/`DumpSession` in CLI) to serialize the same core data. Consider a shared serialization layer in core or a common DTO crate.
+
+### 8. [style] `propwash-web/src/lib.rs:78-96` — for-loops building collections
+Several loops push into Vecs where `.map().collect()` would be more idiomatic:
+- Lines 78-91: session result construction
+- Lines 94-96: warning string conversion
+- Lines 384-390: raw frame row building
+
+### 9. [arch] `propwash-web/src/lib.rs:167-272` — spectrogram computation belongs in core
+Full FFT windowing/spectrogram generation is implemented in the WASM bridge. Core already has `analysis/fft.rs` for FFT work. This should live in core so CLI and other consumers can also generate spectrograms. Currently WASM-only.
+
+### 10. [arch] `propwash-web/src/lib.rs:294-350` — filter config bypasses Unified trait
+`get_filter_config` matches on `RawSession::Betaflight`/`ArduPilot`/`Px4` directly and uses format-specific header strings/param maps. Breaks the abstraction — every new format requires updating this function. Filter configuration should be a method on the `Unified` trait (e.g., `fn filter_config(&self) -> FilterConfig`). Same pattern seen in CLI at `main.rs:121-141` for Betaflight-specific info display.
