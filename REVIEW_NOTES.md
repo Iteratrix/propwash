@@ -86,3 +86,6 @@ File is effectively empty ("no known issues"). A static markdown file for issue 
 
 ### 18. [arch] `propwash-core/src/lib.rs:17-43` — format detection and dispatch belongs in `format/mod.rs`
 Magic byte constants and the `decode()` dispatch logic currently live in the crate root. They should move to `format/mod.rs` — it's already the parent of `ap`, `bf`, `px4`. The crate root should just re-export. Additionally, expose a `format::detect(data) -> Option<Format>` enum so consumers can identify the format without parsing (useful for CLI info, web UI file type display). Each format's magic bytes should live with its respective parser module.
+
+### 19. [arch] `propwash-core/src/lib.rs:36-43` — unrecognized format should be a `ParseError`, not a warning
+`decode()` returns a valid `Log` with zero sessions and a warning when the input is unrecognizable. This is inconsistent: `decode_file()` returns `Err(ParseError::NoData)` for empty files, but unrecognized data gets silently swallowed. Add a `ParseError::UnrecognizedFormat` variant and make `decode()` return `Result<Log, ParseError>`. Callers shouldn't have to inspect `sessions.is_empty()` to detect failure.
