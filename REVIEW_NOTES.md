@@ -16,6 +16,12 @@ Categories:
 
 ---
 
+## Ground Rules
+
+- **No backwards compatibility constraints.** No external users yet. Breaking changes are fine.
+
+---
+
 ## Comments
 
 ### 1. [arch] `compare_official.py` (root)
