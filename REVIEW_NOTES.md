@@ -68,3 +68,9 @@ Both consumer crates enable `features = ["raw"]` and reach into format-specific 
 - `fn is_truncated(&self) -> bool`
 - `fn corrupt_bytes(&self) -> usize` (or a `fn parse_stats(&self) -> ParseStats`)
 Consider grouping the metadata methods into a `Capabilities` or `ParseStats` struct to avoid trait bloat. Once done, remove `features = ["raw"]` from both `propwash/Cargo.toml` and `propwash-web/Cargo.toml`. Supersedes #10.
+
+### 13. [arch] `propwash/src/episodes.rs` — episode consolidation belongs in core
+The entire 263-line `episodes.rs` module is pure analysis logic: grouping temporally-adjacent `FlightEvent`s into higher-level episodes. It's format-independent and reusable — the web timeline view would benefit from it. Should move to `propwash-core/src/analysis/episodes.rs`. Additionally, `consolidate_gyro_spikes`, `consolidate_overshoots`, and `consolidate_desyncs` share nearly identical "group events within a time gap" logic. A generic consolidation helper would eliminate the repetition.
+
+### 14. [arch] `propwash/src/main.rs:582-616` — frame range/time filtering could be a core utility
+The dump command implements its own frame iteration with time range and frame range filtering. This is reusable logic that could be a core iterator/utility, similar to the decimation logic noted in #9.
