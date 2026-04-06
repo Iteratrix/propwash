@@ -74,3 +74,9 @@ The entire 263-line `episodes.rs` module is pure analysis logic: grouping tempor
 
 ### 14. [arch] `propwash/src/main.rs:582-616` — frame range/time filtering could be a core utility
 The dump command implements its own frame iteration with time range and frame range filtering. This is reusable logic that could be a core iterator/utility, similar to the decimation logic noted in #9.
+
+### 15. [arch] `propwash-core/src/analysis/mod.rs` — expose granular analysis, not just `analyze()`
+`analyze()` is all-or-nothing: events + FFT + diagnostics + summary. But consumers have different needs — e.g., `cmd_scan` pays for FFT vibration analysis on every file but never displays it. The sub-functions (`unified_events::detect_all`, `fft::analyze_vibration_unified`, `diagnostics::diagnose`, `summary::summarize`) are already modular internally but not publicly composable. Make them part of the public API so consumers can pick what they need. Keep `analyze()` as a convenience "do everything" function.
+
+### 16. [arch] `propwash-core/src/analysis/mod.rs:34-43` — format-specific event detection bypasses Unified
+`analyze()` matches on `RawSession` to call `detect_ardupilot_events` and `detect_px4_log_events`. Same Unified bypass as #10/#12. Format-specific events (ArduPilot EV/ERR messages, PX4 log messages) should be surfaced through the Unified trait or via format-specific `detect_events` implementations, not via raw match in the analysis orchestrator.
