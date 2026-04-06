@@ -83,3 +83,6 @@ The dump command implements its own frame iteration with time range and frame ra
 
 ### 17. [nit] `propwash-core/KNOWN_ISSUES.md` — delete, use GitHub Issues instead
 File is effectively empty ("no known issues"). A static markdown file for issue tracking goes stale; GitHub Issues with a `known-issue` label is the right tool for this.
+
+### 18. [arch] `propwash-core/src/lib.rs:17-43` — format detection and dispatch belongs in `format/mod.rs`
+Magic byte constants and the `decode()` dispatch logic currently live in the crate root. They should move to `format/mod.rs` — it's already the parent of `ap`, `bf`, `px4`. The crate root should just re-export. Additionally, expose a `format::detect(data) -> Option<Format>` enum so consumers can identify the format without parsing (useful for CLI info, web UI file type display). Each format's magic bytes should live with its respective parser module.
