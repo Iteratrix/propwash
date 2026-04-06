@@ -80,3 +80,6 @@ The dump command implements its own frame iteration with time range and frame ra
 
 ### 16. [arch] `propwash-core/src/analysis/mod.rs:34-43` — format-specific event detection bypasses Unified
 `analyze()` matches on `RawSession` to call `detect_ardupilot_events` and `detect_px4_log_events`. Same Unified bypass as #10/#12. Format-specific events (ArduPilot EV/ERR messages, PX4 log messages) should be surfaced through the Unified trait or via format-specific `detect_events` implementations, not via raw match in the analysis orchestrator.
+
+### 17. [nit] `propwash-core/KNOWN_ISSUES.md` — delete, use GitHub Issues instead
+File is effectively empty ("no known issues"). A static markdown file for issue tracking goes stale; GitHub Issues with a `known-issue` label is the right tool for this.
