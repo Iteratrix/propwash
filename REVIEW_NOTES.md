@@ -50,3 +50,6 @@ Full FFT windowing/spectrogram generation is implemented in the WASM bridge. Cor
 
 ### 10. [arch] `propwash-web/src/lib.rs:294-350` — filter config bypasses Unified trait
 `get_filter_config` matches on `RawSession::Betaflight`/`ArduPilot`/`Px4` directly and uses format-specific header strings/param maps. Breaks the abstraction — every new format requires updating this function. Filter configuration should be a method on the `Unified` trait (e.g., `fn filter_config(&self) -> FilterConfig`). Same pattern seen in CLI at `main.rs:121-141` for Betaflight-specific info display.
+
+### 11. [nit] `propwash/` directory — should be renamed `propwash-cli`
+The binary crate directory is `propwash/` while sibling crates follow the `propwash-core`, `propwash-web` naming convention. Rename to `propwash-cli/` for consistency. Keep the binary name as `propwash` via `[[bin]] name = "propwash"` so the installed command doesn't change.
