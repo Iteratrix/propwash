@@ -73,7 +73,16 @@ pub fn init() {
 
 #[wasm_bindgen]
 pub fn analyze(data: &[u8]) -> String {
-    let log = propwash_core::decode(data);
+    let log = match propwash_core::decode(data) {
+        Ok(log) => log,
+        Err(e) => {
+            return serde_json::to_string(&AnalysisResult {
+                sessions: Vec::new(),
+                warnings: vec![e.to_string()],
+            })
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#));
+        }
+    };
 
     let mut sessions = Vec::new();
     for session in &log.sessions {

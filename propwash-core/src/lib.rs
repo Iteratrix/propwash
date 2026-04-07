@@ -20,40 +20,40 @@ const ULOG_MAGIC: &[u8] = b"\x55\x4c\x6f\x67\x01\x12\x35";
 
 /// Decodes a blackbox log from raw bytes.
 /// Never panics on corrupt data. Collects warnings instead.
-pub fn decode(data: &[u8]) -> Log {
+///
+/// # Errors
+///
+/// Returns `ParseError::UnrecognizedFormat` if the data does not match
+/// any known blackbox format.
+pub fn decode(data: &[u8]) -> Result<Log, ParseError> {
     if memchr::memmem::find(data, BETAFLIGHT_MARKER).is_some() {
-        return format::bf::decode(data);
+        return Ok(format::bf::decode(data));
     }
 
     if data.len() >= 3 && data[..3] == *ARDUPILOT_MARKER {
-        return format::ap::decode(data);
+        return Ok(format::ap::decode(data));
     }
 
     if data.len() >= 7 && data[..7] == *ULOG_MAGIC {
-        return format::px4::decode(data);
+        return Ok(format::px4::decode(data));
     }
 
-    Log {
-        sessions: Vec::new(),
-        warnings: vec![Warning {
-            message: "No recognized blackbox format found in data".into(),
-            byte_offset: None,
-        }],
-    }
+    Err(ParseError::UnrecognizedFormat)
 }
 
-/// Decodes a blackbox log file. Only fails on I/O errors.
+/// Decodes a blackbox log file.
 ///
 /// # Errors
 ///
 /// Returns `ParseError::Io` if the file cannot be read,
-/// or `ParseError::NoData` if the file is empty.
+/// `ParseError::NoData` if the file is empty, or
+/// `ParseError::UnrecognizedFormat` if the data does not match any known format.
 pub fn decode_file(path: impl AsRef<std::path::Path>) -> Result<Log, ParseError> {
     let data = std::fs::read(path)?;
     if data.is_empty() {
         return Err(ParseError::NoData);
     }
-    Ok(decode(&data))
+    decode(&data)
 }
 
 #[cfg(test)]
@@ -61,15 +61,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decode_empty_returns_no_sessions() {
-        let log = decode(b"");
-        assert_eq!(log.session_count(), 0);
-        assert!(!log.warnings.is_empty());
+    fn decode_empty_returns_unrecognized() {
+        let err = decode(b"").unwrap_err();
+        assert!(matches!(err, ParseError::UnrecognizedFormat));
     }
 
     #[test]
-    fn decode_garbage_returns_no_sessions() {
-        let log = decode(b"this is not a blackbox log");
-        assert_eq!(log.session_count(), 0);
+    fn decode_garbage_returns_unrecognized() {
+        let err = decode(b"this is not a blackbox log").unwrap_err();
+        assert!(matches!(err, ParseError::UnrecognizedFormat));
     }
 }

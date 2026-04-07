@@ -214,12 +214,14 @@ impl fmt::Display for Warning {
     }
 }
 
-/// The only error the public API can return — file I/O failures.
-/// Parse corruption is never an error; it produces warnings.
+/// Fatal errors from the public API — I/O failures or completely
+/// unrecognizable input. Parse corruption within a recognized format
+/// is never an error; it produces warnings instead.
 #[derive(Debug)]
 pub enum ParseError {
     Io(std::io::Error),
     NoData,
+    UnrecognizedFormat,
 }
 
 impl fmt::Display for ParseError {
@@ -227,6 +229,7 @@ impl fmt::Display for ParseError {
         match self {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::NoData => write!(f, "No data to parse"),
+            Self::UnrecognizedFormat => write!(f, "No recognized blackbox format found in data"),
         }
     }
 }
