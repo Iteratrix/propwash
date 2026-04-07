@@ -242,12 +242,14 @@ impl From<std::io::Error> for ParseError {
     }
 }
 
-/// Format-agnostic interface for accessing sensor data.
+/// Format-agnostic interface for accessing flight session data.
 ///
-/// Implemented by each format's raw session type. This is the primary
-/// abstraction consumers should use — it provides uniform access to
-/// sensor data regardless of the underlying log format.
-pub trait Unified {
+/// This is the primary abstraction consumers should use. Each format
+/// (`Betaflight`, `ArduPilot`, `PX4`) implements this trait on its raw session
+/// type. The `RawSession` enum dispatches to the correct implementation.
+///
+/// Pattern match on `RawSession` when you need format-specific access.
+pub trait Session {
     fn frame_count(&self) -> usize;
     fn field_names(&self) -> Vec<String>;
     fn firmware_version(&self) -> &str;
@@ -256,6 +258,8 @@ pub trait Unified {
     fn duration_seconds(&self) -> f64;
     fn field(&self, field: &SensorField) -> Vec<f64>;
     fn motor_count(&self) -> usize;
+    fn warnings(&self) -> &[Warning];
+    fn index(&self) -> usize;
 
     /// Returns the (min, max) output range for motor values.
     fn motor_range(&self) -> (f64, f64) {
@@ -269,8 +273,11 @@ pub trait Unified {
     }
 }
 
-/// Format-specific raw session data.
+/// Sealed set of format-specific session implementations.
 /// Adding a variant is a breaking change — consumers should handle every format.
+///
+/// Implements `Session` by dispatching to the inner type.
+/// Pattern match to access format-specific data.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum RawSession {
@@ -279,73 +286,58 @@ pub enum RawSession {
     Px4(Px4RawSession),
 }
 
-impl RawSession {
-    /// Single dispatch point: returns the Unified implementation for this format.
-    /// Adding a new format = adding one line here.
-    fn as_unified(&self) -> &dyn Unified {
-        match self {
-            Self::Betaflight(bf) => bf,
-            Self::ArduPilot(ap) => ap,
-            Self::Px4(px4) => px4,
+/// Dispatch macro: generates `Session` trait impl for `RawSession` by
+/// delegating each method to the inner format-specific type.
+macro_rules! dispatch {
+    ($self:ident, $method:ident $(, $arg:expr)*) => {
+        match $self {
+            Self::Betaflight(s) => s.$method($($arg),*),
+            Self::ArduPilot(s) => s.$method($($arg),*),
+            Self::Px4(s) => s.$method($($arg),*),
         }
-    }
+    };
 }
 
-/// One parsed session from a log file.
-#[derive(Debug)]
-pub struct Session {
-    /// Format-specific raw data — always available.
-    pub raw: RawSession,
-    /// Non-fatal diagnostics from parsing.
-    pub warnings: Vec<Warning>,
-    /// 1-based session index within the file.
-    pub index: usize,
-}
-
-impl Session {
-    /// Returns the unified interface for format-agnostic sensor data access.
-    #[deprecated(
-        note = "Session now implements Unified directly — call methods on &session instead"
-    )]
-    pub fn unified(&self) -> &dyn Unified {
-        self
-    }
-}
-
-impl Unified for Session {
+impl Session for RawSession {
     fn frame_count(&self) -> usize {
-        self.raw.as_unified().frame_count()
+        dispatch!(self, frame_count)
     }
     fn field_names(&self) -> Vec<String> {
-        self.raw.as_unified().field_names()
+        dispatch!(self, field_names)
     }
     fn firmware_version(&self) -> &str {
-        self.raw.as_unified().firmware_version()
+        dispatch!(self, firmware_version)
     }
     fn craft_name(&self) -> &str {
-        self.raw.as_unified().craft_name()
+        dispatch!(self, craft_name)
     }
     fn sample_rate_hz(&self) -> f64 {
-        self.raw.as_unified().sample_rate_hz()
+        dispatch!(self, sample_rate_hz)
     }
     fn duration_seconds(&self) -> f64 {
-        self.raw.as_unified().duration_seconds()
+        dispatch!(self, duration_seconds)
     }
     fn field(&self, field: &SensorField) -> Vec<f64> {
-        self.raw.as_unified().field(field)
+        dispatch!(self, field, field)
     }
     fn motor_count(&self) -> usize {
-        self.raw.as_unified().motor_count()
+        dispatch!(self, motor_count)
     }
     fn motor_range(&self) -> (f64, f64) {
-        self.raw.as_unified().motor_range()
+        dispatch!(self, motor_range)
+    }
+    fn warnings(&self) -> &[Warning] {
+        dispatch!(self, warnings)
+    }
+    fn index(&self) -> usize {
+        dispatch!(self, index)
     }
 }
 
 /// Complete parsed log file.
 #[derive(Debug)]
 pub struct Log {
-    pub sessions: Vec<Session>,
+    pub sessions: Vec<RawSession>,
     pub warnings: Vec<Warning>,
 }
 

@@ -138,6 +138,8 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
         firmware_version,
         hardware_name,
         stats,
+        warnings: Vec::new(),
+        session_index: 0,
     }
 }
 
@@ -660,5 +662,7 @@ fn empty_session(stats: Px4ParseStats) -> Px4RawSession {
         firmware_version: String::new(),
         hardware_name: String::new(),
         stats,
+        warnings: Vec::new(),
+        session_index: 0,
     }
 }

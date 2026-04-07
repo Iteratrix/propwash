@@ -3,7 +3,7 @@ mod episodes;
 use std::process;
 
 use clap::{Parser, Subcommand};
-use propwash_core::Unified;
+use propwash_core::Session;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -110,7 +110,7 @@ fn cmd_info(path: &str, json: bool) {
     println!();
 
     for session in &log.sessions {
-        println!("── Session {} ──", session.index);
+        println!("── Session {} ──", session.index());
         println!("  Firmware:       {}", session.firmware_version());
         println!("  Craft:          {}", session.craft_name());
         println!("  Duration:       {:.1}s", session.duration_seconds());
@@ -118,7 +118,7 @@ fn cmd_info(path: &str, json: bool) {
         println!("  Frames:         {}", session.frame_count());
         println!("  Motors:         {}", session.motor_count());
 
-        if let propwash_core::RawSession::Betaflight(bf) = &session.raw {
+        if let propwash_core::RawSession::Betaflight(bf) = session {
             println!(
                 "  RPM telemetry:  {}",
                 if bf.has_rpm_telemetry() { "yes" } else { "no" }
@@ -146,9 +146,9 @@ fn cmd_info(path: &str, json: bool) {
             println!("    {name}");
         }
 
-        if !session.warnings.is_empty() {
+        if !session.warnings().is_empty() {
             println!("  Warnings:");
-            for w in &session.warnings {
+            for w in session.warnings() {
                 println!("    {w}");
             }
         }
@@ -327,7 +327,7 @@ fn cmd_scan(files: &[String]) {
 
             println!(
                 "{worst:60}  {path} s{} ({:.0}s, {} events)",
-                session.index,
+                session.index(),
                 session.duration_seconds(),
                 episodes.len(),
             );
@@ -543,7 +543,7 @@ fn cmd_dump(
 
     for session in &log.sessions {
         if let Some(target) = session_filter {
-            if session.index != target {
+            if session.index() != target {
                 continue;
             }
         }
@@ -608,7 +608,7 @@ fn cmd_dump(
         }
 
         output.sessions.push(DumpSession {
-            index: session.index,
+            index: session.index(),
             firmware: session.firmware_version().to_string(),
             total_frames: n_frames,
             dumped_frames: frames.len(),
@@ -731,7 +731,7 @@ fn build_info_json(log: &propwash_core::Log) -> InfoJson {
         .sessions
         .iter()
         .map(|s| SessionInfo {
-            index: s.index,
+            index: s.index(),
             firmware_version: s.firmware_version().to_string(),
             craft_name: s.craft_name().to_string(),
             duration_seconds: s.duration_seconds(),
@@ -739,7 +739,7 @@ fn build_info_json(log: &propwash_core::Log) -> InfoJson {
             frame_count: s.frame_count(),
             motor_count: s.motor_count(),
             field_names: s.field_names(),
-            warnings: s.warnings.iter().map(ToString::to_string).collect(),
+            warnings: s.warnings().iter().map(ToString::to_string).collect(),
         })
         .collect();
     InfoJson { sessions }

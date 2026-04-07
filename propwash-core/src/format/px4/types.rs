@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Unified};
+use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session, Warning};
 
 /// Primitive types in the `ULog` type system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +148,10 @@ pub struct Px4RawSession {
     pub hardware_name: String,
     /// Parse statistics.
     pub stats: Px4ParseStats,
+    /// Non-fatal diagnostics from parsing.
+    pub warnings: Vec<Warning>,
+    /// 1-based session index within the file.
+    pub session_index: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -213,7 +217,7 @@ impl Px4RawSession {
     }
 }
 
-impl Unified for Px4RawSession {
+impl Session for Px4RawSession {
     fn frame_count(&self) -> usize {
         // Use highest-rate gyro source as frame count
         let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
@@ -454,5 +458,11 @@ impl Unified for Px4RawSession {
         } else {
             (0.0, 1.0) // Normalized
         }
+    }
+    fn warnings(&self) -> &[Warning] {
+        &self.warnings
+    }
+    fn index(&self) -> usize {
+        self.session_index
     }
 }

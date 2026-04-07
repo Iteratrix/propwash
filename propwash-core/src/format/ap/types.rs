@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Unified};
+use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session, Warning};
 
 /// Format character from FMT message — determines wire size and interpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +135,10 @@ pub struct ApRawSession {
     pub params: HashMap<String, f64>,
     /// Parse statistics.
     pub stats: ApParseStats,
+    /// Non-fatal diagnostics from parsing.
+    pub warnings: Vec<Warning>,
+    /// 1-based session index within the file.
+    pub session_index: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -193,7 +197,7 @@ impl ApRawSession {
     }
 }
 
-impl Unified for ApRawSession {
+impl Session for ApRawSession {
     fn frame_count(&self) -> usize {
         let imu_type = self
             .msg_type_for_name("IMU")
@@ -413,5 +417,11 @@ impl Unified for ApRawSession {
         let min = self.params.get("MOT_PWM_MIN").copied().unwrap_or(1000.0);
         let max = self.params.get("MOT_PWM_MAX").copied().unwrap_or(2000.0);
         (min, max)
+    }
+    fn warnings(&self) -> &[Warning] {
+        &self.warnings
+    }
+    fn index(&self) -> usize {
+        self.session_index
     }
 }

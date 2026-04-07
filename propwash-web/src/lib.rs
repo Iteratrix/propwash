@@ -7,7 +7,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use propwash_core::analysis::{self, FlightAnalysis};
-use propwash_core::types::{Log, RawSession, Unified};
+use propwash_core::types::{Log, RawSession, Session};
 
 thread_local! {
     static CURRENT_LOG: RefCell<Option<Log>> = const { RefCell::new(None) };
@@ -89,7 +89,7 @@ pub fn analyze(data: &[u8]) -> String {
         let flight_analysis = analysis::analyze(session);
 
         sessions.push(SessionResult {
-            index: session.index,
+            index: session.index(),
             firmware: session.firmware_version().to_string(),
             craft: session.craft_name().to_string(),
             duration_seconds: session.duration_seconds(),
@@ -297,7 +297,7 @@ pub fn get_filter_config(session_idx: usize) -> String {
             }
         };
 
-        let config = match &session.raw {
+        let config = match session {
             RawSession::Betaflight(bf) => {
                 let non_zero = |v: i32| -> Option<f64> {
                     if v > 0 {

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{SensorField, Unified};
+use crate::types::{SensorField, Session, Warning};
 
 /// Whether a field's predicted value wraps as unsigned or signed 32-bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,6 +252,10 @@ pub struct BfRawSession {
     pub events: Vec<BfEvent>,
     /// Parse statistics.
     pub stats: BfParseStats,
+    /// Non-fatal diagnostics from parsing.
+    pub warnings: Vec<Warning>,
+    /// 1-based session index within the file.
+    pub session_index: usize,
     min_throttle: i32,
     min_motor: i32,
     vbat_ref: i32,
@@ -299,6 +303,8 @@ impl BfRawSession {
             gps_frames: Vec::new(),
             events: Vec::new(),
             stats: BfParseStats::default(),
+            warnings: Vec::new(),
+            session_index: 0,
             min_throttle,
             min_motor: min_motor_override,
             vbat_ref,
@@ -476,7 +482,7 @@ impl BfRawSession {
     }
 }
 
-impl Unified for BfRawSession {
+impl Session for BfRawSession {
     fn frame_count(&self) -> usize {
         self.frame_count()
     }
@@ -509,5 +515,11 @@ impl Unified for BfRawSession {
             _ => motor_output[1],
         };
         (0.0, f64::from(max))
+    }
+    fn warnings(&self) -> &[Warning] {
+        &self.warnings
+    }
+    fn index(&self) -> usize {
+        self.session_index
     }
 }

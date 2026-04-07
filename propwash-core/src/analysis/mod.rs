@@ -11,7 +11,7 @@ use summary::FlightSummary;
 
 use crate::format::ap::types::{ApRawSession, ApValue};
 use crate::format::px4::types::Px4RawSession;
-use crate::types::{RawSession, Session};
+use crate::types::RawSession;
 
 use serde::Serialize;
 
@@ -24,13 +24,13 @@ pub struct FlightAnalysis {
 }
 
 /// Analyzes a parsed session, detecting events and producing a summary.
-pub fn analyze(session: &Session) -> FlightAnalysis {
+pub fn analyze(session: &RawSession) -> FlightAnalysis {
     let (detected, vibration) = {
         let mut events = unified_events::detect_all(session);
         let vib = fft::analyze_vibration_unified(session);
 
         // Format-specific event sources
-        match &session.raw {
+        match session {
             RawSession::Betaflight(_) => {}
             RawSession::ArduPilot(ap) => {
                 events.extend(detect_ardupilot_events(ap));

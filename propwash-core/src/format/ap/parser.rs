@@ -112,6 +112,8 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
         vehicle_name,
         params,
         stats,
+        warnings: Vec::new(),
+        session_index: 0,
     }
 }
 
