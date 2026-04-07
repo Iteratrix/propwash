@@ -22,7 +22,7 @@ pub struct FlightSummary {
 }
 
 /// Builds a summary from a session and its detected events.
-pub fn summarize(session: &dyn Session, events: &[FlightEvent]) -> FlightSummary {
+pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
     let mut throttle_chops = 0;
     let mut throttle_punches = 0;
     let mut motor_saturations = 0;

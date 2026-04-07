@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session, Warning};
+use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Format character from FMT message — determines wire size and interpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +122,7 @@ pub struct ApMessage {
 
 /// Complete raw data for one `ArduPilot` session.
 #[derive(Debug)]
-pub struct ApRawSession {
+pub struct ApSession {
     /// Message type definitions (FMT messages), keyed by type ID.
     pub msg_defs: HashMap<u8, ApMsgDef>,
     /// All decoded messages, in file order.
@@ -149,7 +149,7 @@ pub struct ApParseStats {
     pub unknown_types: usize,
 }
 
-impl ApRawSession {
+impl ApSession {
     /// Returns messages of a given type name.
     pub fn messages_by_name(&self, name: &str) -> Vec<&ApMessage> {
         let Some(msg_type) = self.msg_type_for_name(name) else {
@@ -195,10 +195,9 @@ impl ApRawSession {
             })
             .collect()
     }
-}
 
-impl Session for ApRawSession {
-    fn frame_count(&self) -> usize {
+    /// Returns the number of main frames (IMU or ACC messages).
+    pub fn frame_count(&self) -> usize {
         let imu_type = self
             .msg_type_for_name("IMU")
             .or_else(|| self.msg_type_for_name("ACC"));
@@ -208,7 +207,8 @@ impl Session for ApRawSession {
         }
     }
 
-    fn field_names(&self) -> Vec<String> {
+    /// Returns field names available in this session.
+    pub fn field_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         if self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("GYR").is_some() {
             for axis in Axis::ALL {
@@ -237,16 +237,19 @@ impl Session for ApRawSession {
         names
     }
 
-    fn firmware_version(&self) -> &str {
+    /// Returns the firmware version string.
+    pub fn firmware_version(&self) -> &str {
         &self.firmware_version
     }
 
-    fn craft_name(&self) -> &str {
+    /// Returns the vehicle name.
+    pub fn craft_name(&self) -> &str {
         &self.vehicle_name
     }
 
-    #[allow(clippy::cast_precision_loss)]
-    fn sample_rate_hz(&self) -> f64 {
+    /// Computes sample rate from IMU timestamps.
+    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
+    pub fn sample_rate_hz(&self) -> f64 {
         let mut series = self.extract_series("IMU", "TimeUS");
         if series.len() < 2 {
             series = self.extract_series("IMU", "TimeMS");
@@ -272,8 +275,9 @@ impl Session for ApRawSession {
         (series.len() - 1) as f64 / (dt as f64 / 1_000_000.0)
     }
 
+    /// Returns flight duration in seconds.
     #[allow(clippy::cast_precision_loss)]
-    fn duration_seconds(&self) -> f64 {
+    pub fn duration_seconds(&self) -> f64 {
         let mut min_t = u64::MAX;
         let mut max_t = 0u64;
         for m in &self.messages {
@@ -288,8 +292,9 @@ impl Session for ApRawSession {
         (max_t - min_t) as f64 / 1_000_000.0
     }
 
+    /// Extracts one field as a `Vec<f64>` across all relevant messages.
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
-    fn field(&self, field: &SensorField) -> Vec<f64> {
+    pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => {
                 let series = self.extract_series("IMU", "TimeUS");
@@ -387,7 +392,8 @@ impl Session for ApRawSession {
         }
     }
 
-    fn motor_count(&self) -> usize {
+    /// Returns the number of motors detected from parameters or servo config.
+    pub fn motor_count(&self) -> usize {
         if let Some(&count) = self.params.get("MOT_PWM_COUNT") {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             return (count as usize).min(8);
@@ -413,15 +419,20 @@ impl Session for ApRawSession {
         }
     }
 
-    fn motor_range(&self) -> (f64, f64) {
+    /// Returns the motor output range `(min, max)` from parameters.
+    pub fn motor_range(&self) -> (f64, f64) {
         let min = self.params.get("MOT_PWM_MIN").copied().unwrap_or(1000.0);
         let max = self.params.get("MOT_PWM_MAX").copied().unwrap_or(2000.0);
         (min, max)
     }
-    fn warnings(&self) -> &[Warning] {
+
+    /// Returns parse warnings.
+    pub fn warnings(&self) -> &[Warning] {
         &self.warnings
     }
-    fn index(&self) -> usize {
+
+    /// Returns the 1-based session index within the file.
+    pub fn index(&self) -> usize {
         self.session_index
     }
 }

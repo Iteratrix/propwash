@@ -1,7 +1,7 @@
 mod parser;
 pub mod types;
 
-use crate::types::{Log, RawSession, Warning};
+use crate::types::{Log, Session, Warning};
 
 /// Decodes an `ArduPilot` `DataFlash` binary log.
 pub(crate) fn decode(data: &[u8]) -> Log {
@@ -11,7 +11,7 @@ pub(crate) fn decode(data: &[u8]) -> Log {
     raw_session.session_index = 1;
 
     Log {
-        sessions: vec![RawSession::ArduPilot(raw_session)],
+        sessions: vec![Session::ArduPilot(raw_session)],
         warnings: Vec::new(),
     }
 }

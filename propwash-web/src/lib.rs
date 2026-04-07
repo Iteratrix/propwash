@@ -7,7 +7,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use propwash_core::analysis::{self, FlightAnalysis};
-use propwash_core::types::{Log, RawSession, Session};
+use propwash_core::types::{Log, Session};
 
 thread_local! {
     static CURRENT_LOG: RefCell<Option<Log>> = const { RefCell::new(None) };
@@ -298,7 +298,7 @@ pub fn get_filter_config(session_idx: usize) -> String {
         };
 
         let config = match session {
-            RawSession::Betaflight(bf) => {
+            Session::Betaflight(bf) => {
                 let non_zero = |v: i32| -> Option<f64> {
                     if v > 0 {
                         Some(f64::from(v))
@@ -317,7 +317,7 @@ pub fn get_filter_config(session_idx: usize) -> String {
                     gyro_notch2_hz: non_zero(bf.get_header_int("gyro_notch2_hz", 0)),
                 }
             }
-            RawSession::ArduPilot(ap) => {
+            Session::ArduPilot(ap) => {
                 let p = |k: &str| ap.params.get(k).copied().unwrap_or(0.0);
                 FilterConfig {
                     gyro_lpf_hz: non_zero_f64(p("INS_GYRO_FILTER")),
@@ -341,7 +341,7 @@ pub fn get_filter_config(session_idx: usize) -> String {
                     },
                 }
             }
-            RawSession::Px4(px4) => {
+            Session::Px4(px4) => {
                 let p = |k: &str| px4.params.get(k).copied().unwrap_or(0.0);
                 FilterConfig {
                     gyro_lpf_hz: non_zero_f64(p("IMU_GYRO_CUTOFF")),

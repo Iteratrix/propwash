@@ -223,7 +223,7 @@ fn compute_noise_floor(magnitudes_db: &[f64]) -> f64 {
 /// Format-agnostic vibration analysis using the `Unified` trait.
 /// Includes throttle-banded FFT and accelerometer analysis.
 #[allow(clippy::cast_precision_loss)]
-pub fn analyze_vibration_unified(unified: &dyn Session) -> Option<VibrationAnalysis> {
+pub fn analyze_vibration_unified(unified: &Session) -> Option<VibrationAnalysis> {
     let sample_rate = unified.sample_rate_hz();
     if sample_rate <= 0.0 {
         return None;
@@ -267,7 +267,7 @@ pub fn analyze_vibration_unified(unified: &dyn Session) -> Option<VibrationAnaly
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn compute_throttle_bands_unified(unified: &dyn Session, sample_rate: f64) -> Vec<ThrottleBand> {
+fn compute_throttle_bands_unified(unified: &Session, sample_rate: f64) -> Vec<ThrottleBand> {
     let throttle = unified.field(&SensorField::Rc(RcChannel::Throttle));
     if throttle.is_empty() {
         return Vec::new();
@@ -334,7 +334,7 @@ fn compute_throttle_bands_unified(unified: &dyn Session, sample_rate: f64) -> Ve
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn analyze_accel_unified(unified: &dyn Session, sample_rate: f64) -> Option<AccelVibration> {
+fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVibration> {
     let accel_names = ["X", "Y", "Z"];
     let mut rms = [0.0; 3];
     let mut spectra = Vec::new();

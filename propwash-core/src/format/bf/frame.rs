@@ -4,7 +4,7 @@ use super::encoding::{
 };
 use super::predictor::{apply_i_predictor, apply_p_predictor, DecodeContext};
 use super::types::{
-    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Encoding, Predictor,
+    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfSession, Encoding, Predictor,
 };
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
@@ -59,7 +59,7 @@ const EVENT_LOG_END: u8 = 255;
 pub(crate) fn parse_session_frames(
     data: &[u8],
     base_offset: usize,
-    session: &BfRawSession,
+    session: &BfSession,
     warnings: &mut Vec<Warning>,
 ) -> ParsedFrames {
     let mut reader = Reader::with_offset(data, base_offset);
@@ -359,7 +359,7 @@ fn count_consecutive(
 fn decode_i_frame(
     reader: &mut Reader<'_>,
     fields: &[BfFieldDef],
-    session: &BfRawSession,
+    session: &BfSession,
     motor0_idx: Option<usize>,
     byte_offset: usize,
     frame_index: usize,
@@ -398,7 +398,7 @@ fn decode_p_frame(
     p_predictors: &[Predictor],
     prev1: &[i64],
     prev2: &[i64],
-    session: &BfRawSession,
+    session: &BfSession,
     time_idx: Option<usize>,
     skipped_frames: u32,
     byte_offset: usize,

@@ -12,7 +12,7 @@ pub(crate) mod format;
 mod reader;
 pub mod types;
 
-pub use types::{Log, ParseError, RawSession, Session, Warning};
+pub use types::{Log, ParseError, Session, Warning};
 
 const BETAFLIGHT_MARKER: &[u8] = b"H Product:Blackbox flight data recorder";
 const ARDUPILOT_MARKER: &[u8] = &[0xA3, 0x95, 0x80]; // HEAD1 HEAD2 FMT_TYPE

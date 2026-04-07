@@ -9,9 +9,9 @@ use events::{EventKind, FlightEvent};
 use fft::VibrationAnalysis;
 use summary::FlightSummary;
 
-use crate::format::ap::types::{ApRawSession, ApValue};
-use crate::format::px4::types::Px4RawSession;
-use crate::types::RawSession;
+use crate::format::ap::types::{ApSession, ApValue};
+use crate::format::px4::types::Px4Session;
+use crate::types::Session;
 
 use serde::Serialize;
 
@@ -24,19 +24,19 @@ pub struct FlightAnalysis {
 }
 
 /// Analyzes a parsed session, detecting events and producing a summary.
-pub fn analyze(session: &RawSession) -> FlightAnalysis {
+pub fn analyze(session: &Session) -> FlightAnalysis {
     let (detected, vibration) = {
         let mut events = unified_events::detect_all(session);
         let vib = fft::analyze_vibration_unified(session);
 
         // Format-specific event sources
         match session {
-            RawSession::Betaflight(_) => {}
-            RawSession::ArduPilot(ap) => {
+            Session::Betaflight(_) => {}
+            Session::ArduPilot(ap) => {
                 events.extend(detect_ardupilot_events(ap));
                 events.extend(detect_ardupilot_firmware_messages(ap));
             }
-            RawSession::Px4(px4) => {
+            Session::Px4(px4) => {
                 events.extend(detect_px4_log_events(px4));
             }
         }
@@ -60,7 +60,7 @@ pub fn analyze(session: &RawSession) -> FlightAnalysis {
 
 /// Detect events from PX4 firmware log messages (warnings/errors).
 #[allow(clippy::cast_precision_loss)]
-fn detect_px4_log_events(px4: &Px4RawSession) -> Vec<FlightEvent> {
+fn detect_px4_log_events(px4: &Px4Session) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
     for msg in &px4.log_messages {
@@ -95,7 +95,7 @@ fn detect_px4_log_events(px4: &Px4RawSession) -> Vec<FlightEvent> {
 
 /// Detect events from `ArduPilot` EV/ERR messages.
 #[allow(clippy::cast_precision_loss)]
-fn detect_ardupilot_events(ap: &ApRawSession) -> Vec<FlightEvent> {
+fn detect_ardupilot_events(ap: &ApSession) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
     for msg in ap.messages_by_name("EV") {
@@ -126,7 +126,7 @@ fn detect_ardupilot_events(ap: &ApRawSession) -> Vec<FlightEvent> {
 
 /// Detect firmware messages from `ArduPilot` ERR log messages.
 #[allow(clippy::cast_precision_loss)]
-fn detect_ardupilot_firmware_messages(ap: &ApRawSession) -> Vec<FlightEvent> {
+fn detect_ardupilot_firmware_messages(ap: &ApSession) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
     for msg in ap.messages_by_name("ERR") {

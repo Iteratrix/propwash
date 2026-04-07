@@ -4,9 +4,9 @@ mod header;
 mod predictor;
 pub mod types;
 
-use crate::types::{Log, RawSession, Warning};
+use crate::types::{Log, Session, Warning};
 use header::{find_sessions, parse_headers};
-use types::{BfHeaderValue, BfRawSession};
+use types::{BfHeaderValue, BfSession};
 
 /// Decodes a Betaflight-family blackbox log.
 pub(crate) fn decode(data: &[u8]) -> Log {
@@ -44,7 +44,7 @@ pub(crate) fn decode(data: &[u8]) -> Log {
             _ => 0,
         };
 
-        let mut raw_session = BfRawSession::new(
+        let mut raw_session = BfSession::new(
             parsed.raw,
             parsed.firmware_type,
             parsed.firmware_version,
@@ -75,7 +75,7 @@ pub(crate) fn decode(data: &[u8]) -> Log {
 
         raw_session.warnings = warnings;
         raw_session.session_index = i + 1;
-        sessions.push(RawSession::Betaflight(raw_session));
+        sessions.push(Session::Betaflight(raw_session));
     }
 
     Log {

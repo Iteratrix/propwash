@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{SensorField, Session, Warning};
+use crate::types::{SensorField, Warning};
 
 /// Whether a field's predicted value wraps as unsigned or signed 32-bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +152,7 @@ pub enum BfFrameKind {
 
 /// A single decoded Betaflight frame with provenance.
 /// Values are indexed by field position (matching `BfFrameDefs`).
-/// Use `BfRawSession::get_field()` for name-based access.
+/// Use `BfSession::get_field()` for name-based access.
 #[derive(Debug, Clone)]
 pub struct BfFrame {
     /// Field values indexed by position in the session's `main_field_defs`.
@@ -221,7 +221,7 @@ pub enum BfHeaderValue {
 
 /// Complete raw data for one Betaflight session.
 #[derive(Debug)]
-pub struct BfRawSession {
+pub struct BfSession {
     /// Raw header key-value pairs.
     pub headers: HashMap<String, BfHeaderValue>,
     /// Firmware type string (e.g., "Cleanflight").
@@ -261,8 +261,8 @@ pub struct BfRawSession {
     vbat_ref: i32,
 }
 
-impl BfRawSession {
-    /// Creates a new `BfRawSession` with parsed headers but no frames yet.
+impl BfSession {
+    /// Creates a new `BfSession` with parsed headers but no frames yet.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         headers: HashMap<String, BfHeaderValue>,
@@ -480,34 +480,9 @@ impl BfRawSession {
     pub fn is_truncated(&self) -> bool {
         !self.stats.clean_end
     }
-}
 
-impl Session for BfRawSession {
-    fn frame_count(&self) -> usize {
-        self.frame_count()
-    }
-    fn field_names(&self) -> Vec<String> {
-        self.field_names()
-    }
-    fn firmware_version(&self) -> &str {
-        self.firmware_version()
-    }
-    fn craft_name(&self) -> &str {
-        self.craft_name()
-    }
-    fn sample_rate_hz(&self) -> f64 {
-        self.sample_rate_hz()
-    }
-    fn duration_seconds(&self) -> f64 {
-        self.duration_seconds()
-    }
-    fn field(&self, field: &SensorField) -> Vec<f64> {
-        self.field(field)
-    }
-    fn motor_count(&self) -> usize {
-        self.motor_count()
-    }
-    fn motor_range(&self) -> (f64, f64) {
+    /// Returns the motor output range `(min, max)` from header metadata.
+    pub fn motor_range(&self) -> (f64, f64) {
         let motor_output = self.get_header_int_list("motorOutput");
         let max = match motor_output.len() {
             0 => 2047,
@@ -516,10 +491,14 @@ impl Session for BfRawSession {
         };
         (0.0, f64::from(max))
     }
-    fn warnings(&self) -> &[Warning] {
+
+    /// Returns parse warnings.
+    pub fn warnings(&self) -> &[Warning] {
         &self.warnings
     }
-    fn index(&self) -> usize {
+
+    /// Returns the 1-based session index within the file.
+    pub fn index(&self) -> usize {
         self.session_index
     }
 }

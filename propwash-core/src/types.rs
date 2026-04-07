@@ -1,8 +1,8 @@
 use std::fmt;
 
-use crate::format::ap::types::ApRawSession;
-use crate::format::bf::types::BfRawSession;
-use crate::format::px4::types::Px4RawSession;
+use crate::format::ap::types::ApSession;
+use crate::format::bf::types::BfSession;
+use crate::format::px4::types::Px4Session;
 
 /// Rotational axis: roll, pitch, or yaw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -242,52 +242,21 @@ impl From<std::io::Error> for ParseError {
     }
 }
 
-/// Format-agnostic interface for accessing flight session data.
+/// A parsed flight session. The primary type consumers work with.
 ///
-/// This is the primary abstraction consumers should use. Each format
-/// (`Betaflight`, `ArduPilot`, `PX4`) implements this trait on its raw session
-/// type. The `RawSession` enum dispatches to the correct implementation.
+/// Call methods directly for format-agnostic sensor data access.
+/// Pattern match on the enum variants when you need format-specific data.
 ///
-/// Pattern match on `RawSession` when you need format-specific access.
-pub trait Session {
-    fn frame_count(&self) -> usize;
-    fn field_names(&self) -> Vec<String>;
-    fn firmware_version(&self) -> &str;
-    fn craft_name(&self) -> &str;
-    fn sample_rate_hz(&self) -> f64;
-    fn duration_seconds(&self) -> f64;
-    fn field(&self, field: &SensorField) -> Vec<f64>;
-    fn motor_count(&self) -> usize;
-    fn warnings(&self) -> &[Warning];
-    fn index(&self) -> usize;
-
-    /// Returns the (min, max) output range for motor values.
-    fn motor_range(&self) -> (f64, f64) {
-        (0.0, 1.0)
-    }
-
-    /// Extracts one field by header string name.
-    /// Convenience for system boundaries (WASM bridge, CLI user input).
-    fn field_by_name(&self, name: &str) -> Vec<f64> {
-        self.field(&SensorField::from_header(name))
-    }
-}
-
-/// Sealed set of format-specific session implementations.
 /// Adding a variant is a breaking change — consumers should handle every format.
-///
-/// Implements `Session` by dispatching to the inner type.
-/// Pattern match to access format-specific data.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum RawSession {
-    Betaflight(BfRawSession),
-    ArduPilot(ApRawSession),
-    Px4(Px4RawSession),
+pub enum Session {
+    Betaflight(BfSession),
+    ArduPilot(ApSession),
+    Px4(Px4Session),
 }
 
-/// Dispatch macro: generates `Session` trait impl for `RawSession` by
-/// delegating each method to the inner format-specific type.
+/// Dispatches a method call to the inner format-specific type.
 macro_rules! dispatch {
     ($self:ident, $method:ident $(, $arg:expr)*) => {
         match $self {
@@ -298,46 +267,52 @@ macro_rules! dispatch {
     };
 }
 
-impl Session for RawSession {
-    fn frame_count(&self) -> usize {
+impl Session {
+    pub fn frame_count(&self) -> usize {
         dispatch!(self, frame_count)
     }
-    fn field_names(&self) -> Vec<String> {
+    pub fn field_names(&self) -> Vec<String> {
         dispatch!(self, field_names)
     }
-    fn firmware_version(&self) -> &str {
+    pub fn firmware_version(&self) -> &str {
         dispatch!(self, firmware_version)
     }
-    fn craft_name(&self) -> &str {
+    pub fn craft_name(&self) -> &str {
         dispatch!(self, craft_name)
     }
-    fn sample_rate_hz(&self) -> f64 {
+    pub fn sample_rate_hz(&self) -> f64 {
         dispatch!(self, sample_rate_hz)
     }
-    fn duration_seconds(&self) -> f64 {
+    pub fn duration_seconds(&self) -> f64 {
         dispatch!(self, duration_seconds)
     }
-    fn field(&self, field: &SensorField) -> Vec<f64> {
+    pub fn field(&self, field: &SensorField) -> Vec<f64> {
         dispatch!(self, field, field)
     }
-    fn motor_count(&self) -> usize {
+    pub fn motor_count(&self) -> usize {
         dispatch!(self, motor_count)
     }
-    fn motor_range(&self) -> (f64, f64) {
+    pub fn motor_range(&self) -> (f64, f64) {
         dispatch!(self, motor_range)
     }
-    fn warnings(&self) -> &[Warning] {
+    pub fn warnings(&self) -> &[Warning] {
         dispatch!(self, warnings)
     }
-    fn index(&self) -> usize {
+    pub fn index(&self) -> usize {
         dispatch!(self, index)
+    }
+
+    /// Extracts one field by header string name.
+    /// Convenience for system boundaries (WASM bridge, CLI user input).
+    pub fn field_by_name(&self, name: &str) -> Vec<f64> {
+        self.field(&SensorField::from_header(name))
     }
 }
 
 /// Complete parsed log file.
 #[derive(Debug)]
 pub struct Log {
-    pub sessions: Vec<RawSession>,
+    pub sessions: Vec<Session>,
     pub warnings: Vec<Warning>,
 }
 

@@ -1,4 +1,4 @@
-use super::types::{BfFieldSign, BfRawSession, Predictor};
+use super::types::{BfFieldSign, BfSession, Predictor};
 use crate::types::{MotorIndex, SensorField};
 
 /// Frame scheduling: determines which PID loop iterations are logged.
@@ -11,7 +11,7 @@ pub(crate) struct FrameSchedule {
 }
 
 impl FrameSchedule {
-    pub fn from_headers(session: &BfRawSession) -> Self {
+    pub fn from_headers(session: &BfSession) -> Self {
         #[allow(clippy::cast_sign_loss)]
         Self {
             i_interval: session.get_header_int("I interval", 1).max(1) as u32,
@@ -56,7 +56,7 @@ pub(crate) enum DecodeContext {
 }
 
 impl DecodeContext {
-    pub fn new(session: &BfRawSession) -> Self {
+    pub fn new(session: &BfSession) -> Self {
         Self::Empty {
             schedule: FrameSchedule::from_headers(session),
         }
@@ -145,7 +145,7 @@ pub(crate) fn apply_i_predictor(
     sign: BfFieldSign,
     current_values: &[i64],
     motor0_idx: Option<usize>,
-    session: &BfRawSession,
+    session: &BfSession,
 ) -> i64 {
     let predicted: i32 = match predictor {
         Predictor::MinThrottle => decoded.wrapping_add(session.min_throttle()),
@@ -174,7 +174,7 @@ pub(crate) fn apply_p_predictor(
     sign: BfFieldSign,
     prev1: &[i64],
     prev2: &[i64],
-    session: &BfRawSession,
+    session: &BfSession,
     time_idx: Option<usize>,
     skipped_frames: u32,
 ) -> i64 {

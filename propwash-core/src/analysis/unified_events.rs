@@ -4,7 +4,7 @@ use super::events::{EventKind, FlightEvent};
 
 /// Run all format-agnostic event detectors using the `Unified` trait.
 #[allow(clippy::cast_precision_loss)]
-pub fn detect_all(unified: &dyn Session) -> Vec<FlightEvent> {
+pub fn detect_all(unified: &Session) -> Vec<FlightEvent> {
     let timestamps = unified.field(&SensorField::Time);
     if timestamps.len() < 2 {
         return Vec::new();
@@ -24,7 +24,7 @@ pub fn detect_all(unified: &dyn Session) -> Vec<FlightEvent> {
 }
 
 fn detect_gyro_spikes(
-    unified: &dyn Session,
+    unified: &Session,
     timestamps: &[f64],
     first_t: f64,
     events: &mut Vec<FlightEvent>,
@@ -54,7 +54,7 @@ fn detect_gyro_spikes(
 
 #[allow(clippy::cast_precision_loss)]
 fn detect_throttle_events(
-    unified: &dyn Session,
+    unified: &Session,
     timestamps: &[f64],
     first_t: f64,
     events: &mut Vec<FlightEvent>,
@@ -112,7 +112,7 @@ fn detect_throttle_events(
 }
 
 fn detect_motor_saturation(
-    unified: &dyn Session,
+    unified: &Session,
     timestamps: &[f64],
     first_t: f64,
     events: &mut Vec<FlightEvent>,
@@ -152,7 +152,7 @@ fn detect_motor_saturation(
 }
 
 fn detect_overshoot(
-    unified: &dyn Session,
+    unified: &Session,
     timestamps: &[f64],
     first_t: f64,
     events: &mut Vec<FlightEvent>,
@@ -206,7 +206,7 @@ fn detect_overshoot(
 
 #[allow(clippy::cast_precision_loss)]
 fn detect_desync(
-    unified: &dyn Session,
+    unified: &Session,
     timestamps: &[f64],
     first_t: f64,
     events: &mut Vec<FlightEvent>,

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::types::Warning;
 
-use super::types::{ApMessage, ApMsgDef, ApParseStats, ApRawSession, ApValue, FieldType};
+use super::types::{ApMessage, ApMsgDef, ApParseStats, ApSession, ApValue, FieldType};
 
 const HEAD1: u8 = 0xA3;
 const HEAD2: u8 = 0x95;
@@ -10,7 +10,7 @@ const FMT_TYPE: u8 = 128;
 const FMT_LEN: usize = 89;
 
 /// Parse an `ArduPilot` `DataFlash` binary log.
-pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
+pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
     let mut msg_defs: HashMap<u8, ApMsgDef> = HashMap::new();
     let mut messages: Vec<ApMessage> = Vec::new();
     let mut params: HashMap<String, f64> = HashMap::new();
@@ -105,7 +105,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
         });
     }
 
-    ApRawSession {
+    ApSession {
         msg_defs,
         messages,
         firmware_version,

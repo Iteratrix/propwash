@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session, Warning};
+use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Primitive types in the `ULog` type system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,7 +129,7 @@ pub struct ULogLogMessage {
 
 /// Complete raw data for one `PX4` session.
 #[derive(Debug)]
-pub struct Px4RawSession {
+pub struct Px4Session {
     /// Format definitions keyed by name.
     pub formats: HashMap<String, ULogFormat>,
     /// Subscriptions keyed by `msg_id`.
@@ -164,7 +164,7 @@ pub struct Px4ParseStats {
     pub corrupt_bytes: usize,
 }
 
-impl Px4RawSession {
+impl Px4Session {
     /// Returns data messages for the primary instance of a topic (lowest `multi_id`).
     ///
     /// PX4 logs can contain multiple sensor instances (e.g. two gyros).
@@ -215,10 +215,9 @@ impl Px4RawSession {
             })
             .collect()
     }
-}
 
-impl Session for Px4RawSession {
-    fn frame_count(&self) -> usize {
+    /// Returns the number of main frames from the highest-rate gyro source.
+    pub fn frame_count(&self) -> usize {
         // Use highest-rate gyro source as frame count
         let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
         for topic in candidates {
@@ -230,7 +229,8 @@ impl Session for Px4RawSession {
         0
     }
 
-    fn field_names(&self) -> Vec<String> {
+    /// Returns field names available in this session.
+    pub fn field_names(&self) -> Vec<String> {
         let mut names = Vec::new();
 
         let has_gyro = !self.topic_data("sensor_combined").is_empty()
@@ -268,16 +268,19 @@ impl Session for Px4RawSession {
         names
     }
 
-    fn firmware_version(&self) -> &str {
+    /// Returns the firmware version string.
+    pub fn firmware_version(&self) -> &str {
         &self.firmware_version
     }
 
-    fn craft_name(&self) -> &str {
+    /// Returns the hardware name.
+    pub fn craft_name(&self) -> &str {
         &self.hardware_name
     }
 
-    #[allow(clippy::cast_precision_loss)]
-    fn sample_rate_hz(&self) -> f64 {
+    /// Computes sample rate from gyro timestamps.
+    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
+    pub fn sample_rate_hz(&self) -> f64 {
         let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
         let mut series = Vec::new();
         for topic in candidates {
@@ -298,8 +301,9 @@ impl Session for Px4RawSession {
         (series.len() - 1) as f64 / (dt as f64 / 1_000_000.0)
     }
 
+    /// Returns flight duration in seconds.
     #[allow(clippy::cast_precision_loss)]
-    fn duration_seconds(&self) -> f64 {
+    pub fn duration_seconds(&self) -> f64 {
         let mut min_t = u64::MAX;
         let mut max_t = 0u64;
         for m in &self.data_messages {
@@ -314,12 +318,13 @@ impl Session for Px4RawSession {
         (max_t - min_t) as f64 / 1_000_000.0
     }
 
+    /// Extracts one field as a `Vec<f64>` across all relevant messages.
     #[allow(
         clippy::cast_precision_loss,
         clippy::too_many_lines,
         clippy::cast_possible_truncation
     )]
-    fn field(&self, field: &SensorField) -> Vec<f64> {
+    pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => {
                 let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
@@ -422,7 +427,8 @@ impl Session for Px4RawSession {
         }
     }
 
-    fn motor_count(&self) -> usize {
+    /// Returns the number of motors detected from parameters or data.
+    pub fn motor_count(&self) -> usize {
         // Use MOT_COUNT parameter if available
         if let Some(&count) = self.params.get("MOT_COUNT") {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -445,7 +451,8 @@ impl Session for Px4RawSession {
         }
     }
 
-    fn motor_range(&self) -> (f64, f64) {
+    /// Returns the motor output range `(min, max)` detected from data.
+    pub fn motor_range(&self) -> (f64, f64) {
         // Detect from actual data: if max < 10, it's normalized (0-1); otherwise PWM
         let msgs = self.topic_data("actuator_outputs");
         let max_val = msgs
@@ -459,10 +466,14 @@ impl Session for Px4RawSession {
             (0.0, 1.0) // Normalized
         }
     }
-    fn warnings(&self) -> &[Warning] {
+
+    /// Returns parse warnings.
+    pub fn warnings(&self) -> &[Warning] {
         &self.warnings
     }
-    fn index(&self) -> usize {
+
+    /// Returns the 1-based session index within the file.
+    pub fn index(&self) -> usize {
         self.session_index
     }
 }

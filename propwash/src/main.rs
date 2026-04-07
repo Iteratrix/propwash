@@ -3,7 +3,6 @@ mod episodes;
 use std::process;
 
 use clap::{Parser, Subcommand};
-use propwash_core::Session;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -118,7 +117,7 @@ fn cmd_info(path: &str, json: bool) {
         println!("  Frames:         {}", session.frame_count());
         println!("  Motors:         {}", session.motor_count());
 
-        if let propwash_core::RawSession::Betaflight(bf) = session {
+        if let propwash_core::Session::Betaflight(bf) = session {
             println!(
                 "  RPM telemetry:  {}",
                 if bf.has_rpm_telemetry() { "yes" } else { "no" }

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::types::Warning;
 
 use super::types::{
-    Px4ParseStats, Px4RawSession, ULogDataMsg, ULogField, ULogFormat, ULogLogMessage,
+    Px4ParseStats, Px4Session, ULogDataMsg, ULogField, ULogFormat, ULogLogMessage,
     ULogSubscription, ULogType, ULogValue,
 };
 
@@ -52,7 +52,7 @@ impl TryFrom<u8> for ULogMsgType {
 }
 
 /// Parse a PX4 `ULog` binary file.
-pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
+pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4Session {
     let mut formats: HashMap<String, ULogFormat> = HashMap::new();
     let mut subscriptions: HashMap<u16, ULogSubscription> = HashMap::new();
     let mut data_messages: Vec<ULogDataMsg> = Vec::new();
@@ -128,7 +128,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
         .cloned()
         .unwrap_or_default();
 
-    Px4RawSession {
+    Px4Session {
         formats,
         subscriptions,
         data_messages,
@@ -651,8 +651,8 @@ fn parse_logging_tagged(payload: &[u8]) -> Option<ULogLogMessage> {
     })
 }
 
-fn empty_session(stats: Px4ParseStats) -> Px4RawSession {
-    Px4RawSession {
+fn empty_session(stats: Px4ParseStats) -> Px4Session {
+    Px4Session {
         formats: HashMap::new(),
         subscriptions: HashMap::new(),
         data_messages: Vec::new(),

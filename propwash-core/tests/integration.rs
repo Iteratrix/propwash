@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use propwash_core::types::{Axis, SensorField};
-use propwash_core::{decode_file, Log, RawSession, Session};
+use propwash_core::{decode_file, Log, Session};
 
 fn fixtures_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
@@ -246,7 +246,7 @@ fn unified_field_names() {
 fn analyzed_betaflight_motor_count() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     match &log.sessions[0] {
-        RawSession::Betaflight(bf) => assert_eq!(bf.motor_count(), 4),
+        Session::Betaflight(bf) => assert_eq!(bf.motor_count(), 4),
         _ => panic!("expected Betaflight"),
     }
 }
@@ -255,7 +255,7 @@ fn analyzed_betaflight_motor_count() {
 fn analyzed_rotorflight_single_motor() {
     let log = parse_fixture("gimbal-ghost/rtfl_001.bbl");
     match &log.sessions[0] {
-        RawSession::Betaflight(bf) => assert_eq!(bf.motor_count(), 1),
+        Session::Betaflight(bf) => assert_eq!(bf.motor_count(), 1),
         _ => panic!("expected Betaflight"),
     }
 }
@@ -264,7 +264,7 @@ fn analyzed_rotorflight_single_motor() {
 fn analyzed_crash_log_has_corruption() {
     let log = parse_fixture("fc-blackbox/crashing-LOG00002.BFL");
     match &log.sessions[0] {
-        RawSession::Betaflight(bf) => {
+        Session::Betaflight(bf) => {
             assert!(
                 bf.stats.corrupt_bytes > 0,
                 "crash log should have corruption"
@@ -283,7 +283,7 @@ fn truncated_files_detected() {
     // Files without "End of log" marker should be detected as truncated
     let log = parse_fixture("fc-blackbox/LOG00002.BFL");
     match &log.sessions[0] {
-        RawSession::Betaflight(bf) => {
+        Session::Betaflight(bf) => {
             assert!(
                 bf.is_truncated(),
                 "file without End of log should be truncated"
@@ -297,7 +297,7 @@ fn truncated_files_detected() {
 fn analyzed_debug_mode() {
     let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
     match &log.sessions[0] {
-        RawSession::Betaflight(bf) => {
+        Session::Betaflight(bf) => {
             let _ = bf.debug_mode();
         }
         _ => panic!("expected Betaflight"),
@@ -308,7 +308,7 @@ fn analyzed_debug_mode() {
 fn analyzed_stats() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
     match &log.sessions[0] {
-        RawSession::Betaflight(bf) => {
+        Session::Betaflight(bf) => {
             assert!(bf.stats.total_main_frames() > 0);
             assert!(bf.stats.i_frame_count > 0);
         }
@@ -333,7 +333,7 @@ macro_rules! invariant_test {
                 );
 
                 // Every frame should have values for all defined fields
-                if let propwash_core::RawSession::Betaflight(bf) = session {
+                if let propwash_core::Session::Betaflight(bf) = session {
                     let n_fields = bf.main_field_defs.len();
                     for (i, frame) in bf.frames.iter().take(10).enumerate() {
                         assert_eq!(
@@ -350,7 +350,7 @@ macro_rules! invariant_test {
                 }
 
                 // frame_index should be sequential
-                if let propwash_core::RawSession::Betaflight(bf) = session {
+                if let propwash_core::Session::Betaflight(bf) = session {
                     for (i, frame) in bf.frames.iter().enumerate() {
                         assert_eq!(
                             frame.frame_index, i,
@@ -372,7 +372,7 @@ macro_rules! invariant_test {
                 }
 
                 // Stats should be consistent
-                if let RawSession::Betaflight(bf) = session {
+                if let Session::Betaflight(bf) = session {
                     let stats = &bf.stats;
                     assert_eq!(
                         stats.total_main_frames(),
@@ -417,7 +417,7 @@ fn events_are_captured() {
         .sessions
         .iter()
         .map(|s| match s {
-            propwash_core::RawSession::Betaflight(bf) => bf.events.len(),
+            propwash_core::Session::Betaflight(bf) => bf.events.len(),
             _ => 0,
         })
         .sum();
@@ -437,7 +437,7 @@ fn three_layer_access() {
 
     // Layer 2: Analyzed (format-specific)
     match session {
-        RawSession::Betaflight(bf) => {
+        Session::Betaflight(bf) => {
             let _ = bf.motor_count();
         }
         _ => panic!("expected Betaflight"),
@@ -445,7 +445,7 @@ fn three_layer_access() {
 
     // Layer 3: Raw (escape hatch)
     match session {
-        propwash_core::RawSession::Betaflight(raw) => {
+        propwash_core::Session::Betaflight(raw) => {
             let frame = &raw.frames[0];
             assert!(frame.byte_offset > 0);
             assert_eq!(frame.frame_index, 0);
@@ -454,15 +454,15 @@ fn three_layer_access() {
     }
 }
 
-fn get_bf(session: &propwash_core::RawSession) -> &propwash_core::format::bf::types::BfRawSession {
+fn get_bf(session: &propwash_core::Session) -> &propwash_core::format::bf::types::BfSession {
     match session {
-        propwash_core::RawSession::Betaflight(bf) => bf,
+        propwash_core::Session::Betaflight(bf) => bf,
         _ => panic!("expected Betaflight"),
     }
 }
 
 fn field_val(
-    bf: &propwash_core::format::bf::types::BfRawSession,
+    bf: &propwash_core::format::bf::types::BfSession,
     frame_idx: usize,
     name: &str,
 ) -> i64 {
@@ -661,7 +661,7 @@ fn regression_loop_iteration_uses_frame_schedule() {
 fn regression_bitreader_btfl_002_time_monotonic() {
     let log = parse_fixture("fc-blackbox/btfl_002.bbl");
     for session in &log.sessions {
-        let RawSession::Betaflight(bf) = session else {
+        let Session::Betaflight(bf) = session else {
             continue;
         };
         let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else {
@@ -690,7 +690,7 @@ fn regression_bitreader_btfl_002_time_monotonic() {
 fn regression_bitreader_btfl_all_time_monotonic() {
     let log = parse_fixture("fc-blackbox/btfl_all.bbl");
     for session in &log.sessions {
-        let RawSession::Betaflight(bf) = session else {
+        let Session::Betaflight(bf) = session else {
             continue;
         };
         let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else {
@@ -726,7 +726,7 @@ fn regression_cleanflight_time_monotonic() {
     ] {
         let log = parse_fixture(fixture);
         for session in &log.sessions {
-            let RawSession::Betaflight(bf) = session else {
+            let Session::Betaflight(bf) = session else {
                 continue;
             };
             let Some(time_idx) = bf.main_field_defs.index_of(&SensorField::Time) else {
@@ -762,7 +762,7 @@ fn regression_cleanflight_time_monotonic() {
 fn regression_log_end_requires_marker_string() {
     let log = parse_fixture("fc-blackbox/crashing-LOG00002.BFL");
     match &log.sessions[0] {
-        RawSession::Betaflight(bf) => {
+        Session::Betaflight(bf) => {
             assert!(
                 bf.stats.corrupt_bytes > 0,
                 "crash log should have corruption"
@@ -817,7 +817,7 @@ fn px4_golden_values() {
 fn px4_golden_sensor_combined() {
     let log = parse_fixture("px4/sample_log_small.ulg");
 
-    if let RawSession::Px4(px4) = &log.sessions[0] {
+    if let Session::Px4(px4) = &log.sessions[0] {
         // pyulog: sensor_combined has 1298 messages
         let sc = px4.topic_data("sensor_combined");
         assert_eq!(sc.len(), 1298);
@@ -850,7 +850,7 @@ fn px4_golden_sensor_combined() {
 fn px4_golden_angular_velocity() {
     let log = parse_fixture("px4/sample_log_small.ulg");
 
-    if let RawSession::Px4(px4) = &log.sessions[0] {
+    if let Session::Px4(px4) = &log.sessions[0] {
         // pyulog: vehicle_angular_velocity has 1812 messages
         let vav = px4.topic_data("vehicle_angular_velocity");
         assert_eq!(vav.len(), 1812);
@@ -869,7 +869,7 @@ fn px4_golden_angular_velocity() {
 #[test]
 fn px4_golden_format_count() {
     let log = parse_fixture("px4/sample_log_small.ulg");
-    if let RawSession::Px4(px4) = &log.sessions[0] {
+    if let Session::Px4(px4) = &log.sessions[0] {
         // pyulog: 82 formats, 70 datasets, 980 params
         assert_eq!(px4.formats.len(), 82);
         // We store all subscriptions (72); pyulog reports 70 datasets (ones with data)
@@ -891,7 +891,7 @@ fn px4_golden_format_count() {
 #[test]
 fn px4_logging_messages_parsed() {
     let log = parse_fixture("px4/sample_logging_tagged_and_default_params.ulg");
-    if let RawSession::Px4(px4) = &log.sessions[0] {
+    if let Session::Px4(px4) = &log.sessions[0] {
         assert!(
             !px4.log_messages.is_empty(),
             "should have parsed logging messages"
@@ -911,7 +911,7 @@ fn px4_logging_messages_parsed() {
 #[test]
 fn px4_nested_types_decoded() {
     let log = parse_fixture("px4/sample_log_small.ulg");
-    if let RawSession::Px4(px4) = &log.sessions[0] {
+    if let Session::Px4(px4) = &log.sessions[0] {
         // Check if any format has fields referencing other formats (nested types)
         let nested_formats: Vec<_> = px4
             .formats
