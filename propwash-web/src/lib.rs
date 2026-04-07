@@ -7,7 +7,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use propwash_core::analysis::{self, FlightAnalysis};
-use propwash_core::types::Log;
+use propwash_core::types::{Log, SensorField};
 
 thread_local! {
     static CURRENT_LOG: RefCell<Option<Log>> = const { RefCell::new(None) };
@@ -129,12 +129,15 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
         let mut fields: HashMap<String, Vec<f64>> = HashMap::new();
 
         for &name in &requested {
-            let raw = session.field_by_name(name);
+            let Ok(field) = SensorField::parse(name) else {
+                continue;
+            };
+            let raw = session.field(&field);
             let decimated: Vec<f64> = raw.iter().step_by(step).copied().collect();
             fields.insert(name.to_string(), decimated);
         }
 
-        let time_raw = session.field_by_name("time");
+        let time_raw = session.field(&SensorField::Time);
         let t0 = time_raw.first().copied().unwrap_or(0.0);
         let time_s: Vec<f64> = time_raw
             .iter()
@@ -182,7 +185,7 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         let max_bin = ((SPEC_MAX_FREQ / freq_res) as usize).min(SPEC_WINDOW / 2);
         let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
 
-        let time_raw = session.field_by_name("time");
+        let time_raw = session.field(&SensorField::Time);
         let t0 = time_raw.first().copied().unwrap_or(0.0);
 
         let hann = hann_window(SPEC_WINDOW);
@@ -193,9 +196,9 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
             .split(',')
             .map(|a| {
                 let field = match a {
-                    "roll" => "gyroADC[0]",
-                    "pitch" => "gyroADC[1]",
-                    "yaw" => "gyroADC[2]",
+                    "roll" => "gyro[roll]",
+                    "pitch" => "gyro[pitch]",
+                    "yaw" => "gyro[yaw]",
                     other => other,
                 };
                 (a, field)
@@ -206,7 +209,10 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         let mut axes = Vec::new();
 
         for &(axis_name, field_name) in &axis_fields {
-            let raw = session.field_by_name(field_name);
+            let Ok(field) = SensorField::parse(field_name) else {
+                continue;
+            };
+            let raw = session.field(&field);
             if raw.len() < SPEC_WINDOW {
                 continue;
             }
@@ -308,11 +314,17 @@ pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list
         let end = (start + count).min(total);
         let mut frames = Vec::with_capacity(end - start);
 
+        // Pre-resolve field names to SensorFields and fetch all columns
+        let resolved: Vec<SensorField> = requested
+            .iter()
+            .filter_map(|&name| SensorField::parse(name).ok())
+            .collect();
+        let columns: Vec<Vec<f64>> = resolved.iter().map(|f| session.field(f)).collect();
+
         for frame_idx in start..end {
-            let mut row = Vec::with_capacity(requested.len());
-            for &name in &requested {
-                let field_data = session.field_by_name(name);
-                row.push(field_data.get(frame_idx).copied().unwrap_or(0.0));
+            let mut row = Vec::with_capacity(columns.len());
+            for col in &columns {
+                row.push(col.get(frame_idx).copied().unwrap_or(0.0));
             }
             frames.push(row);
         }

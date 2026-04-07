@@ -22,7 +22,7 @@ const AXIS_COLORS = {
 const FIELD_GROUPS = {
   gyro: {
     label: "Gyro (deg/s)",
-    fields: ["gyroADC[0]", "gyroADC[1]", "gyroADC[2]"],
+    fields: ["gyro[roll]", "gyro[pitch]", "gyro[yaw]"],
     names:  ["Roll", "Pitch", "Yaw"],
     colors: ["#5b8def", "#4ec88c", "#e8b84a"],
   },
@@ -34,13 +34,13 @@ const FIELD_GROUPS = {
   },
   rc: {
     label: "RC Commands",
-    fields: ["rcCommand[0]", "rcCommand[1]", "rcCommand[2]", "rcCommand[3]"],
+    fields: ["rc[roll]", "rc[pitch]", "rc[yaw]", "rc[throttle]"],
     names:  ["Roll", "Pitch", "Yaw", "Throttle"],
     colors: ["#5b8def", "#4ec88c", "#e8b84a", "#e8944a"],
   },
   pids: {
     label: "PID Sum",
-    fields: ["axisP[0]", "axisP[1]", "axisP[2]"],
+    fields: ["pid_p[roll]", "pid_p[pitch]", "pid_p[yaw]"],
     names:  ["P Roll", "P Pitch", "P Yaw"],
     colors: ["#5b8def", "#4ec88c", "#e8b84a"],
   },
@@ -1202,7 +1202,7 @@ function renderAccel(vibration) {
 }
 
 const RAW_PAGE_SIZE = 200;
-const RAW_DEFAULT_FIELDS = ["time", "gyroADC[0]", "gyroADC[1]", "gyroADC[2]", "motor[0]", "motor[1]", "motor[2]", "motor[3]", "rcCommand[3]"];
+const RAW_DEFAULT_FIELDS = ["time", "gyro[roll]", "gyro[pitch]", "gyro[yaw]", "motor[0]", "motor[1]", "motor[2]", "motor[3]", "rc[throttle]"];
 
 function renderRawData(sessionIdx) {
   const s = result.sessions[sessionIdx];

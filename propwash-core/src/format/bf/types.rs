@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::header::parse_bf_field_name;
 use crate::types::{FilterConfig, SensorField, Warning};
 
 /// Whether a field's predicted value wraps as unsigned or signed 32-bit.
@@ -134,10 +135,10 @@ impl BfFrameDefs {
         self.field_index.get(field).copied()
     }
 
-    /// Looks up the index of a field by header string name.
-    /// Converts to `SensorField` internally.
+    /// Looks up the index of a field by BF-native header string name.
+    /// Converts to `SensorField` via the BF field name parser.
     pub fn index_of_str(&self, name: &str) -> Option<usize> {
-        self.index_of(&SensorField::from_header(name))
+        self.index_of(&parse_bf_field_name(name))
     }
 }
 

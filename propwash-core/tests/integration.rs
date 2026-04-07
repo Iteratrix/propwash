@@ -236,7 +236,7 @@ fn unified_field_names() {
     let session = &log.sessions[0];
     let names = session.field_names();
     assert!(names.iter().any(|n| n == "time"));
-    assert!(names.iter().any(|n| n == "gyroADC[0]"));
+    assert!(names.iter().any(|n| n == "gyro[roll]"));
     assert!(names.iter().any(|n| n == "motor[0]"));
 }
 
@@ -466,10 +466,7 @@ fn field_val(
     frame_idx: usize,
     name: &str,
 ) -> i64 {
-    let idx = bf
-        .main_field_defs
-        .index_of(&SensorField::from_header(name))
-        .unwrap();
+    let idx = bf.main_field_defs.index_of_str(name).unwrap();
     bf.frames[frame_idx].values[idx]
 }
 

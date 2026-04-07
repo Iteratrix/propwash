@@ -3,6 +3,7 @@ mod episodes;
 use std::process;
 
 use clap::{Parser, Subcommand};
+use propwash_core::types::SensorField;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -565,11 +566,12 @@ fn cmd_dump(
         // Fetch all selected field data as columns
         let columns: Vec<Vec<f64>> = selected_fields
             .iter()
-            .map(|name| session.field_by_name(name))
+            .filter_map(|name| SensorField::parse(name).ok())
+            .map(|field| session.field(&field))
             .collect();
 
         let n_frames = session.frame_count();
-        let time_data = session.field_by_name("time");
+        let time_data = session.field(&SensorField::Time);
 
         let mut frames = Vec::new();
         for i in frame_start..n_frames {
