@@ -117,26 +117,28 @@ fn cmd_info(path: &str, json: bool) {
         println!("  Frames:         {}", session.frame_count());
         println!("  Motors:         {}", session.motor_count());
 
-        if let propwash_core::Session::Betaflight(bf) = session {
-            println!(
-                "  RPM telemetry:  {}",
-                if bf.has_rpm_telemetry() { "yes" } else { "no" }
-            );
-            println!(
-                "  Gyro unfilt:    {}",
-                if bf.has_gyro_unfiltered() {
-                    "yes"
-                } else {
-                    "no"
-                }
-            );
-            println!(
-                "  Truncated:      {}",
-                if bf.is_truncated() { "yes" } else { "no" }
-            );
-            if bf.stats.corrupt_bytes > 0 {
-                println!("  Corrupt bytes:  {}", bf.stats.corrupt_bytes);
+        println!(
+            "  RPM telemetry:  {}",
+            if session.has_rpm_telemetry() {
+                "yes"
+            } else {
+                "no"
             }
+        );
+        println!(
+            "  Gyro unfilt:    {}",
+            if session.has_gyro_unfiltered() {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        println!(
+            "  Truncated:      {}",
+            if session.is_truncated() { "yes" } else { "no" }
+        );
+        if session.corrupt_bytes() > 0 {
+            println!("  Corrupt bytes:  {}", session.corrupt_bytes());
         }
 
         let names = session.field_names();

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Warning};
+use crate::types::{Axis, FilterConfig, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Primitive types in the `ULog` type system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -464,6 +464,47 @@ impl Px4Session {
             (1000.0, 2000.0) // PWM range
         } else {
             (0.0, 1.0) // Normalized
+        }
+    }
+
+    /// Returns whether the log appears truncated.
+    pub fn is_truncated(&self) -> bool {
+        self.stats.corrupt_bytes > 0
+    }
+
+    /// Returns whether bidirectional RPM telemetry is present.
+    pub fn has_rpm_telemetry(&self) -> bool {
+        false
+    }
+
+    /// Returns whether unfiltered gyro data is logged.
+    pub fn has_gyro_unfiltered(&self) -> bool {
+        false
+    }
+
+    /// Returns the number of corrupt bytes encountered during parsing.
+    pub fn corrupt_bytes(&self) -> usize {
+        self.stats.corrupt_bytes
+    }
+
+    /// Returns the filter configuration extracted from parameters.
+    pub fn filter_config(&self) -> FilterConfig {
+        let p = |k: &str| self.params.get(k).copied().unwrap_or(0.0);
+        let non_zero = |v: f64| -> Option<f64> {
+            if v > 0.0 {
+                Some(v)
+            } else {
+                None
+            }
+        };
+        FilterConfig {
+            gyro_lpf_hz: non_zero(p("IMU_GYRO_CUTOFF")),
+            gyro_lpf2_hz: None,
+            dterm_lpf_hz: non_zero(p("IMU_DGYRO_CUTOFF")),
+            dyn_notch_min_hz: None,
+            dyn_notch_max_hz: None,
+            gyro_notch1_hz: non_zero(p("IMU_GYRO_NF0_FRQ")),
+            gyro_notch2_hz: non_zero(p("IMU_GYRO_NF1_FRQ")),
         }
     }
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{SensorField, Warning};
+use crate::types::{FilterConfig, SensorField, Warning};
 
 /// Whether a field's predicted value wraps as unsigned or signed 32-bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -479,6 +479,32 @@ impl BfSession {
     /// Returns whether the log ended cleanly (vs truncation/crash).
     pub fn is_truncated(&self) -> bool {
         !self.stats.clean_end
+    }
+
+    /// Returns the number of corrupt bytes encountered during parsing.
+    pub fn corrupt_bytes(&self) -> usize {
+        self.stats.corrupt_bytes
+    }
+
+    /// Returns the filter configuration extracted from headers.
+    pub fn filter_config(&self) -> FilterConfig {
+        let non_zero = |v: i32| -> Option<f64> {
+            if v > 0 {
+                Some(f64::from(v))
+            } else {
+                None
+            }
+        };
+        FilterConfig {
+            gyro_lpf_hz: non_zero(self.get_header_int("gyro_lowpass_hz", 0)),
+            gyro_lpf2_hz: non_zero(self.get_header_int("gyro_lowpass2_hz", 0)),
+            dterm_lpf_hz: non_zero(self.get_header_int("dterm_lpf_hz", 0))
+                .or_else(|| non_zero(self.get_header_int("dterm_lowpass_hz", 0))),
+            dyn_notch_min_hz: non_zero(self.get_header_int("dyn_notch_min_hz", 0)),
+            dyn_notch_max_hz: non_zero(self.get_header_int("dyn_notch_max_hz", 0)),
+            gyro_notch1_hz: non_zero(self.get_header_int("gyro_notch_hz", 0)),
+            gyro_notch2_hz: non_zero(self.get_header_int("gyro_notch2_hz", 0)),
+        }
     }
 
     /// Returns the motor output range `(min, max)` from header metadata.

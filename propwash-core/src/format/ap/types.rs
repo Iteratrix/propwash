@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Warning};
+use crate::types::{Axis, FilterConfig, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Format character from FMT message — determines wire size and interpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -424,6 +424,59 @@ impl ApSession {
         let min = self.params.get("MOT_PWM_MIN").copied().unwrap_or(1000.0);
         let max = self.params.get("MOT_PWM_MAX").copied().unwrap_or(2000.0);
         (min, max)
+    }
+
+    /// Returns whether the log appears truncated.
+    pub fn is_truncated(&self) -> bool {
+        self.stats.corrupt_bytes > 0
+    }
+
+    /// Returns whether bidirectional RPM telemetry is present.
+    pub fn has_rpm_telemetry(&self) -> bool {
+        false
+    }
+
+    /// Returns whether unfiltered gyro data is logged.
+    pub fn has_gyro_unfiltered(&self) -> bool {
+        false
+    }
+
+    /// Returns the number of corrupt bytes encountered during parsing.
+    pub fn corrupt_bytes(&self) -> usize {
+        self.stats.corrupt_bytes
+    }
+
+    /// Returns the filter configuration extracted from parameters.
+    pub fn filter_config(&self) -> FilterConfig {
+        let p = |k: &str| self.params.get(k).copied().unwrap_or(0.0);
+        let non_zero = |v: f64| -> Option<f64> {
+            if v > 0.0 {
+                Some(v)
+            } else {
+                None
+            }
+        };
+        FilterConfig {
+            gyro_lpf_hz: non_zero(p("INS_GYRO_FILTER")),
+            gyro_lpf2_hz: None,
+            dterm_lpf_hz: non_zero(p("ATC_RAT_RLL_FLTE")),
+            dyn_notch_min_hz: if p("INS_HNTCH_ENABLE") > 0.0 {
+                non_zero(p("INS_HNTCH_FREQ"))
+            } else {
+                None
+            },
+            dyn_notch_max_hz: None,
+            gyro_notch1_hz: if p("INS_NOTCH_ENABLE") > 0.0 {
+                non_zero(p("INS_NOTCH_FREQ"))
+            } else {
+                None
+            },
+            gyro_notch2_hz: if p("INS_NOTC2_ENABLE") > 0.0 {
+                non_zero(p("INS_NOTC2_FREQ"))
+            } else {
+                None
+            },
+        }
     }
 
     /// Returns parse warnings.

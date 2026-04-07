@@ -1,5 +1,7 @@
 use std::fmt;
 
+use serde::Serialize;
+
 use crate::format::ap::types::ApSession;
 use crate::format::bf::types::BfSession;
 use crate::format::px4::types::Px4Session;
@@ -242,6 +244,19 @@ impl From<std::io::Error> for ParseError {
     }
 }
 
+/// Filter configuration extracted from flight controller parameters.
+#[derive(Debug, Clone, Serialize)]
+#[allow(clippy::struct_field_names)]
+pub struct FilterConfig {
+    pub gyro_lpf_hz: Option<f64>,
+    pub gyro_lpf2_hz: Option<f64>,
+    pub dterm_lpf_hz: Option<f64>,
+    pub dyn_notch_min_hz: Option<f64>,
+    pub dyn_notch_max_hz: Option<f64>,
+    pub gyro_notch1_hz: Option<f64>,
+    pub gyro_notch2_hz: Option<f64>,
+}
+
 /// A parsed flight session. The primary type consumers work with.
 ///
 /// Call methods directly for format-agnostic sensor data access.
@@ -300,6 +315,22 @@ impl Session {
     }
     pub fn index(&self) -> usize {
         dispatch!(self, index)
+    }
+
+    pub fn filter_config(&self) -> FilterConfig {
+        dispatch!(self, filter_config)
+    }
+    pub fn is_truncated(&self) -> bool {
+        dispatch!(self, is_truncated)
+    }
+    pub fn has_rpm_telemetry(&self) -> bool {
+        dispatch!(self, has_rpm_telemetry)
+    }
+    pub fn has_gyro_unfiltered(&self) -> bool {
+        dispatch!(self, has_gyro_unfiltered)
+    }
+    pub fn corrupt_bytes(&self) -> usize {
+        dispatch!(self, corrupt_bytes)
     }
 
     /// Extracts one field by header string name.
