@@ -107,3 +107,6 @@ The `Value` enum (`Int`, `Float`, `Str`, `Bool`) and its `as_int()`/`as_float()`
 
 ### 25. [arch] `propwash-core/src/types.rs:314-348` — `RawSession` enum: keep but make it a power-user escape hatch
 ~~Initially considered replacing `RawSession` with `Box<dyn Unified>`, but that loses the ability to access format-specific data entirely.~~ The current design (enum + `raw` feature gate) is actually the right shape. The problem is that `Unified` isn't rich enough, so consumers enable `raw` out of necessity. Fix: enrich `Unified` (#12) so CLI and web can drop `raw`. The `raw` feature then becomes a deliberate opt-in for power users (e.g., `compare_official.py`, custom Betaflight tuning tools) that genuinely need format internals.
+
+### 26. [arch] `propwash-core/src/types.rs:332-348` — `Session` should `impl Unified`
+`Session` doesn't implement `Unified` — it has a `unified()` method that returns `&dyn Unified`. So you always write `session.unified().frame_count()` instead of `session.frame_count()`. `Session` should `impl Unified` by delegating to `self.raw`. This makes `Session` itself the sealed-interface type: consumers call trait methods directly on it, and only reach into `.raw` when they need format-specific access via the `raw` feature.
