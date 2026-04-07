@@ -126,3 +126,6 @@ Multiple functions use `&mut Vec<T>` as an output parameter instead of returning
 - **Diagnostics**: `diagnostics.rs:122,210,242,286` take `diagnostics: &mut Vec<Diagnostic>`
 
 This is C-style "out parameter" pattern that obscures data flow. Idiomatic Rust: return `Vec<T>` and let the caller `extend`. Each `diagnose_*` function returns its findings; the caller chains them. For warnings during parsing, return them alongside the parsed result (tuple or struct). Makes it clear at the call site how much data each function contributes.
+
+### 31. [style] `propwash-core/src/format/bf/frame.rs:44-50` — 5-element tuple return should be a struct
+`parse_session_frames` returns `(Vec<BfFrame>, Vec<BfFrame>, Vec<BfFrame>, Vec<BfEvent>, BfParseStats)` — three identically-typed `Vec<BfFrame>` that you can't distinguish without reading the function body (main, slow, GPS). Replace with a named struct. General rule: more than 2 elements should be a struct.
