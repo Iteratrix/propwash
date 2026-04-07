@@ -439,7 +439,7 @@ impl BfSession {
     #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
         let Some(idx) = self.main_field_defs.index_of(sensor_field) else {
-            return vec![0.0; self.frames.len()];
+            return Vec::new();
         };
         self.frames
             .iter()
