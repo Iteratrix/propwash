@@ -178,3 +178,16 @@ Audit of data that is parsed but discarded, stored but not exposed, or silently 
 - PX4: Tries `extract_series` with `topic.field` format, otherwise returns `Vec::new()`
 
 Should be consistent. The AP/PX4 approach (try to resolve unknown names against native data) is more useful than BF's (return zeros).
+
+### d) Format parity gaps — Session methods stubbed for AP/PX4
+
+Principle: Session methods should give real answers for all formats. Returning `false` because we haven't implemented detection is a lie consumers can't distinguish from a real negative.
+
+### 43. [bug] AP/PX4: `has_rpm_telemetry()` returns hardcoded `false`
+AP has ESC telemetry via `ESC` messages (RPM, voltage, current, temp per ESC). PX4 has `esc_status` topic. Both can report motor RPM — detection just needs to check for the presence of these messages/topics.
+
+### 44. [bug] AP/PX4: `has_gyro_unfiltered()` returns hardcoded `false`
+AP logs raw IMU data in `IMU` messages. PX4 has `sensor_gyro` (raw) vs `vehicle_angular_velocity` (filtered). Both formats can expose unfiltered gyro — detection should check whether the raw source exists in the log.
+
+### 45. [bug] AP/PX4: `is_truncated()` uses `corrupt_bytes > 0` as proxy
+BF has a clean-end marker (`LOG_END` event). AP/PX4 approximate truncation by checking for corruption, but corruption and truncation are different concepts. AP: check if final message is complete. PX4: check if file ends cleanly after last data message.
