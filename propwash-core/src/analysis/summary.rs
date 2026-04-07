@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
-use crate::types::Session;
+use crate::types::{Session, Unified};
 
 #[derive(Debug, Serialize)]
 pub struct FlightSummary {
@@ -23,8 +23,6 @@ pub struct FlightSummary {
 
 /// Builds a summary from a session and its detected events.
 pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
-    let unified = session.unified();
-
     let mut throttle_chops = 0;
     let mut throttle_punches = 0;
     let mut motor_saturations = 0;
@@ -46,12 +44,12 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
 
     FlightSummary {
         session_index: session.index,
-        firmware: unified.firmware_version().to_string(),
-        craft: unified.craft_name().to_string(),
-        duration_seconds: unified.duration_seconds(),
-        sample_rate_hz: unified.sample_rate_hz(),
-        frame_count: unified.frame_count(),
-        motor_count: unified.motor_count(),
+        firmware: session.firmware_version().to_string(),
+        craft: session.craft_name().to_string(),
+        duration_seconds: session.duration_seconds(),
+        sample_rate_hz: session.sample_rate_hz(),
+        frame_count: session.frame_count(),
+        motor_count: session.motor_count(),
         throttle_chops,
         throttle_punches,
         motor_saturations,

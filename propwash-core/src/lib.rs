@@ -1,7 +1,7 @@
 #![doc = "propwash-core: lenient parser for flight controller blackbox logs."]
 #![doc = ""]
 #![doc = "Two-layer API:"]
-#![doc = "- **Unified** (`session.unified()`) — format-agnostic sensor data via the `Unified` trait"]
+#![doc = "- **Unified** — `Session` implements the `Unified` trait for format-agnostic sensor data"]
 #![doc = "- **Raw** (`session.raw`) — format-specific parsed data, faithful to the file"]
 
 pub mod analysis;

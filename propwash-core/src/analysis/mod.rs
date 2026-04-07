@@ -25,10 +25,9 @@ pub struct FlightAnalysis {
 
 /// Analyzes a parsed session, detecting events and producing a summary.
 pub fn analyze(session: &Session) -> FlightAnalysis {
-    let unified = session.unified();
     let (detected, vibration) = {
-        let mut events = unified_events::detect_all(unified);
-        let vib = fft::analyze_vibration_unified(unified);
+        let mut events = unified_events::detect_all(session);
+        let vib = fft::analyze_vibration_unified(session);
 
         // Format-specific event sources
         match &session.raw {

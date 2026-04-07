@@ -3,6 +3,7 @@ mod episodes;
 use std::process;
 
 use clap::{Parser, Subcommand};
+use propwash_core::Unified;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -109,14 +110,13 @@ fn cmd_info(path: &str, json: bool) {
     println!();
 
     for session in &log.sessions {
-        let unified = session.unified();
         println!("── Session {} ──", session.index);
-        println!("  Firmware:       {}", unified.firmware_version());
-        println!("  Craft:          {}", unified.craft_name());
-        println!("  Duration:       {:.1}s", unified.duration_seconds());
-        println!("  Sample rate:    {:.1} Hz", unified.sample_rate_hz());
-        println!("  Frames:         {}", unified.frame_count());
-        println!("  Motors:         {}", unified.motor_count());
+        println!("  Firmware:       {}", session.firmware_version());
+        println!("  Craft:          {}", session.craft_name());
+        println!("  Duration:       {:.1}s", session.duration_seconds());
+        println!("  Sample rate:    {:.1} Hz", session.sample_rate_hz());
+        println!("  Frames:         {}", session.frame_count());
+        println!("  Motors:         {}", session.motor_count());
 
         if let propwash_core::RawSession::Betaflight(bf) = &session.raw {
             println!(
@@ -140,7 +140,7 @@ fn cmd_info(path: &str, json: bool) {
             }
         }
 
-        let names = unified.field_names();
+        let names = session.field_names();
         println!("  Fields ({}):", names.len());
         for name in &names {
             println!("    {name}");
@@ -168,14 +168,8 @@ fn cmd_compare(path_a: &str, path_b: &str) {
     let log_a = load_log(path_a);
     let log_b = load_log(path_b);
 
-    let session_a = log_a
-        .sessions
-        .iter()
-        .find(|s| s.unified().frame_count() > 0);
-    let session_b = log_b
-        .sessions
-        .iter()
-        .find(|s| s.unified().frame_count() > 0);
+    let session_a = log_a.sessions.iter().find(|s| s.frame_count() > 0);
+    let session_b = log_b.sessions.iter().find(|s| s.frame_count() > 0);
 
     let (Some(sa), Some(sb)) = (session_a, session_b) else {
         eprintln!("Both files must contain at least one session with frames.");
@@ -312,12 +306,11 @@ fn cmd_scan(files: &[String]) {
         };
 
         for session in &log.sessions {
-            if session.unified().frame_count() == 0 {
+            if session.frame_count() == 0 {
                 continue;
             }
 
             let analysis = propwash_core::analysis::analyze(session);
-            let unified = session.unified();
             let episodes = episodes::consolidate(&analysis.events);
 
             let worst = analysis.diagnostics.first().map_or_else(
@@ -335,7 +328,7 @@ fn cmd_scan(files: &[String]) {
             println!(
                 "{worst:60}  {path} s{} ({:.0}s, {} events)",
                 session.index,
-                unified.duration_seconds(),
+                session.duration_seconds(),
                 episodes.len(),
             );
         }
@@ -346,7 +339,7 @@ fn cmd_analyze(path: &str, output: &str) {
     let log = load_log(path);
 
     for session in &log.sessions {
-        if session.unified().frame_count() == 0 {
+        if session.frame_count() == 0 {
             continue;
         }
 
@@ -555,8 +548,7 @@ fn cmd_dump(
             }
         }
 
-        let unified = session.unified();
-        let field_names = unified.field_names();
+        let field_names = session.field_names();
 
         let selected_fields: Vec<&str> = field_names
             .iter()
@@ -572,11 +564,11 @@ fn cmd_dump(
         // Fetch all selected field data as columns
         let columns: Vec<Vec<f64>> = selected_fields
             .iter()
-            .map(|name| unified.field_by_name(name))
+            .map(|name| session.field_by_name(name))
             .collect();
 
-        let n_frames = unified.frame_count();
-        let time_data = unified.field_by_name("time");
+        let n_frames = session.frame_count();
+        let time_data = session.field_by_name("time");
 
         let mut frames = Vec::new();
         for i in frame_start..n_frames {
@@ -617,7 +609,7 @@ fn cmd_dump(
 
         output.sessions.push(DumpSession {
             index: session.index,
-            firmware: unified.firmware_version().to_string(),
+            firmware: session.firmware_version().to_string(),
             total_frames: n_frames,
             dumped_frames: frames.len(),
             fields: selected_fields.iter().map(|s| (*s).to_string()).collect(),
@@ -738,19 +730,16 @@ fn build_info_json(log: &propwash_core::Log) -> InfoJson {
     let sessions = log
         .sessions
         .iter()
-        .map(|s| {
-            let unified = s.unified();
-            SessionInfo {
-                index: s.index,
-                firmware_version: unified.firmware_version().to_string(),
-                craft_name: unified.craft_name().to_string(),
-                duration_seconds: unified.duration_seconds(),
-                sample_rate_hz: unified.sample_rate_hz(),
-                frame_count: unified.frame_count(),
-                motor_count: unified.motor_count(),
-                field_names: unified.field_names(),
-                warnings: s.warnings.iter().map(ToString::to_string).collect(),
-            }
+        .map(|s| SessionInfo {
+            index: s.index,
+            firmware_version: s.firmware_version().to_string(),
+            craft_name: s.craft_name().to_string(),
+            duration_seconds: s.duration_seconds(),
+            sample_rate_hz: s.sample_rate_hz(),
+            frame_count: s.frame_count(),
+            motor_count: s.motor_count(),
+            field_names: s.field_names(),
+            warnings: s.warnings.iter().map(ToString::to_string).collect(),
         })
         .collect();
     InfoJson { sessions }

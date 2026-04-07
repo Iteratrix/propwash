@@ -304,8 +304,41 @@ pub struct Session {
 
 impl Session {
     /// Returns the unified interface for format-agnostic sensor data access.
+    #[deprecated(
+        note = "Session now implements Unified directly — call methods on &session instead"
+    )]
     pub fn unified(&self) -> &dyn Unified {
-        self.raw.as_unified()
+        self
+    }
+}
+
+impl Unified for Session {
+    fn frame_count(&self) -> usize {
+        self.raw.as_unified().frame_count()
+    }
+    fn field_names(&self) -> Vec<String> {
+        self.raw.as_unified().field_names()
+    }
+    fn firmware_version(&self) -> &str {
+        self.raw.as_unified().firmware_version()
+    }
+    fn craft_name(&self) -> &str {
+        self.raw.as_unified().craft_name()
+    }
+    fn sample_rate_hz(&self) -> f64 {
+        self.raw.as_unified().sample_rate_hz()
+    }
+    fn duration_seconds(&self) -> f64 {
+        self.raw.as_unified().duration_seconds()
+    }
+    fn field(&self, field: &SensorField) -> Vec<f64> {
+        self.raw.as_unified().field(field)
+    }
+    fn motor_count(&self) -> usize {
+        self.raw.as_unified().motor_count()
+    }
+    fn motor_range(&self) -> (f64, f64) {
+        self.raw.as_unified().motor_range()
     }
 }
 

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use propwash_core::types::{Axis, SensorField};
-use propwash_core::{decode_file, Log, RawSession};
+use propwash_core::{decode_file, Log, RawSession, Unified};
 
 fn fixtures_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures"))
@@ -25,7 +25,7 @@ macro_rules! fixture_test {
                 $path,
                 log.session_count()
             );
-            let total_frames: usize = log.sessions.iter().map(|s| s.unified().frame_count()).sum();
+            let total_frames: usize = log.sessions.iter().map(|s| s.frame_count()).sum();
             assert!(total_frames > 0, "{}: expected >0 frames, got 0", $path);
         }
     };
@@ -84,35 +84,34 @@ fixture_test!(
 fn ardupilot_parses_metadata() {
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
     let session = &log.sessions[0];
-    let unified = session.unified();
 
-    assert!(unified.frame_count() > 0, "should have IMU frames");
+    assert!(session.frame_count() > 0, "should have IMU frames");
     assert!(
-        !unified.firmware_version().is_empty(),
+        !session.firmware_version().is_empty(),
         "should have firmware version"
     );
     assert!(
-        unified.duration_seconds() > 0.0,
+        session.duration_seconds() > 0.0,
         "should have nonzero duration"
     );
-    assert!(unified.motor_count() > 0, "should detect motors");
+    assert!(session.motor_count() > 0, "should detect motors");
 
-    let gyro = unified.field(&SensorField::Gyro(Axis::Roll));
+    let gyro = session.field(&SensorField::Gyro(Axis::Roll));
     assert!(!gyro.is_empty(), "should have gyro data");
 }
 
 #[test]
 fn ardupilot_motor_count_from_servo_params() {
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
-    let unified = log.sessions[0].unified();
-    assert_eq!(unified.motor_count(), 4, "Tarot X4 is a quadcopter");
+    let session = &log.sessions[0];
+    assert_eq!(session.motor_count(), 4, "Tarot X4 is a quadcopter");
 }
 
 #[test]
 fn ardupilot_craft_name_skips_rtos() {
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
-    let unified = log.sessions[0].unified();
-    let craft = unified.craft_name();
+    let session = &log.sessions[0];
+    let craft = session.craft_name();
     assert!(
         !craft.contains("ChibiOS"),
         "craft name should not be the RTOS string, got: {craft}"
@@ -127,21 +126,20 @@ fn ardupilot_craft_name_skips_rtos() {
 fn ardupilot_old_format_parses() {
     let log = parse_fixture("ardupilot/pymavlink-plane-v3.8.bin");
     let session = &log.sessions[0];
-    let unified = session.unified();
 
     assert!(
-        unified.frame_count() > 0,
+        session.frame_count() > 0,
         "old format should still produce frames"
     );
-    assert!(unified.duration_seconds() > 0.0);
+    assert!(session.duration_seconds() > 0.0);
 }
 
 #[test]
 fn ardupilot_plane_zero_motors() {
     let log = parse_fixture("ardupilot/pymavlink-plane-v3.8.bin");
-    let unified = log.sessions[0].unified();
+    let session = &log.sessions[0];
     assert_eq!(
-        unified.motor_count(),
+        session.motor_count(),
         0,
         "plane without SERVO params should report 0 motors"
     );
@@ -151,21 +149,20 @@ fn ardupilot_plane_zero_motors() {
 fn px4_parses_metadata() {
     let log = parse_fixture("px4/sample_log_small.ulg");
     let session = &log.sessions[0];
-    let unified = session.unified();
 
-    assert!(unified.frame_count() > 0, "should have sensor frames");
+    assert!(session.frame_count() > 0, "should have sensor frames");
     assert!(
-        unified.duration_seconds() > 0.0,
+        session.duration_seconds() > 0.0,
         "should have nonzero duration"
     );
-    assert!(unified.sample_rate_hz() > 0.0, "should have sample rate");
+    assert!(session.sample_rate_hz() > 0.0, "should have sample rate");
 }
 
 #[test]
 fn px4_appended_data_parses() {
     let log = parse_fixture("px4/sample_appended_multiple.ulg");
-    let unified = log.sessions[0].unified();
-    assert!(unified.frame_count() > 0, "appended log should have frames");
+    let session = &log.sessions[0];
+    assert!(session.frame_count() > 0, "appended log should have frames");
 }
 
 // Error recovery
@@ -177,39 +174,38 @@ fixture_test!(error_recovery, "error-recovery.bbl");
 fn unified_sample_rate() {
     let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
     let session = &log.sessions[0];
-    let unified = session.unified();
     assert!(
-        unified.sample_rate_hz() > 10.0,
+        session.sample_rate_hz() > 10.0,
         "expected reasonable sample rate, got {}",
-        unified.sample_rate_hz()
+        session.sample_rate_hz()
     );
 }
 
 #[test]
 fn unified_duration() {
     let log = parse_fixture("gimbal-ghost/btfl_001.bbl");
-    let unified = log.sessions[0].unified();
+    let session = &log.sessions[0];
     assert!(
-        unified.duration_seconds() > 1.0,
+        session.duration_seconds() > 1.0,
         "expected >1s duration, got {}",
-        unified.duration_seconds()
+        session.duration_seconds()
     );
 }
 
 #[test]
 fn unified_field_extraction() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    let unified = log.sessions[0].unified();
-    let gyro = unified.field(&SensorField::Gyro(Axis::Roll));
-    assert_eq!(gyro.len(), unified.frame_count());
+    let session = &log.sessions[0];
+    let gyro = session.field(&SensorField::Gyro(Axis::Roll));
+    assert_eq!(gyro.len(), session.frame_count());
 }
 
 #[test]
 fn unified_gyro_fields() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    let unified = log.sessions[0].unified();
+    let session = &log.sessions[0];
     for axis in Axis::ALL {
-        let data = unified.field(&SensorField::Gyro(axis));
+        let data = session.field(&SensorField::Gyro(axis));
         assert!(!data.is_empty(), "gyro {axis} should have data");
     }
 }
@@ -217,28 +213,28 @@ fn unified_gyro_fields() {
 #[test]
 fn unified_firmware_version() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    let unified = log.sessions[0].unified();
+    let session = &log.sessions[0];
     assert!(
-        unified.firmware_version().contains("Betaflight"),
+        session.firmware_version().contains("Betaflight"),
         "got: {}",
-        unified.firmware_version()
+        session.firmware_version()
     );
 }
 
 #[test]
 fn unified_motor_count() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    assert_eq!(log.sessions[0].unified().motor_count(), 4);
+    assert_eq!(log.sessions[0].motor_count(), 4);
 
     let log2 = parse_fixture("gimbal-ghost/rtfl_001.bbl");
-    assert_eq!(log2.sessions[0].unified().motor_count(), 1);
+    assert_eq!(log2.sessions[0].motor_count(), 1);
 }
 
 #[test]
 fn unified_field_names() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    let unified = log.sessions[0].unified();
-    let names = unified.field_names();
+    let session = &log.sessions[0];
+    let names = session.field_names();
     assert!(names.iter().any(|n| n == "time"));
     assert!(names.iter().any(|n| n == "gyroADC[0]"));
     assert!(names.iter().any(|n| n == "motor[0]"));
@@ -328,11 +324,9 @@ macro_rules! invariant_test {
         fn $name() {
             let log = parse_fixture($path);
             for session in &log.sessions {
-                let unified = session.unified();
-
                 // Every session should have field definitions
                 assert!(
-                    !unified.field_names().is_empty(),
+                    !session.field_names().is_empty(),
                     "{}: session {} has no field names",
                     $path,
                     session.index
@@ -367,11 +361,11 @@ macro_rules! invariant_test {
                 }
 
                 // Field extraction length matches frame count
-                if unified.frame_count() > 0 {
-                    let time = unified.field(&SensorField::Time);
+                if session.frame_count() > 0 {
+                    let time = session.field(&SensorField::Time);
                     assert_eq!(
                         time.len(),
-                        unified.frame_count(),
+                        session.frame_count(),
                         "{}: time array length mismatch",
                         $path
                     );
@@ -382,7 +376,7 @@ macro_rules! invariant_test {
                     let stats = &bf.stats;
                     assert_eq!(
                         stats.total_main_frames(),
-                        unified.frame_count(),
+                        session.frame_count(),
                         "{}: stats frame count mismatch",
                         $path
                     );
@@ -439,8 +433,7 @@ fn three_layer_access() {
     let session = &log.sessions[0];
 
     // Layer 1: Unified (recommended)
-    let unified = session.unified();
-    let _gyro = unified.field(&SensorField::Gyro(Axis::Roll));
+    let _gyro = session.field(&SensorField::Gyro(Axis::Roll));
 
     // Layer 2: Analyzed (format-specific)
     match &session.raw {
@@ -538,11 +531,11 @@ fn golden_values_gg_btfl_001_session1() {
 #[test]
 fn golden_sample_rate() {
     let log = parse_fixture("fc-blackbox/btfl_001.bbl");
-    let rate = log.sessions[1].unified().sample_rate_hz();
+    let rate = log.sessions[1].sample_rate_hz();
     assert!((rate - 498.0).abs() < 2.0, "expected ~498 Hz, got {rate}");
 
     let log2 = parse_fixture("gimbal-ghost/btfl_001.bbl");
-    let rate2 = log2.sessions[0].unified().sample_rate_hz();
+    let rate2 = log2.sessions[0].sample_rate_hz();
     assert!((rate2 - 249.0).abs() < 2.0, "expected ~249 Hz, got {rate2}");
 }
 
@@ -785,25 +778,24 @@ fn regression_log_end_requires_marker_string() {
 fn px4_golden_values() {
     let log = parse_fixture("px4/sample_log_small.ulg");
     let session = &log.sessions[0];
-    let unified = session.unified();
 
     // Metadata
     assert_eq!(
-        unified.firmware_version(),
+        session.firmware_version(),
         "8583f1da30b63154d6ba0bc187d86135dfe33cf9"
     );
-    assert_eq!(unified.craft_name(), "CUBEPILOT_CUBEORANGE");
+    assert_eq!(session.craft_name(), "CUBEPILOT_CUBEORANGE");
 
     // Frame count depends on which gyro topic has data (vehicle_angular_velocity=1812
     // or sensor_combined=1298). Both are valid primary sources.
     assert!(
-        unified.frame_count() >= 1298,
+        session.frame_count() >= 1298,
         "expected at least 1298 frames, got {}",
-        unified.frame_count()
+        session.frame_count()
     );
 
     // Gyro data — from whichever gyro topic is primary
-    let gyro_roll = unified.field(&SensorField::Gyro(Axis::Roll));
+    let gyro_roll = session.field(&SensorField::Gyro(Axis::Roll));
     assert!(!gyro_roll.is_empty());
     // Value depends on source topic. sensor_combined.gyro_rad[0] = 0.0029683835 rad/s
     // = 0.17006 deg/s. vehicle_angular_velocity.xyz[0] = 0.0013696939 = 0.07848 deg/s.
