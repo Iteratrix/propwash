@@ -110,3 +110,9 @@ The `Value` enum (`Int`, `Float`, `Str`, `Bool`) and its `as_int()`/`as_float()`
 
 ### 26. [arch] `propwash-core/src/types.rs:332-348` — `Session` should `impl Unified`
 `Session` doesn't implement `Unified` — it has a `unified()` method that returns `&dyn Unified`. So you always write `session.unified().frame_count()` instead of `session.frame_count()`. `Session` should `impl Unified` by delegating to `self.raw`. This makes `Session` itself the sealed-interface type: consumers call trait methods directly on it, and only reach into `.raw` when they need format-specific access via the `raw` feature.
+
+### 27. [arch] `propwash-core/src/format/bf/frame.rs:14-27` — frame markers should be an enum
+`MARKER_I`, `MARKER_P`, `MARKER_S`, `MARKER_G`, `MARKER_H`, `MARKER_E` are bare `u8` consts representing a sealed set of frame types. The `is_valid_marker()` function is a code smell — should be a `FrameMarker` enum with `TryFrom<u8>`. Event type IDs (lines 22-27) are lower priority since they're already parsed into the `BfEvent` enum, but could also benefit from being an enum for documentation value.
+
+### 28. [arch] `propwash-core/src/format/px4/parser.rs:14-26` — ULog message types should be an enum
+13 bare `u8` consts for ULog message type codes (`MSG_FORMAT`, `MSG_DATA`, `MSG_INFO`, etc.). This is a sealed set — should be a `ULogMsgType` enum with `TryFrom<u8>`. The `is_known_msg_type()` function at line 588 has the same smell as BF's `is_valid_marker`. Fulfils #2 (enums/newtypes for sealed option sets).
