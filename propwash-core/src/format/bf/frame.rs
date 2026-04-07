@@ -8,6 +8,14 @@ use super::types::{
 };
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
+
+pub(crate) struct ParsedFrames {
+    pub main: Vec<BfFrame>,
+    pub slow: Vec<BfFrame>,
+    pub gps: Vec<BfFrame>,
+    pub events: Vec<BfEvent>,
+    pub stats: BfParseStats,
+}
 use crate::types::{MotorIndex, SensorField};
 
 // Frame marker bytes
@@ -41,13 +49,7 @@ pub(crate) fn parse_session_frames(
     base_offset: usize,
     session: &BfRawSession,
     warnings: &mut Vec<Warning>,
-) -> (
-    Vec<BfFrame>,
-    Vec<BfFrame>,
-    Vec<BfFrame>,
-    Vec<BfEvent>,
-    BfParseStats,
-) {
+) -> ParsedFrames {
     let mut reader = Reader::with_offset(data, base_offset);
     let mut main_frames: Vec<BfFrame> = Vec::new();
     let mut slow_frames: Vec<BfFrame> = Vec::new();
@@ -259,7 +261,13 @@ pub(crate) fn parse_session_frames(
         });
     }
 
-    (main_frames, slow_frames, gps_frames, events, stats)
+    ParsedFrames {
+        main: main_frames,
+        slow: slow_frames,
+        gps: gps_frames,
+        events,
+        stats,
+    }
 }
 
 /// Decode raw field values from the stream, handling grouped encodings.

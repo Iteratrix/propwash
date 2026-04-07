@@ -60,17 +60,17 @@ pub(crate) fn decode(data: &[u8]) -> Log {
 
         if !raw_session.main_field_defs.is_empty() {
             let binary_data = &data[parsed.binary_start..session_end];
-            let (main, slow, gps, events, stats) = frame::parse_session_frames(
+            let parsed_frames = frame::parse_session_frames(
                 binary_data,
                 parsed.binary_start,
                 &raw_session,
                 &mut warnings,
             );
-            raw_session.frames = main;
-            raw_session.slow_frames = slow;
-            raw_session.gps_frames = gps;
-            raw_session.events = events;
-            raw_session.stats = stats;
+            raw_session.frames = parsed_frames.main;
+            raw_session.slow_frames = parsed_frames.slow;
+            raw_session.gps_frames = parsed_frames.gps;
+            raw_session.events = parsed_frames.events;
+            raw_session.stats = parsed_frames.stats;
         }
 
         sessions.push(Session {
