@@ -445,13 +445,16 @@ impl BfRawSession {
         self.main_field_defs
             .fields
             .iter()
-            .filter(|f| f.name.is_motor())
+            .filter(|f| matches!(f.name, SensorField::Motor(_)))
             .count()
     }
 
     /// Returns whether bidirectional `DShot` RPM telemetry is present.
     pub fn has_rpm_telemetry(&self) -> bool {
-        self.main_field_defs.fields.iter().any(|f| f.name.is_erpm())
+        self.main_field_defs
+            .fields
+            .iter()
+            .any(|f| matches!(f.name, SensorField::ERpm(_)))
     }
 
     /// Returns whether unfiltered gyro data is logged.

@@ -139,16 +139,6 @@ impl SensorField {
             other => Self::Unknown(other.to_string()),
         }
     }
-
-    /// Returns whether this field is a motor field.
-    pub fn is_motor(&self) -> bool {
-        matches!(self, Self::Motor(_))
-    }
-
-    /// Returns whether this field is an eRPM field.
-    pub fn is_erpm(&self) -> bool {
-        matches!(self, Self::ERpm(_))
-    }
 }
 
 impl fmt::Display for SensorField {
