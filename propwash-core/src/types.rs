@@ -249,37 +249,6 @@ impl From<std::io::Error> for ParseError {
     }
 }
 
-/// A value decoded from a log frame. Formats differ in what types they produce.
-#[derive(Debug, Clone)]
-pub enum Value {
-    Int(i64),
-    Float(f64),
-    Str(String),
-    Bool(bool),
-}
-
-impl Value {
-    /// Converts to an integer, truncating floats.
-    #[allow(clippy::cast_possible_truncation)]
-    pub fn as_int(&self) -> Option<i64> {
-        match self {
-            Self::Int(v) => Some(*v),
-            Self::Float(v) => Some(*v as i64),
-            Self::Str(_) | Self::Bool(_) => None,
-        }
-    }
-
-    /// Converts to a float, promoting integers.
-    #[allow(clippy::cast_precision_loss)]
-    pub fn as_float(&self) -> Option<f64> {
-        match self {
-            Self::Float(v) => Some(*v),
-            Self::Int(v) => Some(*v as f64),
-            Self::Str(_) | Self::Bool(_) => None,
-        }
-    }
-}
-
 /// Format-agnostic interface for accessing sensor data.
 ///
 /// Implemented by each format's raw session type. This is the primary
