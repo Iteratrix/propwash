@@ -116,3 +116,6 @@ The `Value` enum (`Int`, `Float`, `Str`, `Bool`) and its `as_int()`/`as_float()`
 
 ### 28. [arch] `propwash-core/src/format/px4/parser.rs:14-26` — ULog message types should be an enum
 13 bare `u8` consts for ULog message type codes (`MSG_FORMAT`, `MSG_DATA`, `MSG_INFO`, etc.). This is a sealed set — should be a `ULogMsgType` enum with `TryFrom<u8>`. The `is_known_msg_type()` function at line 588 has the same smell as BF's `is_valid_marker`. Fulfils #2 (enums/newtypes for sealed option sets).
+
+### 29. [style] Format parsers — prefer iterators over push loops for collection building
+The `field_names()` implementations in all three formats (AP `types.rs:207-233`, PX4 `types.rs:229-261`, BF `types.rs:365`) use conditional `for` loops pushing into a `Vec`. These could use chained iterators (`flat_map`/`chain`/`filter`). The `field_names()` code across all three formats is also near-identical — potential for a shared helper. Parser core loops (frame decoding, error recovery) are fine as `for` — complex control flow doesn't benefit from forced iterator style.
