@@ -18,13 +18,32 @@ pub(crate) struct ParsedFrames {
 }
 use crate::types::{MotorIndex, SensorField};
 
-// Frame marker bytes
-const MARKER_I: u8 = b'I';
-const MARKER_P: u8 = b'P';
-const MARKER_S: u8 = b'S';
-const MARKER_G: u8 = b'G';
-const MARKER_H: u8 = b'H';
-const MARKER_E: u8 = b'E';
+/// Frame marker bytes in Betaflight blackbox logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameMarker {
+    Intra,
+    Inter,
+    Slow,
+    Gps,
+    GpsHome,
+    Event,
+}
+
+impl TryFrom<u8> for FrameMarker {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            b'I' => Ok(Self::Intra),
+            b'P' => Ok(Self::Inter),
+            b'S' => Ok(Self::Slow),
+            b'G' => Ok(Self::Gps),
+            b'H' => Ok(Self::GpsHome),
+            b'E' => Ok(Self::Event),
+            other => Err(other),
+        }
+    }
+}
 
 // Event type IDs
 const EVENT_SYNC_BEEP: u8 = 0;
@@ -33,13 +52,6 @@ const EVENT_LOGGING_RESUME: u8 = 14;
 const EVENT_DISARM: u8 = 15;
 const EVENT_FLIGHT_MODE: u8 = 30;
 const EVENT_LOG_END: u8 = 255;
-
-fn is_valid_marker(b: u8) -> bool {
-    matches!(
-        b,
-        MARKER_I | MARKER_P | MARKER_S | MARKER_G | MARKER_H | MARKER_E
-    )
-}
 
 /// Parse all frames from binary data for one session.
 /// Never panics — collects warnings on corruption and continues.
@@ -85,13 +97,13 @@ pub(crate) fn parse_session_frames(
             }
         };
 
-        if !is_valid_marker(marker) {
+        let Ok(marker) = FrameMarker::try_from(marker) else {
             stats.corrupt_bytes += 1;
             continue;
-        }
+        };
 
         match marker {
-            MARKER_I => {
+            FrameMarker::Intra => {
                 let result = decode_i_frame(
                     &mut reader,
                     fields,
@@ -127,7 +139,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_P => {
+            FrameMarker::Inter => {
                 if !ctx.is_ready() {
                     stats.corrupt_bytes += 1;
                     continue;
@@ -170,7 +182,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_S => {
+            FrameMarker::Slow => {
                 if let Some(slow_defs) = &session.slow_field_defs {
                     match decode_simple_frame(&mut reader, &slow_defs.fields) {
                         Ok(values) => {
@@ -191,7 +203,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_G => {
+            FrameMarker::Gps => {
                 if let Some(gps_defs) = &session.gps_field_defs {
                     match decode_simple_frame(&mut reader, &gps_defs.fields) {
                         Ok(values) => {
@@ -212,7 +224,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_H => {
+            FrameMarker::GpsHome => {
                 if let Some(home_defs) = &session.gps_home_field_defs {
                     if decode_simple_frame(&mut reader, &home_defs.fields).is_err() {
                         reader.restore(frame_start);
@@ -221,7 +233,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_E => match parse_event(&mut reader) {
+            FrameMarker::Event => match parse_event(&mut reader) {
                 Ok(Some(event)) => {
                     let is_end = match event {
                         BfEvent::LogEnd => true,
@@ -246,8 +258,6 @@ pub(crate) fn parse_session_frames(
                     reader.skip(1);
                 }
             },
-
-            _ => {}
         }
     }
 
@@ -499,6 +509,6 @@ fn parse_event(reader: &mut Reader<'_>) -> Result<Option<BfEvent>, InternalError
 fn validate_next_marker(reader: &Reader<'_>) -> bool {
     match reader.peek() {
         None => true,
-        Some(b) => is_valid_marker(b),
+        Some(b) => FrameMarker::try_from(b).is_ok(),
     }
 }
