@@ -88,18 +88,13 @@ pub(crate) fn parse_session_frames(
         let frame_start = reader.save_point();
         let frame_abs_offset = reader.abs_pos();
 
-        let marker = match reader.read_byte() {
-            Ok(b) => b,
+        let marker = match reader.read_byte().map(FrameMarker::try_from) {
+            Ok(Ok(m)) => m,
             Err(InternalError::Eof) => break,
-            Err(_) => {
+            Ok(Err(_)) | Err(_) => {
                 stats.corrupt_bytes += 1;
                 continue;
             }
-        };
-
-        let Ok(marker) = FrameMarker::try_from(marker) else {
-            stats.corrupt_bytes += 1;
-            continue;
         };
 
         match marker {

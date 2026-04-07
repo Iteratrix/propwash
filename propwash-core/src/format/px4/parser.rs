@@ -212,10 +212,10 @@ fn parse_messages(
                     }
                 }
                 ULogMsgType::Info | ULogMsgType::InfoMulti => {
-                    parse_info(payload, msg_type_byte, info);
+                    parse_info(payload, msg_type, info);
                 }
                 ULogMsgType::Param | ULogMsgType::ParamDefault => {
-                    parse_param(payload, msg_type_byte, params);
+                    parse_param(payload, msg_type, params);
                 }
                 ULogMsgType::AddLogged => {
                     if let Some(sub) = parse_add_logged(payload) {
@@ -250,10 +250,10 @@ fn parse_messages(
                 }
                 ULogMsgType::FlagBits | ULogMsgType::Sync => {}
             },
-            Err(_) => {
+            Err(unknown) => {
                 if stats.total_messages < 10 {
                     warnings.push(Warning {
-                        message: format!("Unknown ULog message type: 0x{msg_type_byte:02x}"),
+                        message: format!("Unknown ULog message type: 0x{unknown:02x}"),
                         byte_offset: Some(*pos),
                     });
                 }
@@ -338,8 +338,8 @@ fn compute_type_size(type_str: &str, formats: &HashMap<String, ULogFormat>) -> u
     }
 }
 
-fn parse_info(payload: &[u8], msg_type: u8, info: &mut HashMap<String, String>) {
-    let is_multi = msg_type == b'M';
+fn parse_info(payload: &[u8], msg_type: ULogMsgType, info: &mut HashMap<String, String>) {
+    let is_multi = msg_type == ULogMsgType::InfoMulti;
     let offset = usize::from(is_multi);
     let is_continued = is_multi && !payload.is_empty() && payload[0] != 0;
 
@@ -387,8 +387,8 @@ fn parse_info(payload: &[u8], msg_type: u8, info: &mut HashMap<String, String>) 
     }
 }
 
-fn parse_param(payload: &[u8], msg_type: u8, params: &mut HashMap<String, f64>) {
-    let offset = usize::from(msg_type == b'Q');
+fn parse_param(payload: &[u8], msg_type: ULogMsgType, params: &mut HashMap<String, f64>) {
+    let offset = usize::from(msg_type == ULogMsgType::ParamDefault);
     if payload.len() < offset + 1 {
         return;
     }
