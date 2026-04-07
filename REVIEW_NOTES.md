@@ -119,3 +119,10 @@ The `Value` enum (`Int`, `Float`, `Str`, `Bool`) and its `as_int()`/`as_float()`
 
 ### 29. [style] Format parsers — prefer iterators over push loops for collection building
 The `field_names()` implementations in all three formats (AP `types.rs:207-233`, PX4 `types.rs:229-261`, BF `types.rs:365`) use conditional `for` loops pushing into a `Vec`. These could use chained iterators (`flat_map`/`chain`/`filter`). The `field_names()` code across all three formats is also near-identical — potential for a shared helper. Parser core loops (frame decoding, error recovery) are fine as `for` — complex control flow doesn't benefit from forced iterator style.
+
+### 30. [style] `&mut Vec` out parameters throughout parsers and diagnostics
+Multiple functions use `&mut Vec<T>` as an output parameter instead of returning the data:
+- **Parsers**: `ap/parser.rs:13`, `px4/parser.rs:29`, `px4/parser.rs:118` take `warnings: &mut Vec<Warning>`
+- **Diagnostics**: `diagnostics.rs:122,210,242,286` take `diagnostics: &mut Vec<Diagnostic>`
+
+This is C-style "out parameter" pattern that obscures data flow. Idiomatic Rust: return `Vec<T>` and let the caller `extend`. Each `diagnose_*` function returns its findings; the caller chains them. For warnings during parsing, return them alongside the parsed result (tuple or struct). Makes it clear at the call site how much data each function contributes.
