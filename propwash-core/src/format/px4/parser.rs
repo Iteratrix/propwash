@@ -10,20 +10,46 @@ use super::types::{
 const ULOG_MAGIC: &[u8; 7] = b"\x55\x4c\x6f\x67\x01\x12\x35";
 const HEADER_SIZE: usize = 16;
 
-// Message type codes
-const MSG_FLAG_BITS: u8 = b'B';
-const MSG_FORMAT: u8 = b'F';
-const MSG_INFO: u8 = b'I';
-const MSG_INFO_MULTI: u8 = b'M';
-const MSG_PARAM: u8 = b'P';
-const MSG_PARAM_DEFAULT: u8 = b'Q';
-const MSG_ADD_LOGGED: u8 = b'A';
-const MSG_DATA: u8 = b'D';
-const MSG_LOGGING: u8 = b'L';
-const MSG_LOGGING_TAGGED: u8 = b'C';
-const MSG_REMOVE_LOGGED: u8 = b'R';
-const MSG_DROPOUT: u8 = b'O';
-const MSG_SYNC: u8 = b'S';
+/// `ULog` message type codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ULogMsgType {
+    FlagBits,
+    Format,
+    Info,
+    InfoMulti,
+    Param,
+    ParamDefault,
+    AddLogged,
+    Data,
+    Logging,
+    LoggingTagged,
+    RemoveLogged,
+    Dropout,
+    Sync,
+}
+
+impl TryFrom<u8> for ULogMsgType {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            b'B' => Ok(Self::FlagBits),
+            b'F' => Ok(Self::Format),
+            b'I' => Ok(Self::Info),
+            b'M' => Ok(Self::InfoMulti),
+            b'P' => Ok(Self::Param),
+            b'Q' => Ok(Self::ParamDefault),
+            b'A' => Ok(Self::AddLogged),
+            b'D' => Ok(Self::Data),
+            b'L' => Ok(Self::Logging),
+            b'C' => Ok(Self::LoggingTagged),
+            b'R' => Ok(Self::RemoveLogged),
+            b'O' => Ok(Self::Dropout),
+            b'S' => Ok(Self::Sync),
+            other => Err(other),
+        }
+    }
+}
 
 /// Parse a PX4 `ULog` binary file.
 pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
@@ -47,7 +73,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4RawSession {
 
     // Check for flag bits message
     let mut appended_offsets: Vec<u64> = Vec::new();
-    if pos + 3 <= data.len() && data[pos + 2] == MSG_FLAG_BITS {
+    if pos + 3 <= data.len() && ULogMsgType::try_from(data[pos + 2]) == Ok(ULogMsgType::FlagBits) {
         let msg_size = u16::from_le_bytes([data[pos], data[pos + 1]]) as usize;
         if pos + 3 + msg_size <= data.len() {
             let payload = &data[pos + 3..pos + 3 + msg_size];
@@ -163,7 +189,7 @@ fn parse_messages(
 ) {
     while *pos + 3 <= data.len() {
         let msg_size = u16::from_le_bytes([data[*pos], data[*pos + 1]]) as usize;
-        let msg_type = data[*pos + 2];
+        let msg_type_byte = data[*pos + 2];
         let msg_end = *pos + 3 + msg_size;
 
         if msg_end > data.len() {
@@ -177,55 +203,57 @@ fn parse_messages(
         let payload = &data[*pos + 3..msg_end];
         stats.total_messages += 1;
 
-        match msg_type {
-            MSG_FORMAT => {
-                if let Some(fmt) = parse_format(payload, formats) {
-                    formats.insert(fmt.name.clone(), fmt);
-                    stats.format_count += 1;
+        match ULogMsgType::try_from(msg_type_byte) {
+            Ok(msg_type) => match msg_type {
+                ULogMsgType::Format => {
+                    if let Some(fmt) = parse_format(payload, formats) {
+                        formats.insert(fmt.name.clone(), fmt);
+                        stats.format_count += 1;
+                    }
                 }
-            }
-            MSG_INFO | MSG_INFO_MULTI => {
-                parse_info(payload, msg_type, info);
-            }
-            MSG_PARAM | MSG_PARAM_DEFAULT => {
-                parse_param(payload, msg_type, params);
-            }
-            MSG_ADD_LOGGED => {
-                if let Some(sub) = parse_add_logged(payload) {
-                    subscriptions.insert(sub.msg_id, sub);
-                    stats.subscription_count += 1;
+                ULogMsgType::Info | ULogMsgType::InfoMulti => {
+                    parse_info(payload, msg_type_byte, info);
                 }
-            }
-            MSG_DATA => {
-                if let Some(msg) = parse_data(payload, subscriptions, formats) {
-                    data_messages.push(msg);
-                    stats.data_count += 1;
+                ULogMsgType::Param | ULogMsgType::ParamDefault => {
+                    parse_param(payload, msg_type_byte, params);
                 }
-            }
-            MSG_DROPOUT => {
-                stats.dropout_count += 1;
-            }
-            MSG_LOGGING => {
-                if let Some(msg) = parse_logging(payload) {
-                    log_messages.push(msg);
+                ULogMsgType::AddLogged => {
+                    if let Some(sub) = parse_add_logged(payload) {
+                        subscriptions.insert(sub.msg_id, sub);
+                        stats.subscription_count += 1;
+                    }
                 }
-            }
-            MSG_LOGGING_TAGGED => {
-                if let Some(msg) = parse_logging_tagged(payload) {
-                    log_messages.push(msg);
+                ULogMsgType::Data => {
+                    if let Some(msg) = parse_data(payload, subscriptions, formats) {
+                        data_messages.push(msg);
+                        stats.data_count += 1;
+                    }
                 }
-            }
-            MSG_REMOVE_LOGGED => {
-                if payload.len() >= 2 {
-                    let msg_id = u16::from_le_bytes([payload[0], payload[1]]);
-                    subscriptions.remove(&msg_id);
+                ULogMsgType::Dropout => {
+                    stats.dropout_count += 1;
                 }
-            }
-            MSG_SYNC => {}
-            _ => {
+                ULogMsgType::Logging => {
+                    if let Some(msg) = parse_logging(payload) {
+                        log_messages.push(msg);
+                    }
+                }
+                ULogMsgType::LoggingTagged => {
+                    if let Some(msg) = parse_logging_tagged(payload) {
+                        log_messages.push(msg);
+                    }
+                }
+                ULogMsgType::RemoveLogged => {
+                    if payload.len() >= 2 {
+                        let msg_id = u16::from_le_bytes([payload[0], payload[1]]);
+                        subscriptions.remove(&msg_id);
+                    }
+                }
+                ULogMsgType::FlagBits | ULogMsgType::Sync => {}
+            },
+            Err(_) => {
                 if stats.total_messages < 10 {
                     warnings.push(Warning {
-                        message: format!("Unknown ULog message type: 0x{msg_type:02x}"),
+                        message: format!("Unknown ULog message type: 0x{msg_type_byte:02x}"),
                         byte_offset: Some(*pos),
                     });
                 }
@@ -311,7 +339,7 @@ fn compute_type_size(type_str: &str, formats: &HashMap<String, ULogFormat>) -> u
 }
 
 fn parse_info(payload: &[u8], msg_type: u8, info: &mut HashMap<String, String>) {
-    let is_multi = msg_type == MSG_INFO_MULTI;
+    let is_multi = msg_type == b'M';
     let offset = usize::from(is_multi);
     let is_continued = is_multi && !payload.is_empty() && payload[0] != 0;
 
@@ -360,7 +388,7 @@ fn parse_info(payload: &[u8], msg_type: u8, info: &mut HashMap<String, String>) 
 }
 
 fn parse_param(payload: &[u8], msg_type: u8, params: &mut HashMap<String, f64>) {
-    let offset = usize::from(msg_type == MSG_PARAM_DEFAULT);
+    let offset = usize::from(msg_type == b'Q');
     if payload.len() < offset + 1 {
         return;
     }
@@ -554,8 +582,7 @@ fn try_resync(
     let start = *pos;
 
     for candidate in start + 1..data.len().saturating_sub(2) {
-        let msg_type = data[candidate + 2];
-        if !is_known_msg_type(msg_type) {
+        if ULogMsgType::try_from(data[candidate + 2]).is_err() {
             continue;
         }
         let msg_size = u16::from_le_bytes([data[candidate], data[candidate + 1]]) as usize;
@@ -564,11 +591,8 @@ fn try_resync(
             continue;
         }
         // Two-in-a-row: verify the next message header also looks valid
-        if msg_end + 3 <= data.len() {
-            let next_type = data[msg_end + 2];
-            if !is_known_msg_type(next_type) {
-                continue;
-            }
+        if msg_end + 3 <= data.len() && ULogMsgType::try_from(data[msg_end + 2]).is_err() {
+            continue;
         }
 
         let corrupt = candidate - start;
@@ -583,25 +607,6 @@ fn try_resync(
         return true;
     }
     false
-}
-
-const fn is_known_msg_type(b: u8) -> bool {
-    matches!(
-        b,
-        MSG_FLAG_BITS
-            | MSG_FORMAT
-            | MSG_INFO
-            | MSG_INFO_MULTI
-            | MSG_PARAM
-            | MSG_PARAM_DEFAULT
-            | MSG_ADD_LOGGED
-            | MSG_REMOVE_LOGGED
-            | MSG_DATA
-            | MSG_LOGGING
-            | MSG_LOGGING_TAGGED
-            | MSG_SYNC
-            | MSG_DROPOUT
-    )
 }
 
 fn parse_logging(payload: &[u8]) -> Option<ULogLogMessage> {
