@@ -1,6 +1,12 @@
 # propwash
 
-Flight log analyzer for drones. Parses Betaflight and ArduPilot blackbox logs and tells you what's wrong.
+Drone flight log analyzer. Parses Betaflight blackbox (`.bbl`) and ArduPilot DataFlash (`.bin`) logs to detect vibration issues, PID tuning problems, motor saturation, gyro spikes, and mechanical faults - with frequency spectrum analysis and actionable diagnostics.
+
+**Try it now: [propwash.deltave.org](https://propwash.deltave.org)** - drop a log file in your browser. No install, no uploads. Runs locally via WebAssembly.
+
+![Overview - summary, diagnostics, and events](docs/img/overview.png)
+
+![Multi-flight diagnostics and spectrum comparison](docs/img/diagnostics.png)
 
 ```
 $ propwash analyze flight.bbl
@@ -37,8 +43,6 @@ $ propwash analyze flight.bbl
 ```
 
 ## Web UI
-
-**[propwash.deltave.org](https://propwash.deltave.org)** — drop a `.bbl` or `.bin` file in your browser and get instant analysis. No install, no uploads. Everything runs locally via WebAssembly.
 
 Features: tabbed interface (Overview, Timeline, Spectrum, Raw Data), interactive ECharts plots with zoom/pan, spectrogram heatmaps, filter overlay, throttle-band analysis, side-by-side flight comparison.
 
