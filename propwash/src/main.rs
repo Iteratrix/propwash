@@ -1,8 +1,7 @@
-mod episodes;
-
 use std::process;
 
 use clap::{Parser, Subcommand};
+use propwash_core::analysis::episodes;
 use propwash_core::types::SensorField;
 use serde::Serialize;
 

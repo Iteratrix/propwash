@@ -1,4 +1,5 @@
 pub mod diagnostics;
+pub mod episodes;
 pub mod events;
 pub mod fft;
 pub mod summary;
