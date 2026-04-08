@@ -64,7 +64,7 @@ const THROTTLE_BANDS: [(f64, f64, &str); 4] = [
 ];
 
 #[allow(clippy::cast_precision_loss)]
-pub(crate) fn compute_spectrum_from_samples(
+pub fn compute_spectrum_from_samples(
     samples: &[f64],
     sample_rate: f64,
     axis: &'static str,
