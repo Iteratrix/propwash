@@ -195,9 +195,13 @@ fn decode_payload(payload: &[u8], field_types: &[FieldType]) -> Vec<ApValue> {
                 ApValue::Str(read_fixed_str(bytes))
             }
             FieldType::I16Array32 => {
-                // Store as the first element for now — arrays are rarely needed
-                let v = i16::from_le_bytes([bytes[0], bytes[1]]);
-                ApValue::Int(i64::from(v))
+                let elements: Vec<i64> = (0..32)
+                    .map(|i| {
+                        let off = i * 2;
+                        i64::from(i16::from_le_bytes([bytes[off], bytes[off + 1]]))
+                    })
+                    .collect();
+                ApValue::IntArray(elements)
             }
             FieldType::Unknown(_) => ApValue::Int(0),
         };

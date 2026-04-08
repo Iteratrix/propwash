@@ -84,6 +84,7 @@ pub enum ApValue {
     UInt(u64),
     Float(f64),
     Str(String),
+    IntArray(Vec<i64>),
 }
 
 impl ApValue {
@@ -95,6 +96,7 @@ impl ApValue {
             #[allow(clippy::cast_possible_truncation)]
             Self::Float(v) => *v as i64,
             Self::Str(_) => 0,
+            Self::IntArray(v) => v.first().copied().unwrap_or(0),
         }
     }
 
@@ -105,6 +107,7 @@ impl ApValue {
             Self::UInt(v) => *v as f64,
             Self::Float(v) => *v,
             Self::Str(_) => 0.0,
+            Self::IntArray(v) => v.first().copied().unwrap_or(0) as f64,
         }
     }
 }
