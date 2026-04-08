@@ -231,41 +231,36 @@ impl Px4Session {
 
     /// Returns field names available in this session.
     pub fn field_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-
         let has_gyro = !self.topic_data("sensor_combined").is_empty()
             || !self.topic_data("sensor_gyro").is_empty();
         let has_accel = !self.topic_data("sensor_combined").is_empty()
             || !self.topic_data("sensor_accel").is_empty();
-
-        if has_gyro {
-            for axis in Axis::ALL {
-                names.push(SensorField::Gyro(axis).to_string());
-            }
-        }
-        if has_accel {
-            for axis in Axis::ALL {
-                names.push(SensorField::Accel(axis).to_string());
-            }
-        }
-
+        let has_rc = !self.topic_data("input_rc").is_empty();
         let n_motors = self.motor_count();
-        for i in 0..n_motors {
-            names.push(SensorField::Motor(MotorIndex(i)).to_string());
-        }
 
-        if !self.topic_data("input_rc").is_empty() {
-            for ch in [
-                RcChannel::Roll,
-                RcChannel::Pitch,
-                RcChannel::Yaw,
-                RcChannel::Throttle,
-            ] {
-                names.push(SensorField::Rc(ch).to_string());
-            }
-        }
-
-        names
+        Axis::ALL
+            .iter()
+            .filter(|_| has_gyro)
+            .map(|&a| SensorField::Gyro(a).to_string())
+            .chain(
+                Axis::ALL
+                    .iter()
+                    .filter(|_| has_accel)
+                    .map(|&a| SensorField::Accel(a).to_string()),
+            )
+            .chain((0..n_motors).map(|i| SensorField::Motor(MotorIndex(i)).to_string()))
+            .chain(
+                [
+                    RcChannel::Roll,
+                    RcChannel::Pitch,
+                    RcChannel::Yaw,
+                    RcChannel::Throttle,
+                ]
+                .iter()
+                .filter(|_| has_rc)
+                .map(|&ch| SensorField::Rc(ch).to_string()),
+            )
+            .collect()
     }
 
     /// Returns the firmware version string.

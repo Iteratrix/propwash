@@ -212,32 +212,36 @@ impl ApSession {
 
     /// Returns field names available in this session.
     pub fn field_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        if self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("GYR").is_some() {
-            for axis in Axis::ALL {
-                names.push(SensorField::Gyro(axis).to_string());
-            }
-        }
-        if self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("ACC").is_some() {
-            for axis in Axis::ALL {
-                names.push(SensorField::Accel(axis).to_string());
-            }
-        }
+        let has_gyro =
+            self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("GYR").is_some();
+        let has_accel =
+            self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("ACC").is_some();
+        let has_rc = self.msg_type_for_name("RCIN").is_some();
         let n_motors = self.motor_count();
-        for i in 0..n_motors {
-            names.push(SensorField::Motor(MotorIndex(i)).to_string());
-        }
-        if self.msg_type_for_name("RCIN").is_some() {
-            for ch in [
-                RcChannel::Roll,
-                RcChannel::Pitch,
-                RcChannel::Yaw,
-                RcChannel::Throttle,
-            ] {
-                names.push(SensorField::Rc(ch).to_string());
-            }
-        }
-        names
+
+        Axis::ALL
+            .iter()
+            .filter(|_| has_gyro)
+            .map(|&a| SensorField::Gyro(a).to_string())
+            .chain(
+                Axis::ALL
+                    .iter()
+                    .filter(|_| has_accel)
+                    .map(|&a| SensorField::Accel(a).to_string()),
+            )
+            .chain((0..n_motors).map(|i| SensorField::Motor(MotorIndex(i)).to_string()))
+            .chain(
+                [
+                    RcChannel::Roll,
+                    RcChannel::Pitch,
+                    RcChannel::Yaw,
+                    RcChannel::Throttle,
+                ]
+                .iter()
+                .filter(|_| has_rc)
+                .map(|&ch| SensorField::Rc(ch).to_string()),
+            )
+            .collect()
     }
 
     /// Returns the firmware version string.
