@@ -436,6 +436,11 @@ impl BfSession {
     }
 
     /// Extracts one field as a `Vec<f64>` across all main frames.
+    ///
+    /// BF fields are indexed by position, so lookup is via the field-definition
+    /// hashmap. `SensorField::Unknown` values resolve only if the parser
+    /// previously mapped that exact string to a field index. Unresolvable
+    /// fields (including truly unknown names) return an empty `Vec`.
     #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
         let Some(idx) = self.main_field_defs.index_of(sensor_field) else {

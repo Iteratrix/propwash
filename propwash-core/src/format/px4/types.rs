@@ -319,6 +319,10 @@ impl Px4Session {
     }
 
     /// Extracts one field as a `Vec<f64>` across all relevant messages.
+    ///
+    /// `SensorField::Unknown` names containing a `.` are resolved as
+    /// `"topic.field"` against native PX4 subscription data.
+    /// Unresolvable fields return an empty `Vec`.
     #[allow(
         clippy::cast_precision_loss,
         clippy::too_many_lines,
