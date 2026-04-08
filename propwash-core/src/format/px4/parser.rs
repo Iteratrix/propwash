@@ -116,6 +116,8 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4Session {
         }
     }
 
+    validate_nested_types(&formats, warnings);
+
     let firmware_version = info
         .get("ver_sw")
         .or_else(|| info.get("sys_name"))
@@ -649,6 +651,31 @@ fn parse_logging_tagged(payload: &[u8]) -> Option<ULogLogMessage> {
         message,
         tag: Some(tag),
     })
+}
+
+/// Check all format definitions for fields that reference nested types not
+/// present in `formats`.  Emits one warning per missing type so the user
+/// knows some data fields will be silently skipped during decoding.
+fn validate_nested_types(formats: &HashMap<String, ULogFormat>, warnings: &mut Vec<Warning>) {
+    let mut warned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for fmt in formats.values() {
+        for field in &fmt.fields {
+            if field.primitive.is_some() {
+                continue;
+            }
+            let (base_type, _) = parse_array_type(&field.type_name);
+            if !formats.contains_key(base_type) && warned.insert(base_type.to_string()) {
+                warnings.push(Warning {
+                    message: format!(
+                        "Format '{}' references undefined nested type '{base_type}' — \
+                         fields using it will be skipped",
+                        fmt.name,
+                    ),
+                    byte_offset: None,
+                });
+            }
+        }
+    }
 }
 
 fn empty_session(stats: Px4ParseStats) -> Px4Session {
