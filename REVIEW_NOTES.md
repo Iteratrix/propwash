@@ -42,8 +42,13 @@ The web frontend is ~44KB of vanilla JS. Given WASM interop and UI complexity, T
 ### 6. [nit] `propwash-web/src/lib.rs:12-14` — `thread_local!` + `RefCell` for WASM state
 Canonical pattern for single-threaded WASM. No action needed.
 
-### 7. [arch] `propwash-web/src/lib.rs` + `propwash/src/main.rs` — DTO duplication between web and CLI
-Both crates define nearly identical session-info structs (`SessionResult` in web, `SessionInfo`/`DumpSession` in CLI) to serialize the same core data. Consider a shared serialization layer in core or a common DTO crate.
+### 7. [arch] `propwash-web/src/lib.rs` + `propwash-cli/src/main.rs` — DTO duplication between web and CLI
+Both crates define session-info structs (`SessionResult` in web, `SessionInfo` in CLI). On closer inspection these are **different shapes serving different consumers** and should remain separate:
+- **CLI `SessionInfo`**: metadata-focused (firmware_version, craft_name, motor_count, field_names, warnings). Used by `cmd_info` for terminal display.
+- **Web `SessionResult`**: analysis-focused (firmware, craft, analysis: FlightAnalysis). Uses shorter field names for JSON wire size. Wraps warnings at the top-level `AnalysisResult`, not per-session.
+- Shared fields (index, duration_seconds, sample_rate_hz, frame_count) are trivial one-liners from `Session` methods — the duplication is in the struct definition, not in logic.
+- Merging would require a union struct with `Option` fields or `#[serde(skip)]` annotations that serve neither consumer cleanly.
+**Decision: leave separate.** If a third consumer appears with the same shape, reconsider.
 
 ### 8. [style] `propwash-web/src/lib.rs:78-96` — for-loops building collections
 Several loops push into Vecs where `.map().collect()` would be more idiomatic:
