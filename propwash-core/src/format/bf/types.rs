@@ -181,7 +181,7 @@ pub enum BfEvent {
     },
     InflightAdjustment {
         function: u8,
-        value: i32,
+        value: f64,
     },
     LoggingResume {
         log_iteration: u32,

@@ -460,16 +460,17 @@ fn parse_event(reader: &mut Reader<'_>) -> Result<Option<BfEvent>, InternalError
         EVENT_INFLIGHT_ADJUSTMENT => {
             let func = reader.read_byte()?;
             if func & 0x80 != 0 {
-                reader.read_bytes(4)?;
+                let bytes = reader.read_bytes(4)?;
+                let float_val = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                 Ok(Some(BfEvent::InflightAdjustment {
                     function: func & 0x7F,
-                    value: 0,
+                    value: f64::from(float_val),
                 }))
             } else {
                 let value = read_signed_vb(reader)?;
                 Ok(Some(BfEvent::InflightAdjustment {
                     function: func,
-                    value,
+                    value: f64::from(value),
                 }))
             }
         }
