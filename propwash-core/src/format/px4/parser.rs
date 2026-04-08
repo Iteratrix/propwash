@@ -249,7 +249,17 @@ fn parse_messages(
                 ULogMsgType::RemoveLogged => {
                     if payload.len() >= 2 {
                         let msg_id = u16::from_le_bytes([payload[0], payload[1]]);
-                        subscriptions.remove(&msg_id);
+                        if let Some(sub) = subscriptions.remove(&msg_id) {
+                            if warnings.len() < 20 {
+                                warnings.push(Warning {
+                                    message: format!(
+                                        "Topic '{}' unsubscribed (msg_id {msg_id})",
+                                        sub.format_name,
+                                    ),
+                                    byte_offset: Some(*pos),
+                                });
+                            }
+                        }
                     }
                 }
                 ULogMsgType::FlagBits | ULogMsgType::Sync => {}
