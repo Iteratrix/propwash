@@ -572,42 +572,38 @@ fn cmd_dump(
         let n_frames = session.frame_count();
         let time_data = session.field(&SensorField::Time);
 
-        let mut frames = Vec::new();
-        for i in frame_start..n_frames {
-            if let Some(end) = frame_end {
-                if i > end {
-                    break;
-                }
-            }
+        let frame_range_arg = if frame_start == 0 && frame_end.is_none() {
+            None
+        } else {
+            Some((frame_start, frame_end))
+        };
+        let time_range_arg = time_start_us.map(|t_start| (t_start, time_end_us));
 
-            if let Some(t_start) = time_start_us {
-                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-                let t = time_data.get(i).copied().unwrap_or(0.0) as i64;
-                if t < t_start {
-                    continue;
-                }
-                if let Some(t_end) = time_end_us {
-                    if t > t_end {
-                        break;
-                    }
-                }
-            }
+        let indices = propwash_core::filter::filter_frame_indices(
+            n_frames,
+            &time_data,
+            frame_range_arg,
+            time_range_arg,
+        );
 
-            let mut field_values = serde_json::Map::new();
-            for (col_idx, &name) in selected_fields.iter().enumerate() {
-                let val = columns[col_idx].get(i).copied().unwrap_or(0.0);
-                let json_val = serde_json::Number::from_f64(val)
-                    .map_or(serde_json::Value::Null, serde_json::Value::Number);
-                field_values.insert(name.to_string(), json_val);
-            }
-
-            frames.push(DumpFrame {
-                index: i,
-                byte_offset: None,
-                kind: None,
-                values: field_values,
-            });
-        }
+        let frames: Vec<DumpFrame> = indices
+            .into_iter()
+            .map(|i| {
+                let mut field_values = serde_json::Map::new();
+                for (col_idx, &name) in selected_fields.iter().enumerate() {
+                    let val = columns[col_idx].get(i).copied().unwrap_or(0.0);
+                    let json_val = serde_json::Number::from_f64(val)
+                        .map_or(serde_json::Value::Null, serde_json::Value::Number);
+                    field_values.insert(name.to_string(), json_val);
+                }
+                DumpFrame {
+                    index: i,
+                    byte_offset: None,
+                    kind: None,
+                    values: field_values,
+                }
+            })
+            .collect();
 
         output.sessions.push(DumpSession {
             index: session.index(),
