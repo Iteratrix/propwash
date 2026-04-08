@@ -7,7 +7,7 @@ use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use propwash_core::analysis::{self, FlightAnalysis};
-use propwash_core::types::{Log, RawSession};
+use propwash_core::types::{Log, SensorField};
 
 thread_local! {
     static CURRENT_LOG: RefCell<Option<Log>> = const { RefCell::new(None) };
@@ -54,18 +54,6 @@ struct SpectrogramResponse {
     sample_rate_hz: f64,
 }
 
-#[derive(Serialize)]
-#[allow(clippy::struct_field_names)]
-struct FilterConfig {
-    gyro_lpf_hz: Option<f64>,
-    gyro_lpf2_hz: Option<f64>,
-    dterm_lpf_hz: Option<f64>,
-    dyn_notch_min_hz: Option<f64>,
-    dyn_notch_max_hz: Option<f64>,
-    gyro_notch1_hz: Option<f64>,
-    gyro_notch2_hz: Option<f64>,
-}
-
 #[wasm_bindgen(start)]
 pub fn init() {
     console_error_panic_hook::set_once();
@@ -73,20 +61,28 @@ pub fn init() {
 
 #[wasm_bindgen]
 pub fn analyze(data: &[u8]) -> String {
-    let log = propwash_core::decode(data);
+    let log = match propwash_core::decode(data) {
+        Ok(log) => log,
+        Err(e) => {
+            return serde_json::to_string(&AnalysisResult {
+                sessions: Vec::new(),
+                warnings: vec![e.to_string()],
+            })
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#));
+        }
+    };
 
     let mut sessions = Vec::new();
     for session in &log.sessions {
-        let unified = session.unified();
         let flight_analysis = analysis::analyze(session);
 
         sessions.push(SessionResult {
-            index: session.index,
-            firmware: unified.firmware_version().to_string(),
-            craft: unified.craft_name().to_string(),
-            duration_seconds: unified.duration_seconds(),
-            sample_rate_hz: unified.sample_rate_hz(),
-            frame_count: unified.frame_count(),
+            index: session.index(),
+            firmware: session.firmware_version().to_string(),
+            craft: session.craft_name().to_string(),
+            duration_seconds: session.duration_seconds(),
+            sample_rate_hz: session.sample_rate_hz(),
+            frame_count: session.frame_count(),
             analysis: flight_analysis,
         });
     }
@@ -119,9 +115,8 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
             return r#"{"error":"invalid session index"}"#.to_string();
         };
 
-        let unified = session.unified();
-        let total_frames = unified.frame_count();
-        let sample_rate = unified.sample_rate_hz();
+        let total_frames = session.frame_count();
+        let sample_rate = session.sample_rate_hz();
 
         let step = if total_frames > max_points {
             total_frames / max_points
@@ -134,12 +129,15 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
         let mut fields: HashMap<String, Vec<f64>> = HashMap::new();
 
         for &name in &requested {
-            let raw = unified.field_by_name(name);
+            let Ok(field) = SensorField::parse(name) else {
+                continue;
+            };
+            let raw = session.field(&field);
             let decimated: Vec<f64> = raw.iter().step_by(step).copied().collect();
             fields.insert(name.to_string(), decimated);
         }
 
-        let time_raw = unified.field_by_name("time");
+        let time_raw = session.field(&SensorField::Time);
         let t0 = time_raw.first().copied().unwrap_or(0.0);
         let time_s: Vec<f64> = time_raw
             .iter()
@@ -177,8 +175,7 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
             return r#"{"error":"invalid session index"}"#.to_string();
         };
 
-        let unified = session.unified();
-        let sample_rate = unified.sample_rate_hz();
+        let sample_rate = session.sample_rate_hz();
         if sample_rate <= 0.0 {
             return r#"{"error":"no sample rate"}"#.to_string();
         }
@@ -188,7 +185,7 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         let max_bin = ((SPEC_MAX_FREQ / freq_res) as usize).min(SPEC_WINDOW / 2);
         let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
 
-        let time_raw = unified.field_by_name("time");
+        let time_raw = session.field(&SensorField::Time);
         let t0 = time_raw.first().copied().unwrap_or(0.0);
 
         let hann = hann_window(SPEC_WINDOW);
@@ -199,9 +196,9 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
             .split(',')
             .map(|a| {
                 let field = match a {
-                    "roll" => "gyroADC[0]",
-                    "pitch" => "gyroADC[1]",
-                    "yaw" => "gyroADC[2]",
+                    "roll" => "gyro[roll]",
+                    "pitch" => "gyro[pitch]",
+                    "yaw" => "gyro[yaw]",
                     other => other,
                 };
                 (a, field)
@@ -212,7 +209,10 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
         let mut axes = Vec::new();
 
         for &(axis_name, field_name) in &axis_fields {
-            let raw = unified.field_by_name(field_name);
+            let Ok(field) = SensorField::parse(field_name) else {
+                continue;
+            };
+            let raw = session.field(&field);
             if raw.len() < SPEC_WINDOW {
                 continue;
             }
@@ -283,73 +283,7 @@ pub fn get_filter_config(session_idx: usize) -> String {
             return r#"{"error":"invalid session index"}"#.to_string();
         };
 
-        let non_zero_f64 = |v: f64| -> Option<f64> {
-            if v > 0.0 {
-                Some(v)
-            } else {
-                None
-            }
-        };
-
-        let config = match &session.raw {
-            RawSession::Betaflight(bf) => {
-                let non_zero = |v: i32| -> Option<f64> {
-                    if v > 0 {
-                        Some(f64::from(v))
-                    } else {
-                        None
-                    }
-                };
-                FilterConfig {
-                    gyro_lpf_hz: non_zero(bf.get_header_int("gyro_lowpass_hz", 0)),
-                    gyro_lpf2_hz: non_zero(bf.get_header_int("gyro_lowpass2_hz", 0)),
-                    dterm_lpf_hz: non_zero(bf.get_header_int("dterm_lpf_hz", 0))
-                        .or_else(|| non_zero(bf.get_header_int("dterm_lowpass_hz", 0))),
-                    dyn_notch_min_hz: non_zero(bf.get_header_int("dyn_notch_min_hz", 0)),
-                    dyn_notch_max_hz: non_zero(bf.get_header_int("dyn_notch_max_hz", 0)),
-                    gyro_notch1_hz: non_zero(bf.get_header_int("gyro_notch_hz", 0)),
-                    gyro_notch2_hz: non_zero(bf.get_header_int("gyro_notch2_hz", 0)),
-                }
-            }
-            RawSession::ArduPilot(ap) => {
-                let p = |k: &str| ap.params.get(k).copied().unwrap_or(0.0);
-                FilterConfig {
-                    gyro_lpf_hz: non_zero_f64(p("INS_GYRO_FILTER")),
-                    gyro_lpf2_hz: None,
-                    dterm_lpf_hz: non_zero_f64(p("ATC_RAT_RLL_FLTE")),
-                    dyn_notch_min_hz: if p("INS_HNTCH_ENABLE") > 0.0 {
-                        non_zero_f64(p("INS_HNTCH_FREQ"))
-                    } else {
-                        None
-                    },
-                    dyn_notch_max_hz: None,
-                    gyro_notch1_hz: if p("INS_NOTCH_ENABLE") > 0.0 {
-                        non_zero_f64(p("INS_NOTCH_FREQ"))
-                    } else {
-                        None
-                    },
-                    gyro_notch2_hz: if p("INS_NOTC2_ENABLE") > 0.0 {
-                        non_zero_f64(p("INS_NOTC2_FREQ"))
-                    } else {
-                        None
-                    },
-                }
-            }
-            RawSession::Px4(px4) => {
-                let p = |k: &str| px4.params.get(k).copied().unwrap_or(0.0);
-                FilterConfig {
-                    gyro_lpf_hz: non_zero_f64(p("IMU_GYRO_CUTOFF")),
-                    gyro_lpf2_hz: None,
-                    dterm_lpf_hz: non_zero_f64(p("IMU_DGYRO_CUTOFF")),
-                    dyn_notch_min_hz: None,
-                    dyn_notch_max_hz: None,
-                    gyro_notch1_hz: non_zero_f64(p("IMU_GYRO_NF0_FRQ")),
-                    gyro_notch2_hz: non_zero_f64(p("IMU_GYRO_NF1_FRQ")),
-                }
-            }
-        };
-
-        serde_json::to_string(&config)
+        serde_json::to_string(&session.filter_config())
             .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
@@ -374,18 +308,23 @@ pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list
             return r#"{"error":"invalid session index"}"#.to_string();
         };
 
-        let unified = session.unified();
-        let total = unified.frame_count();
+        let total = session.frame_count();
         let requested: Vec<&str> = field_list.split(',').collect();
 
         let end = (start + count).min(total);
         let mut frames = Vec::with_capacity(end - start);
 
+        // Pre-resolve field names to SensorFields and fetch all columns
+        let resolved: Vec<SensorField> = requested
+            .iter()
+            .filter_map(|&name| SensorField::parse(name).ok())
+            .collect();
+        let columns: Vec<Vec<f64>> = resolved.iter().map(|f| session.field(f)).collect();
+
         for frame_idx in start..end {
-            let mut row = Vec::with_capacity(requested.len());
-            for &name in &requested {
-                let field_data = unified.field_by_name(name);
-                row.push(field_data.get(frame_idx).copied().unwrap_or(0.0));
+            let mut row = Vec::with_capacity(columns.len());
+            for col in &columns {
+                row.push(col.get(frame_idx).copied().unwrap_or(0.0));
             }
             frames.push(row);
         }

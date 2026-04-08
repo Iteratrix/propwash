@@ -26,25 +26,21 @@ pub fn diagnose(
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
-    diagnose_motor_saturation(events, motor_count, &mut diagnostics);
-    diagnose_desync(events, &mut diagnostics);
-    diagnose_overshoot(events, duration_seconds, &mut diagnostics);
-    diagnose_gyro_spikes(events, &mut diagnostics);
+    diagnostics.extend(diagnose_motor_saturation(events, motor_count));
+    diagnostics.extend(diagnose_desync(events));
+    diagnostics.extend(diagnose_overshoot(events, duration_seconds));
+    diagnostics.extend(diagnose_gyro_spikes(events));
     if let Some(vib) = vibration {
-        diagnose_vibration(vib, &mut diagnostics);
-        diagnose_throttle_response(vib, &mut diagnostics);
-        diagnose_fc_mounting(vib, &mut diagnostics);
+        diagnostics.extend(diagnose_vibration(vib));
+        diagnostics.extend(diagnose_throttle_response(vib));
+        diagnostics.extend(diagnose_fc_mounting(vib));
     }
 
     diagnostics.sort_by(|a, b| b.severity.cmp(&a.severity));
     diagnostics
 }
 
-fn diagnose_motor_saturation(
-    events: &[FlightEvent],
-    motor_count: usize,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn diagnose_motor_saturation(events: &[FlightEvent], motor_count: usize) -> Vec<Diagnostic> {
     let mut motor_sat_frames = vec![0usize; motor_count];
     for event in events {
         if let EventKind::MotorSaturation {
@@ -60,93 +56,87 @@ fn diagnose_motor_saturation(
 
     let total_sat: usize = motor_sat_frames.iter().sum();
     if total_sat == 0 {
-        return;
+        return Vec::new();
     }
 
     let max_sat = *motor_sat_frames.iter().max().unwrap_or(&0);
     let min_sat = *motor_sat_frames.iter().min().unwrap_or(&0);
 
+    let sat_summary = || {
+        motor_sat_frames
+            .iter()
+            .enumerate()
+            .map(|(i, &f)| format!("motor[{i}]={f}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
     if max_sat > 100 && min_sat > 0 {
-        diagnostics.push(Diagnostic {
+        vec![Diagnostic {
             severity: Severity::Warning,
             category: "motors",
             message: "Motor saturation detected on all motors".into(),
             detail: format!(
                 "Saturated frames per motor: {}. This suggests the motor/prop combo is underpowered for the flying style.",
-                motor_sat_frames
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &f)| format!("motor[{i}]={f}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                sat_summary()
             ),
-        });
+        }]
     } else if max_sat > 50 && max_sat > min_sat * 3 {
         let worst = motor_sat_frames
             .iter()
             .enumerate()
             .max_by_key(|(_, &f)| f)
             .map_or(0, |(i, _)| i);
-        diagnostics.push(Diagnostic {
+        vec![Diagnostic {
             severity: Severity::Problem,
             category: "motors",
             message: format!("Motor[{worst}] saturating significantly more than others"),
             detail: format!(
                 "Saturated frames: {}. Asymmetric saturation suggests a mechanical issue (damaged prop, bent motor shaft, loose mount) or CG imbalance on that side.",
-                motor_sat_frames
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &f)| format!("motor[{i}]={f}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                sat_summary()
             ),
-        });
+        }]
     } else if total_sat > 20 {
-        diagnostics.push(Diagnostic {
+        vec![Diagnostic {
             severity: Severity::Info,
             category: "motors",
             message: "Minor motor saturation detected".into(),
             detail: format!(
                 "Saturated frames: {}. Brief saturation during aggressive maneuvers is normal.",
-                motor_sat_frames
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &f)| format!("motor[{i}]={f}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                sat_summary()
             ),
-        });
+        }]
+    } else {
+        Vec::new()
     }
 }
 
-fn diagnose_desync(events: &[FlightEvent], diagnostics: &mut Vec<Diagnostic>) {
+fn diagnose_desync(events: &[FlightEvent]) -> Vec<Diagnostic> {
     let desync_count: usize = events
         .iter()
         .filter(|e| matches!(&e.kind, EventKind::Desync { .. }))
         .count();
 
     if desync_count > 10 {
-        diagnostics.push(Diagnostic {
+        vec![Diagnostic {
             severity: Severity::Problem,
             category: "esc",
             message: format!("ESC desync detected ({desync_count} events)"),
             detail: "One motor spiking to max while others are normal indicates ESC desync. Check motor timing, reduce DShot speed, or try a different ESC protocol. Also check for damaged motor wires or bad solder joints.".into(),
-        });
+        }]
     } else if desync_count > 0 {
-        diagnostics.push(Diagnostic {
+        vec![Diagnostic {
             severity: Severity::Warning,
             category: "esc",
             message: format!("Possible ESC desync ({desync_count} events)"),
             detail: "Brief single-motor spikes detected. May be desync or aggressive PID correction. If twitches are visible in flight, check ESC settings.".into(),
-        });
+        }]
+    } else {
+        Vec::new()
     }
 }
 
-fn diagnose_overshoot(
-    events: &[FlightEvent],
-    duration_seconds: f64,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+fn diagnose_overshoot(events: &[FlightEvent], duration_seconds: f64) -> Vec<Diagnostic> {
     let mut axis_overshoots: [Vec<f64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
 
     for event in events {
@@ -165,6 +155,7 @@ fn diagnose_overshoot(
         }
     }
 
+    let mut diagnostics = Vec::new();
     let axis_names = ["roll", "pitch", "yaw"];
     for (idx, overshoots) in axis_overshoots.iter().enumerate() {
         if overshoots.is_empty() {
@@ -205,9 +196,10 @@ fn diagnose_overshoot(
             });
         }
     }
+    diagnostics
 }
 
-fn diagnose_gyro_spikes(events: &[FlightEvent], diagnostics: &mut Vec<Diagnostic>) {
+fn diagnose_gyro_spikes(events: &[FlightEvent]) -> Vec<Diagnostic> {
     let mut max_spike: [f64; 3] = [0.0; 3];
     let mut spike_count: [usize; 3] = [0; 3];
 
@@ -223,6 +215,7 @@ fn diagnose_gyro_spikes(events: &[FlightEvent], diagnostics: &mut Vec<Diagnostic
         }
     }
 
+    let mut diagnostics = Vec::new();
     let axis_names = ["roll", "pitch", "yaw"];
     for (idx, (&peak, &count)) in max_spike.iter().zip(spike_count.iter()).enumerate() {
         if peak > 1500.0 {
@@ -237,10 +230,12 @@ fn diagnose_gyro_spikes(events: &[FlightEvent], diagnostics: &mut Vec<Diagnostic
             });
         }
     }
+    diagnostics
 }
 
-fn diagnose_vibration(vib: &VibrationAnalysis, diagnostics: &mut Vec<Diagnostic>) {
+fn diagnose_vibration(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
     let axis_names = ["roll", "pitch", "yaw"];
+    let mut diagnostics = Vec::new();
 
     for spectrum in &vib.spectra {
         let axis_idx = match spectrum.axis {
@@ -281,13 +276,15 @@ fn diagnose_vibration(vib: &VibrationAnalysis, diagnostics: &mut Vec<Diagnostic>
             }
         }
     }
+    diagnostics
 }
 
-fn diagnose_throttle_response(vib: &VibrationAnalysis, diagnostics: &mut Vec<Diagnostic>) {
+fn diagnose_throttle_response(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
     if vib.throttle_bands.len() < 2 {
-        return;
+        return Vec::new();
     }
 
+    let mut diagnostics = Vec::new();
     for spectrum_idx in 0..3 {
         let axis_name = match spectrum_idx {
             0 => "roll",
@@ -321,13 +318,15 @@ fn diagnose_throttle_response(vib: &VibrationAnalysis, diagnostics: &mut Vec<Dia
             }
         }
     }
+    diagnostics
 }
 
-fn diagnose_fc_mounting(vib: &VibrationAnalysis, diagnostics: &mut Vec<Diagnostic>) {
+fn diagnose_fc_mounting(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
     let Some(accel) = &vib.accel else {
-        return;
+        return Vec::new();
     };
 
+    let mut diagnostics = Vec::new();
     let accel_rms_total =
         (accel.rms[0].powi(2) + accel.rms[1].powi(2) + accel.rms[2].powi(2)).sqrt();
 
@@ -362,4 +361,5 @@ fn diagnose_fc_mounting(vib: &VibrationAnalysis, diagnostics: &mut Vec<Diagnosti
             detail: "The FC board is bouncing vertically more than it vibrates laterally. This pattern suggests the soft mount grommets are too soft or the FC stack has vertical play. Check standoff height and grommet condition.".into(),
         });
     }
+    diagnostics
 }
