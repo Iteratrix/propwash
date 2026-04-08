@@ -1,6 +1,10 @@
-use propwash_core::analysis::events::{EventKind, FlightEvent};
+use crate::analysis::events::{EventKind, FlightEvent};
 use serde::Serialize;
 
+/// A higher-level grouping of temporally-adjacent flight events.
+///
+/// For example, 15 gyro spike events within 100ms become one episode
+/// with the peak magnitude recorded.
 #[derive(Debug, Serialize)]
 pub struct Episode {
     pub start_time: f64,
@@ -10,6 +14,7 @@ pub struct Episode {
     pub kind: EpisodeKind,
 }
 
+/// The specific type of episode detected.
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum EpisodeKind {
@@ -43,6 +48,7 @@ pub enum EpisodeKind {
 
 const EPISODE_GAP_SECONDS: f64 = 0.1;
 
+/// Groups temporally-adjacent flight events into higher-level episodes.
 pub fn consolidate(events: &[FlightEvent]) -> Vec<Episode> {
     let mut episodes = Vec::new();
 
@@ -53,7 +59,7 @@ pub fn consolidate(events: &[FlightEvent]) -> Vec<Episode> {
     consolidate_overshoots(events, &mut episodes);
     consolidate_desyncs(events, &mut episodes);
 
-    episodes.sort_by(|a, b| a.start_time.partial_cmp(&b.start_time).unwrap());
+    episodes.sort_by(|a, b| a.start_time.total_cmp(&b.start_time));
     episodes
 }
 
@@ -129,7 +135,7 @@ fn consolidate_gyro_spikes(events: &[FlightEvent], episodes: &mut Vec<Episode>) 
             .iter()
             .filter(|e| matches!(&e.kind, EventKind::GyroSpike { axis: a, .. } if a == axis))
             .collect();
-        axis_events.sort_by(|a, b| a.time_seconds.partial_cmp(&b.time_seconds).unwrap());
+        axis_events.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
 
         let mut i = 0;
         while i < axis_events.len() {
@@ -175,7 +181,7 @@ fn consolidate_overshoots(events: &[FlightEvent], episodes: &mut Vec<Episode>) {
             .iter()
             .filter(|e| matches!(&e.kind, EventKind::Overshoot { axis: a, .. } if a == axis))
             .collect();
-        axis_events.sort_by(|a, b| a.time_seconds.partial_cmp(&b.time_seconds).unwrap());
+        axis_events.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
 
         let mut i = 0;
         while i < axis_events.len() {
@@ -230,7 +236,7 @@ fn consolidate_desyncs(events: &[FlightEvent], episodes: &mut Vec<Episode>) {
         if motor_events.is_empty() {
             continue;
         }
-        motor_events.sort_by(|a, b| a.time_seconds.partial_cmp(&b.time_seconds).unwrap());
+        motor_events.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
 
         let mut i = 0;
         while i < motor_events.len() {

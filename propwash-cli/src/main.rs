@@ -1,8 +1,8 @@
-mod episodes;
-
 use std::process;
 
 use clap::{Parser, Subcommand};
+use propwash_core::analysis::episodes;
+use propwash_core::types::SensorField;
 use serde::Serialize;
 
 #[derive(Parser)]
@@ -109,46 +109,47 @@ fn cmd_info(path: &str, json: bool) {
     println!();
 
     for session in &log.sessions {
-        let unified = session.unified();
-        println!("── Session {} ──", session.index);
-        println!("  Firmware:       {}", unified.firmware_version());
-        println!("  Craft:          {}", unified.craft_name());
-        println!("  Duration:       {:.1}s", unified.duration_seconds());
-        println!("  Sample rate:    {:.1} Hz", unified.sample_rate_hz());
-        println!("  Frames:         {}", unified.frame_count());
-        println!("  Motors:         {}", unified.motor_count());
+        println!("── Session {} ──", session.index());
+        println!("  Firmware:       {}", session.firmware_version());
+        println!("  Craft:          {}", session.craft_name());
+        println!("  Duration:       {:.1}s", session.duration_seconds());
+        println!("  Sample rate:    {:.1} Hz", session.sample_rate_hz());
+        println!("  Frames:         {}", session.frame_count());
+        println!("  Motors:         {}", session.motor_count());
 
-        if let propwash_core::RawSession::Betaflight(bf) = &session.raw {
-            println!(
-                "  RPM telemetry:  {}",
-                if bf.has_rpm_telemetry() { "yes" } else { "no" }
-            );
-            println!(
-                "  Gyro unfilt:    {}",
-                if bf.has_gyro_unfiltered() {
-                    "yes"
-                } else {
-                    "no"
-                }
-            );
-            println!(
-                "  Truncated:      {}",
-                if bf.is_truncated() { "yes" } else { "no" }
-            );
-            if bf.stats.corrupt_bytes > 0 {
-                println!("  Corrupt bytes:  {}", bf.stats.corrupt_bytes);
+        println!(
+            "  RPM telemetry:  {}",
+            if session.has_rpm_telemetry() {
+                "yes"
+            } else {
+                "no"
             }
+        );
+        println!(
+            "  Gyro unfilt:    {}",
+            if session.has_gyro_unfiltered() {
+                "yes"
+            } else {
+                "no"
+            }
+        );
+        println!(
+            "  Truncated:      {}",
+            if session.is_truncated() { "yes" } else { "no" }
+        );
+        if session.corrupt_bytes() > 0 {
+            println!("  Corrupt bytes:  {}", session.corrupt_bytes());
         }
 
-        let names = unified.field_names();
+        let names = session.field_names();
         println!("  Fields ({}):", names.len());
         for name in &names {
             println!("    {name}");
         }
 
-        if !session.warnings.is_empty() {
+        if !session.warnings().is_empty() {
             println!("  Warnings:");
-            for w in &session.warnings {
+            for w in session.warnings() {
                 println!("    {w}");
             }
         }
@@ -168,14 +169,8 @@ fn cmd_compare(path_a: &str, path_b: &str) {
     let log_a = load_log(path_a);
     let log_b = load_log(path_b);
 
-    let session_a = log_a
-        .sessions
-        .iter()
-        .find(|s| s.unified().frame_count() > 0);
-    let session_b = log_b
-        .sessions
-        .iter()
-        .find(|s| s.unified().frame_count() > 0);
+    let session_a = log_a.sessions.iter().find(|s| s.frame_count() > 0);
+    let session_b = log_b.sessions.iter().find(|s| s.frame_count() > 0);
 
     let (Some(sa), Some(sb)) = (session_a, session_b) else {
         eprintln!("Both files must contain at least one session with frames.");
@@ -312,12 +307,11 @@ fn cmd_scan(files: &[String]) {
         };
 
         for session in &log.sessions {
-            if session.unified().frame_count() == 0 {
+            if session.frame_count() == 0 {
                 continue;
             }
 
             let analysis = propwash_core::analysis::analyze(session);
-            let unified = session.unified();
             let episodes = episodes::consolidate(&analysis.events);
 
             let worst = analysis.diagnostics.first().map_or_else(
@@ -334,8 +328,8 @@ fn cmd_scan(files: &[String]) {
 
             println!(
                 "{worst:60}  {path} s{} ({:.0}s, {} events)",
-                session.index,
-                unified.duration_seconds(),
+                session.index(),
+                session.duration_seconds(),
                 episodes.len(),
             );
         }
@@ -346,7 +340,7 @@ fn cmd_analyze(path: &str, output: &str) {
     let log = load_log(path);
 
     for session in &log.sessions {
-        if session.unified().frame_count() == 0 {
+        if session.frame_count() == 0 {
             continue;
         }
 
@@ -550,13 +544,12 @@ fn cmd_dump(
 
     for session in &log.sessions {
         if let Some(target) = session_filter {
-            if session.index != target {
+            if session.index() != target {
                 continue;
             }
         }
 
-        let unified = session.unified();
-        let field_names = unified.field_names();
+        let field_names = session.field_names();
 
         let selected_fields: Vec<&str> = field_names
             .iter()
@@ -572,52 +565,49 @@ fn cmd_dump(
         // Fetch all selected field data as columns
         let columns: Vec<Vec<f64>> = selected_fields
             .iter()
-            .map(|name| unified.field_by_name(name))
+            .filter_map(|name| SensorField::parse(name).ok())
+            .map(|field| session.field(&field))
             .collect();
 
-        let n_frames = unified.frame_count();
-        let time_data = unified.field_by_name("time");
+        let n_frames = session.frame_count();
+        let time_data = session.field(&SensorField::Time);
 
-        let mut frames = Vec::new();
-        for i in frame_start..n_frames {
-            if let Some(end) = frame_end {
-                if i > end {
-                    break;
+        let frame_range_arg = if frame_start == 0 && frame_end.is_none() {
+            None
+        } else {
+            Some((frame_start, frame_end))
+        };
+        let time_range_arg = time_start_us.map(|t_start| (t_start, time_end_us));
+
+        let indices = propwash_core::filter::filter_frame_indices(
+            n_frames,
+            &time_data,
+            frame_range_arg,
+            time_range_arg,
+        );
+
+        let frames: Vec<DumpFrame> = indices
+            .into_iter()
+            .map(|i| {
+                let mut field_values = serde_json::Map::new();
+                for (col_idx, &name) in selected_fields.iter().enumerate() {
+                    let val = columns[col_idx].get(i).copied().unwrap_or(0.0);
+                    let json_val = serde_json::Number::from_f64(val)
+                        .map_or(serde_json::Value::Null, serde_json::Value::Number);
+                    field_values.insert(name.to_string(), json_val);
                 }
-            }
-
-            if let Some(t_start) = time_start_us {
-                #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-                let t = time_data.get(i).copied().unwrap_or(0.0) as i64;
-                if t < t_start {
-                    continue;
+                DumpFrame {
+                    index: i,
+                    byte_offset: None,
+                    kind: None,
+                    values: field_values,
                 }
-                if let Some(t_end) = time_end_us {
-                    if t > t_end {
-                        break;
-                    }
-                }
-            }
-
-            let mut field_values = serde_json::Map::new();
-            for (col_idx, &name) in selected_fields.iter().enumerate() {
-                let val = columns[col_idx].get(i).copied().unwrap_or(0.0);
-                let json_val = serde_json::Number::from_f64(val)
-                    .map_or(serde_json::Value::Null, serde_json::Value::Number);
-                field_values.insert(name.to_string(), json_val);
-            }
-
-            frames.push(DumpFrame {
-                index: i,
-                byte_offset: None,
-                kind: None,
-                values: field_values,
-            });
-        }
+            })
+            .collect();
 
         output.sessions.push(DumpSession {
-            index: session.index,
-            firmware: unified.firmware_version().to_string(),
+            index: session.index(),
+            firmware: session.firmware_version().to_string(),
             total_frames: n_frames,
             dumped_frames: frames.len(),
             fields: selected_fields.iter().map(|s| (*s).to_string()).collect(),
@@ -738,19 +728,16 @@ fn build_info_json(log: &propwash_core::Log) -> InfoJson {
     let sessions = log
         .sessions
         .iter()
-        .map(|s| {
-            let unified = s.unified();
-            SessionInfo {
-                index: s.index,
-                firmware_version: unified.firmware_version().to_string(),
-                craft_name: unified.craft_name().to_string(),
-                duration_seconds: unified.duration_seconds(),
-                sample_rate_hz: unified.sample_rate_hz(),
-                frame_count: unified.frame_count(),
-                motor_count: unified.motor_count(),
-                field_names: unified.field_names(),
-                warnings: s.warnings.iter().map(ToString::to_string).collect(),
-            }
+        .map(|s| SessionInfo {
+            index: s.index(),
+            firmware_version: s.firmware_version().to_string(),
+            craft_name: s.craft_name().to_string(),
+            duration_seconds: s.duration_seconds(),
+            sample_rate_hz: s.sample_rate_hz(),
+            frame_count: s.frame_count(),
+            motor_count: s.motor_count(),
+            field_names: s.field_names(),
+            warnings: s.warnings().iter().map(ToString::to_string).collect(),
         })
         .collect();
     InfoJson { sessions }

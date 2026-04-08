@@ -4,19 +4,46 @@ use super::encoding::{
 };
 use super::predictor::{apply_i_predictor, apply_p_predictor, DecodeContext};
 use super::types::{
-    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Encoding, Predictor,
+    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfSession, Encoding, Predictor,
 };
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
+
+pub(crate) struct ParsedFrames {
+    pub main: Vec<BfFrame>,
+    pub slow: Vec<BfFrame>,
+    pub gps: Vec<BfFrame>,
+    pub events: Vec<BfEvent>,
+    pub stats: BfParseStats,
+}
 use crate::types::{MotorIndex, SensorField};
 
-// Frame marker bytes
-const MARKER_I: u8 = b'I';
-const MARKER_P: u8 = b'P';
-const MARKER_S: u8 = b'S';
-const MARKER_G: u8 = b'G';
-const MARKER_H: u8 = b'H';
-const MARKER_E: u8 = b'E';
+/// Frame marker bytes in Betaflight blackbox logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameMarker {
+    Intra,
+    Inter,
+    Slow,
+    Gps,
+    GpsHome,
+    Event,
+}
+
+impl TryFrom<u8> for FrameMarker {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            b'I' => Ok(Self::Intra),
+            b'P' => Ok(Self::Inter),
+            b'S' => Ok(Self::Slow),
+            b'G' => Ok(Self::Gps),
+            b'H' => Ok(Self::GpsHome),
+            b'E' => Ok(Self::Event),
+            other => Err(other),
+        }
+    }
+}
 
 // Event type IDs
 const EVENT_SYNC_BEEP: u8 = 0;
@@ -26,28 +53,15 @@ const EVENT_DISARM: u8 = 15;
 const EVENT_FLIGHT_MODE: u8 = 30;
 const EVENT_LOG_END: u8 = 255;
 
-fn is_valid_marker(b: u8) -> bool {
-    matches!(
-        b,
-        MARKER_I | MARKER_P | MARKER_S | MARKER_G | MARKER_H | MARKER_E
-    )
-}
-
 /// Parse all frames from binary data for one session.
 /// Never panics — collects warnings on corruption and continues.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn parse_session_frames(
     data: &[u8],
     base_offset: usize,
-    session: &BfRawSession,
+    session: &BfSession,
     warnings: &mut Vec<Warning>,
-) -> (
-    Vec<BfFrame>,
-    Vec<BfFrame>,
-    Vec<BfFrame>,
-    Vec<BfEvent>,
-    BfParseStats,
-) {
+) -> ParsedFrames {
     let mut reader = Reader::with_offset(data, base_offset);
     let mut main_frames: Vec<BfFrame> = Vec::new();
     let mut slow_frames: Vec<BfFrame> = Vec::new();
@@ -74,22 +88,17 @@ pub(crate) fn parse_session_frames(
         let frame_start = reader.save_point();
         let frame_abs_offset = reader.abs_pos();
 
-        let marker = match reader.read_byte() {
-            Ok(b) => b,
+        let marker = match reader.read_byte().map(FrameMarker::try_from) {
+            Ok(Ok(m)) => m,
             Err(InternalError::Eof) => break,
-            Err(_) => {
+            Ok(Err(_)) | Err(_) => {
                 stats.corrupt_bytes += 1;
                 continue;
             }
         };
 
-        if !is_valid_marker(marker) {
-            stats.corrupt_bytes += 1;
-            continue;
-        }
-
         match marker {
-            MARKER_I => {
+            FrameMarker::Intra => {
                 let result = decode_i_frame(
                     &mut reader,
                     fields,
@@ -125,7 +134,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_P => {
+            FrameMarker::Inter => {
                 if !ctx.is_ready() {
                     stats.corrupt_bytes += 1;
                     continue;
@@ -168,7 +177,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_S => {
+            FrameMarker::Slow => {
                 if let Some(slow_defs) = &session.slow_field_defs {
                     match decode_simple_frame(&mut reader, &slow_defs.fields) {
                         Ok(values) => {
@@ -189,7 +198,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_G => {
+            FrameMarker::Gps => {
                 if let Some(gps_defs) = &session.gps_field_defs {
                     match decode_simple_frame(&mut reader, &gps_defs.fields) {
                         Ok(values) => {
@@ -210,7 +219,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_H => {
+            FrameMarker::GpsHome => {
                 if let Some(home_defs) = &session.gps_home_field_defs {
                     if decode_simple_frame(&mut reader, &home_defs.fields).is_err() {
                         reader.restore(frame_start);
@@ -219,7 +228,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_E => match parse_event(&mut reader) {
+            FrameMarker::Event => match parse_event(&mut reader) {
                 Ok(Some(event)) => {
                     let is_end = match event {
                         BfEvent::LogEnd => true,
@@ -244,8 +253,6 @@ pub(crate) fn parse_session_frames(
                     reader.skip(1);
                 }
             },
-
-            _ => {}
         }
     }
 
@@ -259,7 +266,13 @@ pub(crate) fn parse_session_frames(
         });
     }
 
-    (main_frames, slow_frames, gps_frames, events, stats)
+    ParsedFrames {
+        main: main_frames,
+        slow: slow_frames,
+        gps: gps_frames,
+        events,
+        stats,
+    }
 }
 
 /// Decode raw field values from the stream, handling grouped encodings.
@@ -346,7 +359,7 @@ fn count_consecutive(
 fn decode_i_frame(
     reader: &mut Reader<'_>,
     fields: &[BfFieldDef],
-    session: &BfRawSession,
+    session: &BfSession,
     motor0_idx: Option<usize>,
     byte_offset: usize,
     frame_index: usize,
@@ -385,7 +398,7 @@ fn decode_p_frame(
     p_predictors: &[Predictor],
     prev1: &[i64],
     prev2: &[i64],
-    session: &BfRawSession,
+    session: &BfSession,
     time_idx: Option<usize>,
     skipped_frames: u32,
     byte_offset: usize,
@@ -447,16 +460,17 @@ fn parse_event(reader: &mut Reader<'_>) -> Result<Option<BfEvent>, InternalError
         EVENT_INFLIGHT_ADJUSTMENT => {
             let func = reader.read_byte()?;
             if func & 0x80 != 0 {
-                reader.read_bytes(4)?;
+                let bytes = reader.read_bytes(4)?;
+                let float_val = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                 Ok(Some(BfEvent::InflightAdjustment {
                     function: func & 0x7F,
-                    value: 0,
+                    value: f64::from(float_val),
                 }))
             } else {
                 let value = read_signed_vb(reader)?;
                 Ok(Some(BfEvent::InflightAdjustment {
                     function: func,
-                    value,
+                    value: f64::from(value),
                 }))
             }
         }
@@ -491,6 +505,6 @@ fn parse_event(reader: &mut Reader<'_>) -> Result<Option<BfEvent>, InternalError
 fn validate_next_marker(reader: &Reader<'_>) -> bool {
     match reader.peek() {
         None => true,
-        Some(b) => is_valid_marker(b),
+        Some(b) => FrameMarker::try_from(b).is_ok(),
     }
 }

@@ -4,9 +4,9 @@ mod header;
 mod predictor;
 pub mod types;
 
-use crate::types::{Log, RawSession, Session, Warning};
+use crate::types::{Log, Session, Warning};
 use header::{find_sessions, parse_headers};
-use types::{BfHeaderValue, BfRawSession};
+use types::{BfHeaderValue, BfSession};
 
 /// Decodes a Betaflight-family blackbox log.
 pub(crate) fn decode(data: &[u8]) -> Log {
@@ -44,7 +44,7 @@ pub(crate) fn decode(data: &[u8]) -> Log {
             _ => 0,
         };
 
-        let mut raw_session = BfRawSession::new(
+        let mut raw_session = BfSession::new(
             parsed.raw,
             parsed.firmware_type,
             parsed.firmware_version,
@@ -60,24 +60,22 @@ pub(crate) fn decode(data: &[u8]) -> Log {
 
         if !raw_session.main_field_defs.is_empty() {
             let binary_data = &data[parsed.binary_start..session_end];
-            let (main, slow, gps, events, stats) = frame::parse_session_frames(
+            let parsed_frames = frame::parse_session_frames(
                 binary_data,
                 parsed.binary_start,
                 &raw_session,
                 &mut warnings,
             );
-            raw_session.frames = main;
-            raw_session.slow_frames = slow;
-            raw_session.gps_frames = gps;
-            raw_session.events = events;
-            raw_session.stats = stats;
+            raw_session.frames = parsed_frames.main;
+            raw_session.slow_frames = parsed_frames.slow;
+            raw_session.gps_frames = parsed_frames.gps;
+            raw_session.events = parsed_frames.events;
+            raw_session.stats = parsed_frames.stats;
         }
 
-        sessions.push(Session {
-            raw: RawSession::Betaflight(raw_session),
-            warnings,
-            index: i + 1,
-        });
+        raw_session.warnings = warnings;
+        raw_session.session_index = i + 1;
+        sessions.push(Session::Betaflight(raw_session));
     }
 
     Log {

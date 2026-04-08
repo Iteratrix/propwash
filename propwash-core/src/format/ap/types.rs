@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Unified};
+use crate::types::{Axis, FilterConfig, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Format character from FMT message — determines wire size and interpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +84,7 @@ pub enum ApValue {
     UInt(u64),
     Float(f64),
     Str(String),
+    IntArray(Vec<i64>),
 }
 
 impl ApValue {
@@ -95,6 +96,7 @@ impl ApValue {
             #[allow(clippy::cast_possible_truncation)]
             Self::Float(v) => *v as i64,
             Self::Str(_) => 0,
+            Self::IntArray(v) => v.first().copied().unwrap_or(0),
         }
     }
 
@@ -105,6 +107,7 @@ impl ApValue {
             Self::UInt(v) => *v as f64,
             Self::Float(v) => *v,
             Self::Str(_) => 0.0,
+            Self::IntArray(v) => v.first().copied().unwrap_or(0) as f64,
         }
     }
 }
@@ -122,7 +125,7 @@ pub struct ApMessage {
 
 /// Complete raw data for one `ArduPilot` session.
 #[derive(Debug)]
-pub struct ApRawSession {
+pub struct ApSession {
     /// Message type definitions (FMT messages), keyed by type ID.
     pub msg_defs: HashMap<u8, ApMsgDef>,
     /// All decoded messages, in file order.
@@ -135,6 +138,10 @@ pub struct ApRawSession {
     pub params: HashMap<String, f64>,
     /// Parse statistics.
     pub stats: ApParseStats,
+    /// Non-fatal diagnostics from parsing.
+    pub warnings: Vec<Warning>,
+    /// 1-based session index within the file.
+    pub session_index: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -145,7 +152,7 @@ pub struct ApParseStats {
     pub unknown_types: usize,
 }
 
-impl ApRawSession {
+impl ApSession {
     /// Returns messages of a given type name.
     pub fn messages_by_name(&self, name: &str) -> Vec<&ApMessage> {
         let Some(msg_type) = self.msg_type_for_name(name) else {
@@ -191,10 +198,9 @@ impl ApRawSession {
             })
             .collect()
     }
-}
 
-impl Unified for ApRawSession {
-    fn frame_count(&self) -> usize {
+    /// Returns the number of main frames (IMU or ACC messages).
+    pub fn frame_count(&self) -> usize {
         let imu_type = self
             .msg_type_for_name("IMU")
             .or_else(|| self.msg_type_for_name("ACC"));
@@ -204,45 +210,53 @@ impl Unified for ApRawSession {
         }
     }
 
-    fn field_names(&self) -> Vec<String> {
-        let mut names = Vec::new();
-        if self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("GYR").is_some() {
-            for axis in Axis::ALL {
-                names.push(SensorField::Gyro(axis).to_string());
-            }
-        }
-        if self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("ACC").is_some() {
-            for axis in Axis::ALL {
-                names.push(SensorField::Accel(axis).to_string());
-            }
-        }
+    /// Returns field names available in this session.
+    pub fn field_names(&self) -> Vec<String> {
+        let has_gyro =
+            self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("GYR").is_some();
+        let has_accel =
+            self.msg_type_for_name("IMU").is_some() || self.msg_type_for_name("ACC").is_some();
+        let has_rc = self.msg_type_for_name("RCIN").is_some();
         let n_motors = self.motor_count();
-        for i in 0..n_motors {
-            names.push(SensorField::Motor(MotorIndex(i)).to_string());
-        }
-        if self.msg_type_for_name("RCIN").is_some() {
-            for ch in [
-                RcChannel::Roll,
-                RcChannel::Pitch,
-                RcChannel::Yaw,
-                RcChannel::Throttle,
-            ] {
-                names.push(SensorField::Rc(ch).to_string());
-            }
-        }
-        names
+
+        Axis::ALL
+            .iter()
+            .filter(|_| has_gyro)
+            .map(|&a| SensorField::Gyro(a).to_string())
+            .chain(
+                Axis::ALL
+                    .iter()
+                    .filter(|_| has_accel)
+                    .map(|&a| SensorField::Accel(a).to_string()),
+            )
+            .chain((0..n_motors).map(|i| SensorField::Motor(MotorIndex(i)).to_string()))
+            .chain(
+                [
+                    RcChannel::Roll,
+                    RcChannel::Pitch,
+                    RcChannel::Yaw,
+                    RcChannel::Throttle,
+                ]
+                .iter()
+                .filter(|_| has_rc)
+                .map(|&ch| SensorField::Rc(ch).to_string()),
+            )
+            .collect()
     }
 
-    fn firmware_version(&self) -> &str {
+    /// Returns the firmware version string.
+    pub fn firmware_version(&self) -> &str {
         &self.firmware_version
     }
 
-    fn craft_name(&self) -> &str {
+    /// Returns the vehicle name.
+    pub fn craft_name(&self) -> &str {
         &self.vehicle_name
     }
 
-    #[allow(clippy::cast_precision_loss)]
-    fn sample_rate_hz(&self) -> f64 {
+    /// Computes sample rate from IMU timestamps.
+    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
+    pub fn sample_rate_hz(&self) -> f64 {
         let mut series = self.extract_series("IMU", "TimeUS");
         if series.len() < 2 {
             series = self.extract_series("IMU", "TimeMS");
@@ -268,8 +282,9 @@ impl Unified for ApRawSession {
         (series.len() - 1) as f64 / (dt as f64 / 1_000_000.0)
     }
 
+    /// Returns flight duration in seconds.
     #[allow(clippy::cast_precision_loss)]
-    fn duration_seconds(&self) -> f64 {
+    pub fn duration_seconds(&self) -> f64 {
         let mut min_t = u64::MAX;
         let mut max_t = 0u64;
         for m in &self.messages {
@@ -284,8 +299,13 @@ impl Unified for ApRawSession {
         (max_t - min_t) as f64 / 1_000_000.0
     }
 
+    /// Extracts one field as a `Vec<f64>` across all relevant messages.
+    ///
+    /// `SensorField::Unknown` names containing a `.` are resolved as
+    /// `"MessageName.FieldName"` against native AP message data.
+    /// Unresolvable fields return an empty `Vec`.
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
-    fn field(&self, field: &SensorField) -> Vec<f64> {
+    pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => {
                 let series = self.extract_series("IMU", "TimeUS");
@@ -383,7 +403,8 @@ impl Unified for ApRawSession {
         }
     }
 
-    fn motor_count(&self) -> usize {
+    /// Returns the number of motors detected from parameters or servo config.
+    pub fn motor_count(&self) -> usize {
         if let Some(&count) = self.params.get("MOT_PWM_COUNT") {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             return (count as usize).min(8);
@@ -409,9 +430,73 @@ impl Unified for ApRawSession {
         }
     }
 
-    fn motor_range(&self) -> (f64, f64) {
+    /// Returns the motor output range `(min, max)` from parameters.
+    pub fn motor_range(&self) -> (f64, f64) {
         let min = self.params.get("MOT_PWM_MIN").copied().unwrap_or(1000.0);
         let max = self.params.get("MOT_PWM_MAX").copied().unwrap_or(2000.0);
         (min, max)
+    }
+
+    /// Returns whether the log appears truncated.
+    pub fn is_truncated(&self) -> bool {
+        self.stats.corrupt_bytes > 0
+    }
+
+    /// Returns whether bidirectional RPM telemetry is present.
+    pub fn has_rpm_telemetry(&self) -> bool {
+        false
+    }
+
+    /// Returns whether unfiltered gyro data is logged.
+    pub fn has_gyro_unfiltered(&self) -> bool {
+        false
+    }
+
+    /// Returns the number of corrupt bytes encountered during parsing.
+    pub fn corrupt_bytes(&self) -> usize {
+        self.stats.corrupt_bytes
+    }
+
+    /// Returns the filter configuration extracted from parameters.
+    pub fn filter_config(&self) -> FilterConfig {
+        let p = |k: &str| self.params.get(k).copied().unwrap_or(0.0);
+        let non_zero = |v: f64| -> Option<f64> {
+            if v > 0.0 {
+                Some(v)
+            } else {
+                None
+            }
+        };
+        FilterConfig {
+            gyro_lpf_hz: non_zero(p("INS_GYRO_FILTER")),
+            gyro_lpf2_hz: None,
+            dterm_lpf_hz: non_zero(p("ATC_RAT_RLL_FLTE")),
+            dyn_notch_min_hz: if p("INS_HNTCH_ENABLE") > 0.0 {
+                non_zero(p("INS_HNTCH_FREQ"))
+            } else {
+                None
+            },
+            dyn_notch_max_hz: None,
+            gyro_notch1_hz: if p("INS_NOTCH_ENABLE") > 0.0 {
+                non_zero(p("INS_NOTCH_FREQ"))
+            } else {
+                None
+            },
+            gyro_notch2_hz: if p("INS_NOTC2_ENABLE") > 0.0 {
+                non_zero(p("INS_NOTC2_FREQ"))
+            } else {
+                None
+            },
+        }
+    }
+
+    /// Returns parse warnings.
+    pub fn warnings(&self) -> &[Warning] {
+        &self.warnings
+    }
+
+    /// Returns the 1-based session index within the file.
+    pub fn index(&self) -> usize {
+        self.session_index
     }
 }

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::types::Warning;
 
-use super::types::{ApMessage, ApMsgDef, ApParseStats, ApRawSession, ApValue, FieldType};
+use super::types::{ApMessage, ApMsgDef, ApParseStats, ApSession, ApValue, FieldType};
 
 const HEAD1: u8 = 0xA3;
 const HEAD2: u8 = 0x95;
@@ -10,7 +10,7 @@ const FMT_TYPE: u8 = 128;
 const FMT_LEN: usize = 89;
 
 /// Parse an `ArduPilot` `DataFlash` binary log.
-pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
+pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
     let mut msg_defs: HashMap<u8, ApMsgDef> = HashMap::new();
     let mut messages: Vec<ApMessage> = Vec::new();
     let mut params: HashMap<String, f64> = HashMap::new();
@@ -105,13 +105,15 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
         });
     }
 
-    ApRawSession {
+    ApSession {
         msg_defs,
         messages,
         firmware_version,
         vehicle_name,
         params,
         stats,
+        warnings: Vec::new(),
+        session_index: 0,
     }
 }
 
@@ -193,9 +195,13 @@ fn decode_payload(payload: &[u8], field_types: &[FieldType]) -> Vec<ApValue> {
                 ApValue::Str(read_fixed_str(bytes))
             }
             FieldType::I16Array32 => {
-                // Store as the first element for now — arrays are rarely needed
-                let v = i16::from_le_bytes([bytes[0], bytes[1]]);
-                ApValue::Int(i64::from(v))
+                let elements: Vec<i64> = (0..32)
+                    .map(|i| {
+                        let off = i * 2;
+                        i64::from(i16::from_le_bytes([bytes[off], bytes[off + 1]]))
+                    })
+                    .collect();
+                ApValue::IntArray(elements)
             }
             FieldType::Unknown(_) => ApValue::Int(0),
         };
