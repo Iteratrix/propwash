@@ -435,21 +435,34 @@ impl BfSession {
         dt_us as f64 / 1_000_000.0
     }
 
-    /// Extracts one field as a `Vec<f64>` across all main frames.
+    /// Extracts one field as a `Vec<f64>` across all frames.
     ///
     /// BF fields are indexed by position, so lookup is via the field-definition
-    /// hashmap. `SensorField::Unknown` values resolve only if the parser
-    /// previously mapped that exact string to a field index. Unresolvable
-    /// fields (including truly unknown names) return an empty `Vec`.
+    /// hashmap. Falls back to slow frames (battery voltage, RSSI, etc.) when
+    /// a field isn't found in main frames. `SensorField::Unknown` values
+    /// resolve only if the parser previously mapped that exact string to a
+    /// field index. Unresolvable fields return an empty `Vec`.
     #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
-        let Some(idx) = self.main_field_defs.index_of(sensor_field) else {
-            return Vec::new();
-        };
-        self.frames
-            .iter()
-            .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-            .collect()
+        // Check main frames first
+        if let Some(idx) = self.main_field_defs.index_of(sensor_field) {
+            return self
+                .frames
+                .iter()
+                .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
+                .collect();
+        }
+        // Fall back to slow frames
+        if let Some(ref slow_defs) = self.slow_field_defs {
+            if let Some(idx) = slow_defs.index_of(sensor_field) {
+                return self
+                    .slow_frames
+                    .iter()
+                    .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
+                    .collect();
+            }
+        }
+        Vec::new()
     }
 
     /// Returns the number of motors detected from field definitions.
