@@ -249,6 +249,9 @@ pub struct BfSession {
     pub slow_frames: Vec<BfFrame>,
     /// Decoded GPS frames.
     pub gps_frames: Vec<BfFrame>,
+    /// GPS Home reference position (field values matching `gps_home_field_defs`).
+    /// Used as the base for delta-compressed GPS coordinate reconstruction.
+    pub gps_home: Option<Vec<i64>>,
     /// Discrete events.
     pub events: Vec<BfEvent>,
     /// Parse statistics.
@@ -302,6 +305,7 @@ impl BfSession {
             frames: Vec::new(),
             slow_frames: Vec::new(),
             gps_frames: Vec::new(),
+            gps_home: None,
             events: Vec::new(),
             stats: BfParseStats::default(),
             warnings: Vec::new(),
