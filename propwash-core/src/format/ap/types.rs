@@ -412,6 +412,11 @@ impl ApSession {
                     .map(|(_, v)| v * 57.295_779_513_082_32)
                     .collect()
             }
+            SensorField::Vbat => self
+                .extract_series("BAT", "Volt")
+                .into_iter()
+                .map(|(_, v)| v)
+                .collect(),
             SensorField::PidP(axis) => {
                 let msg_name = match axis {
                     Axis::Roll => "PIDR",
