@@ -412,6 +412,39 @@ impl ApSession {
                     .map(|(_, v)| v * 57.295_779_513_082_32)
                     .collect()
             }
+            SensorField::PidP(axis) => {
+                let msg_name = match axis {
+                    Axis::Roll => "PIDR",
+                    Axis::Pitch => "PIDP",
+                    Axis::Yaw => "PIDY",
+                };
+                self.extract_series(msg_name, "P")
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .collect()
+            }
+            SensorField::PidI(axis) => {
+                let msg_name = match axis {
+                    Axis::Roll => "PIDR",
+                    Axis::Pitch => "PIDP",
+                    Axis::Yaw => "PIDY",
+                };
+                self.extract_series(msg_name, "I")
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .collect()
+            }
+            SensorField::PidD(axis) => {
+                let msg_name = match axis {
+                    Axis::Roll => "PIDR",
+                    Axis::Pitch => "PIDP",
+                    Axis::Yaw => "PIDY",
+                };
+                self.extract_series(msg_name, "D")
+                    .into_iter()
+                    .map(|(_, v)| v)
+                    .collect()
+            }
             SensorField::Unknown(name) => {
                 if let Some((msg, fld)) = name.split_once('.') {
                     self.extract_series(msg, fld)
