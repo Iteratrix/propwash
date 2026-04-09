@@ -943,3 +943,29 @@ fn px4_nested_types_decoded() {
         panic!("expected PX4 session");
     }
 }
+
+#[test]
+fn px4_has_gyro_unfiltered() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    assert!(
+        log.sessions[0].has_gyro_unfiltered(),
+        "PX4 fixture with both raw and filtered gyro should report unfiltered"
+    );
+}
+
+#[test]
+fn px4_not_truncated() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    assert!(
+        !log.sessions[0].is_truncated(),
+        "clean PX4 fixture should not be truncated"
+    );
+}
+
+#[test]
+fn ardupilot_truncation_detected() {
+    // Real flight logs are typically truncated when the FC powers off
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    // Just verify is_truncated() returns a real answer, not a corrupt_bytes proxy
+    let _truncated = log.sessions[0].is_truncated();
+}

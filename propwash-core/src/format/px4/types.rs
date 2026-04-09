@@ -162,6 +162,7 @@ pub struct Px4ParseStats {
     pub subscription_count: usize,
     pub dropout_count: usize,
     pub corrupt_bytes: usize,
+    pub truncated: bool,
 }
 
 impl Px4Session {
@@ -466,19 +467,31 @@ impl Px4Session {
         }
     }
 
-    /// Returns whether the log appears truncated.
+    /// Returns whether the log appears truncated (ended mid-message).
     pub fn is_truncated(&self) -> bool {
-        self.stats.corrupt_bytes > 0
+        self.stats.truncated
     }
 
-    /// Returns whether bidirectional RPM telemetry is present.
+    /// Returns whether ESC RPM telemetry is present.
     pub fn has_rpm_telemetry(&self) -> bool {
-        false
+        self.subscriptions
+            .values()
+            .any(|s| s.format_name == "esc_status")
+            && !self.topic_data("esc_status").is_empty()
     }
 
-    /// Returns whether unfiltered gyro data is logged.
+    /// Returns whether unfiltered (raw) gyro data is logged alongside filtered.
     pub fn has_gyro_unfiltered(&self) -> bool {
-        false
+        // sensor_gyro is raw; vehicle_angular_velocity is filtered
+        let has_raw = self
+            .subscriptions
+            .values()
+            .any(|s| s.format_name == "sensor_gyro");
+        let has_filtered = self
+            .subscriptions
+            .values()
+            .any(|s| s.format_name == "vehicle_angular_velocity");
+        has_raw && has_filtered
     }
 
     /// Returns the number of corrupt bytes encountered during parsing.

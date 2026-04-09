@@ -33,6 +33,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
         if msg_type == FMT_TYPE {
             // FMT message — fixed 89-byte layout
             if pos + FMT_LEN > data.len() {
+                stats.truncated = true;
                 break;
             }
             if let Some(def) = parse_fmt(&data[pos..pos + FMT_LEN]) {
@@ -54,6 +55,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
 
         let msg_len = def.msg_len;
         if pos + msg_len > data.len() {
+            stats.truncated = true;
             break;
         }
 

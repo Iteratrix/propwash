@@ -150,6 +150,7 @@ pub struct ApParseStats {
     pub fmt_count: usize,
     pub corrupt_bytes: usize,
     pub unknown_types: usize,
+    pub truncated: bool,
 }
 
 impl ApSession {
@@ -437,19 +438,20 @@ impl ApSession {
         (min, max)
     }
 
-    /// Returns whether the log appears truncated.
+    /// Returns whether the log appears truncated (ended mid-message).
     pub fn is_truncated(&self) -> bool {
-        self.stats.corrupt_bytes > 0
+        self.stats.truncated
     }
 
-    /// Returns whether bidirectional RPM telemetry is present.
+    /// Returns whether ESC RPM telemetry is present.
     pub fn has_rpm_telemetry(&self) -> bool {
-        false
+        self.msg_type_for_name("ESC").is_some() && !self.messages_by_name("ESC").is_empty()
     }
 
-    /// Returns whether unfiltered gyro data is logged.
+    /// Returns whether unfiltered (raw) gyro data is logged alongside filtered.
     pub fn has_gyro_unfiltered(&self) -> bool {
-        false
+        // GYR messages contain raw gyro; IMU contains filtered
+        self.msg_type_for_name("GYR").is_some() && !self.messages_by_name("GYR").is_empty()
     }
 
     /// Returns the number of corrupt bytes encountered during parsing.

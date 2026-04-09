@@ -199,6 +199,7 @@ fn parse_messages(
         if msg_end > data.len() {
             // Corrupt or truncated message — try to resync
             if !try_resync(data, pos, stats, warnings) {
+                stats.truncated = true;
                 break;
             }
             continue;
