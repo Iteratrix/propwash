@@ -390,6 +390,28 @@ impl ApSession {
                 .into_iter()
                 .map(|(_, v)| v)
                 .collect(),
+            SensorField::ERpm(idx) => {
+                // ESC messages have Instance field — filter to matching motor index
+                #[allow(clippy::cast_possible_wrap)]
+                let target = idx.0 as i64;
+                self.messages_by_name("ESC")
+                    .iter()
+                    .filter(|m| m.values.get(1).is_some_and(|v| v.as_i64() == target))
+                    .filter_map(|m| m.values.get(2).map(ApValue::as_f64))
+                    .collect()
+            }
+            SensorField::GyroUnfilt(axis) => {
+                let field_name = match axis {
+                    Axis::Roll => "GyrX",
+                    Axis::Pitch => "GyrY",
+                    Axis::Yaw => "GyrZ",
+                };
+                // GYR messages contain raw gyro in rad/s — convert to deg/s
+                self.extract_series("GYR", field_name)
+                    .into_iter()
+                    .map(|(_, v)| v * 57.295_779_513_082_32)
+                    .collect()
+            }
             SensorField::Unknown(name) => {
                 if let Some((msg, fld)) = name.split_once('.') {
                     self.extract_series(msg, fld)
@@ -441,17 +463,6 @@ impl ApSession {
     /// Returns whether the log appears truncated (ended mid-message).
     pub fn is_truncated(&self) -> bool {
         self.stats.truncated
-    }
-
-    /// Returns whether ESC RPM telemetry is present.
-    pub fn has_rpm_telemetry(&self) -> bool {
-        self.msg_type_for_name("ESC").is_some() && !self.messages_by_name("ESC").is_empty()
-    }
-
-    /// Returns whether unfiltered (raw) gyro data is logged alongside filtered.
-    pub fn has_gyro_unfiltered(&self) -> bool {
-        // GYR messages contain raw gyro; IMU contains filtered
-        self.msg_type_for_name("GYR").is_some() && !self.messages_by_name("GYR").is_empty()
     }
 
     /// Returns the number of corrupt bytes encountered during parsing.

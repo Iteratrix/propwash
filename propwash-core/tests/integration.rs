@@ -945,11 +945,12 @@ fn px4_nested_types_decoded() {
 }
 
 #[test]
-fn px4_has_gyro_unfiltered() {
+fn px4_gyro_unfiltered_available() {
     let log = parse_fixture("px4/sample_log_small.ulg");
+    let unfilt = log.sessions[0].field(&SensorField::GyroUnfilt(Axis::Roll));
     assert!(
-        log.sessions[0].has_gyro_unfiltered(),
-        "PX4 fixture with both raw and filtered gyro should report unfiltered"
+        !unfilt.is_empty(),
+        "PX4 fixture with sensor_gyro should provide unfiltered gyro data"
     );
 }
 

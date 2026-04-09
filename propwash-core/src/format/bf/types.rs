@@ -461,22 +461,6 @@ impl BfSession {
             .count()
     }
 
-    /// Returns whether bidirectional `DShot` RPM telemetry is present.
-    pub fn has_rpm_telemetry(&self) -> bool {
-        self.main_field_defs
-            .fields
-            .iter()
-            .any(|f| matches!(f.name, SensorField::ERpm(_)))
-    }
-
-    /// Returns whether unfiltered gyro data is logged.
-    pub fn has_gyro_unfiltered(&self) -> bool {
-        self.main_field_defs
-            .fields
-            .iter()
-            .any(|f| matches!(f.name, SensorField::GyroUnfilt(_)))
-    }
-
     /// Returns the debug mode from headers.
     pub fn debug_mode(&self) -> i32 {
         self.get_header_int("debug_mode", 0)

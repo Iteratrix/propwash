@@ -410,6 +410,24 @@ impl Px4Session {
                     Vec::new()
                 }
             }
+            SensorField::ERpm(idx) => {
+                let field_name = format!("esc[{}].esc_rpm", idx.0);
+                let series = self.extract_series("esc_status", &field_name);
+                series.into_iter().map(|(_, v)| v).collect()
+            }
+            SensorField::GyroUnfilt(axis) => {
+                let field_name = match axis {
+                    Axis::Roll => "x",
+                    Axis::Pitch => "y",
+                    Axis::Yaw => "z",
+                };
+                // sensor_gyro is raw in rad/s — convert to deg/s
+                let series = self.extract_series("sensor_gyro", field_name);
+                series
+                    .into_iter()
+                    .map(|(_, v)| v * 57.295_779_513_082_32)
+                    .collect()
+            }
             SensorField::Setpoint(axis) => {
                 let field_name = match axis {
                     Axis::Roll => "roll",
@@ -470,28 +488,6 @@ impl Px4Session {
     /// Returns whether the log appears truncated (ended mid-message).
     pub fn is_truncated(&self) -> bool {
         self.stats.truncated
-    }
-
-    /// Returns whether ESC RPM telemetry is present.
-    pub fn has_rpm_telemetry(&self) -> bool {
-        self.subscriptions
-            .values()
-            .any(|s| s.format_name == "esc_status")
-            && !self.topic_data("esc_status").is_empty()
-    }
-
-    /// Returns whether unfiltered (raw) gyro data is logged alongside filtered.
-    pub fn has_gyro_unfiltered(&self) -> bool {
-        // sensor_gyro is raw; vehicle_angular_velocity is filtered
-        let has_raw = self
-            .subscriptions
-            .values()
-            .any(|s| s.format_name == "sensor_gyro");
-        let has_filtered = self
-            .subscriptions
-            .values()
-            .any(|s| s.format_name == "vehicle_angular_velocity");
-        has_raw && has_filtered
     }
 
     /// Returns the number of corrupt bytes encountered during parsing.
