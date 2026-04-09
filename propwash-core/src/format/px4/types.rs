@@ -316,6 +316,12 @@ impl Px4Session {
 
     /// Extracts one field as a `Vec<f64>` across all relevant messages.
     ///
+    /// Uses the primary sensor instance (lowest `multi_id`) for each topic,
+    /// which is the correct default for flight analysis. Secondary sensor
+    /// instances (e.g. a second gyro) are accessible via
+    /// [`topic_data_all_instances`](Self::topic_data_all_instances) for raw
+    /// access consumers.
+    ///
     /// `SensorField::Unknown` names containing a `.` are resolved as
     /// `"topic.field"` against native PX4 subscription data.
     /// Unresolvable fields return an empty `Vec`.

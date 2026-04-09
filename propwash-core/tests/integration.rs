@@ -964,6 +964,32 @@ fn px4_not_truncated() {
 }
 
 #[test]
+fn px4_multi_instance_access() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let session = &log.sessions[0];
+    let Session::Px4(px4) = session else {
+        panic!("expected PX4 session");
+    };
+
+    // topic_data_all_instances returns >= topic_data for any topic
+    let primary = px4.topic_data("sensor_combined");
+    let all = px4.topic_data_all_instances("sensor_combined");
+    assert!(
+        all.len() >= primary.len(),
+        "all instances ({}) should be >= primary ({})",
+        all.len(),
+        primary.len()
+    );
+
+    // field() uses primary instance — correct default for analysis
+    let gyro = session.field(&SensorField::Gyro(Axis::Roll));
+    assert!(
+        !gyro.is_empty(),
+        "field() should return data from primary instance"
+    );
+}
+
+#[test]
 fn ardupilot_truncation_detected() {
     // Real flight logs are typically truncated when the FC powers off
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
