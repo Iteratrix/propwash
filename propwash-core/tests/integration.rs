@@ -86,22 +86,51 @@ fixture_test!(
 
 #[test]
 fn ardupilot_parses_metadata() {
+    use propwash_core::types::MotorIndex;
+
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
     let session = &log.sessions[0];
 
-    assert!(session.frame_count() > 0, "should have IMU frames");
+    // Firmware version
     assert!(
-        !session.firmware_version().is_empty(),
-        "should have firmware version"
+        session.firmware_version().contains("ArduCopter V4.5.5"),
+        "expected firmware to contain 'ArduCopter V4.5.5', got: {}",
+        session.firmware_version()
     );
+
+    // Motor count
+    assert_eq!(session.motor_count(), 4, "Tarot X4 is a quadcopter");
+
+    // First motor[0] value (RCOU C1) = 1100.0
+    let motor0 = session.field(&SensorField::Motor(MotorIndex(0)));
+    assert!(!motor0.is_empty(), "should have motor data");
+    assert!(
+        (motor0[0] - 1100.0).abs() < 1e-2,
+        "first motor[0] expected 1100.0, got {}",
+        motor0[0]
+    );
+
+    // IMU frame count > 10000
+    assert!(
+        session.frame_count() > 10000,
+        "expected >10000 IMU frames, got {}",
+        session.frame_count()
+    );
+
+    // Duration should be nonzero
     assert!(
         session.duration_seconds() > 0.0,
         "should have nonzero duration"
     );
-    assert!(session.motor_count() > 0, "should detect motors");
 
+    // First gyro value should be very small (ground idle)
     let gyro = session.field(&SensorField::Gyro(Axis::Roll));
     assert!(!gyro.is_empty(), "should have gyro data");
+    assert!(
+        gyro[0].abs() < 0.1,
+        "first gyro[roll] should be near zero deg/s at ground idle, got {}",
+        gyro[0]
+    );
 }
 
 #[test]
@@ -959,6 +988,25 @@ fn px4_gyro_unfiltered_available() {
 }
 
 #[test]
+fn px4_golden_sensor_gyro_unfiltered() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let session = &log.sessions[0];
+
+    // sensor_gyro[0] x = -0.04130321 rad/s -> in deg/s = about -2.367
+    let unfilt_roll = session.field(&SensorField::GyroUnfilt(Axis::Roll));
+    assert!(
+        !unfilt_roll.is_empty(),
+        "should have unfiltered gyro roll data"
+    );
+    let expected_deg_s = -0.041_303_21_f64.to_degrees(); // ~-2.367
+    assert!(
+        (unfilt_roll[0] - expected_deg_s).abs() < 1e-2,
+        "GyroUnfilt(Roll)[0] expected ~{expected_deg_s:.3} deg/s, got {:.6}",
+        unfilt_roll[0]
+    );
+}
+
+#[test]
 fn px4_not_truncated() {
     let log = parse_fixture("px4/sample_log_small.ulg");
     assert!(
@@ -1004,71 +1052,132 @@ fn ardupilot_truncation_detected() {
 #[test]
 fn bf_gps_data_parsed() {
     let log = parse_fixture("fc-blackbox/btfl_gps_rescue.bbl");
-    let Session::Betaflight(bf) = &log.sessions[0] else {
+    let session = &log.sessions[0];
+    let Session::Betaflight(bf) = session else {
         panic!("expected Betaflight session");
     };
 
-    // Should have GPS field definitions
+    // Frame counts
+    assert_eq!(
+        bf.stats.total_main_frames(),
+        1607,
+        "expected 1607 main frames, got {}",
+        bf.stats.total_main_frames()
+    );
+
+    // GPS field definitions and frames
     assert!(
         bf.gps_field_defs.is_some(),
         "should have GPS field definitions"
     );
+    assert_eq!(bf.gps_frames.len(), 7, "expected 7 GPS frames");
 
-    // Should have GPS home position stored
+    // GPS home position — exact golden values
     assert!(bf.gps_home.is_some(), "should have GPS home position");
     let home = bf.gps_home.as_ref().unwrap();
     assert_eq!(home.len(), 2, "GPS home should have lat and lng");
-    // Home coordinates should be non-zero (real position)
-    assert!(home[0] != 0 || home[1] != 0, "GPS home should be non-zero");
+    assert_eq!(home[0], 502_075_967, "GPS home lat");
+    assert_eq!(home[1], 191_013_996, "GPS home lng");
 
-    // Should have GPS frames
-    assert!(
-        !bf.gps_frames.is_empty(),
-        "should have GPS frames, got {}",
-        bf.gps_frames.len()
-    );
-
-    // GPS coordinates should be absolute (home offset applied)
-    let gps_lat = log.sessions[0].field(&SensorField::GpsLat);
-    let gps_lng = log.sessions[0].field(&SensorField::GpsLng);
+    // First GPS coord after reconstruction should equal home (delta 0)
+    let gps_lat = session.field(&SensorField::GpsLat);
+    let gps_lng = session.field(&SensorField::GpsLng);
     assert!(!gps_lat.is_empty(), "should have GPS lat data via field()");
     assert!(!gps_lng.is_empty(), "should have GPS lng data via field()");
+    #[allow(clippy::cast_precision_loss)]
+    {
+        assert!(
+            (gps_lat[0] - 502_075_967.0).abs() < 1.0,
+            "first GPS lat should be 502075967, got {}",
+            gps_lat[0]
+        );
+        assert!(
+            (gps_lng[0] - 191_013_996.0).abs() < 1.0,
+            "first GPS lng should be 191013996, got {}",
+            gps_lng[0]
+        );
+    }
 
-    // First GPS coord should be near the home position (within ~1km = 0.01 degrees)
-    let lat_deg = gps_lat[0] / 1e7;
-    let lng_deg = gps_lng[0] / 1e7;
-    #[allow(clippy::cast_precision_loss)]
-    let home_lat = home[0] as f64 / 1e7;
-    #[allow(clippy::cast_precision_loss)]
-    let home_lng = home[1] as f64 / 1e7;
+    // eRPM[0] first 3 values
+    let erpm = session.field(&SensorField::ERpm(propwash_core::types::MotorIndex(0)));
+    assert!(erpm.len() >= 3, "should have at least 3 eRPM values");
     assert!(
-        (lat_deg - home_lat).abs() < 0.01,
-        "GPS lat {lat_deg} should be near home {home_lat}"
+        (erpm[0] - 294.0).abs() < 1e-2,
+        "eRPM[0][0] expected 294.0, got {}",
+        erpm[0]
     );
     assert!(
-        (lng_deg - home_lng).abs() < 0.01,
-        "GPS lng {lng_deg} should be near home {home_lng}"
+        (erpm[1] - 301.0).abs() < 1e-2,
+        "eRPM[0][1] expected 301.0, got {}",
+        erpm[1]
+    );
+    assert!(
+        (erpm[2] - 303.0).abs() < 1e-2,
+        "eRPM[0][2] expected 303.0, got {}",
+        erpm[2]
     );
 
-    // Should have gyro unfiltered data (this fixture has gyroUnfilt fields)
-    let unfilt = log.sessions[0].field(&SensorField::GyroUnfilt(Axis::Roll));
+    // Sample rate ~1572 Hz
+    let rate = session.sample_rate_hz();
+    assert!(
+        rate > 1500.0 && rate < 1650.0,
+        "expected sample rate ~1572 Hz, got {rate}"
+    );
+
+    // Firmware version
+    assert!(
+        session.firmware_version().contains("Betaflight 4.5.0"),
+        "expected firmware to contain 'Betaflight 4.5.0', got: {}",
+        session.firmware_version()
+    );
+
+    // Gyro unfiltered data present
+    let unfilt = session.field(&SensorField::GyroUnfilt(Axis::Roll));
     assert!(!unfilt.is_empty(), "should have unfiltered gyro data");
-
-    // Should have eRPM data (this fixture has eRPM fields)
-    let erpm = log.sessions[0].field(&SensorField::ERpm(propwash_core::types::MotorIndex(0)));
-    assert!(!erpm.is_empty(), "should have eRPM data");
 }
 
 #[test]
 fn ap_esc_telemetry_parsed() {
+    use propwash_core::types::MotorIndex;
+
     let log = parse_fixture("ardupilot/esc-telem-quadplane-v4.4.4.bin");
     let session = &log.sessions[0];
 
-    // Should have ESC RPM data via field()
-    let erpm = session.field(&SensorField::ERpm(propwash_core::types::MotorIndex(0)));
-    assert!(!erpm.is_empty(), "should have ESC RPM data for motor 0");
+    // ESC[0] first RPM value should be 0.0
+    let erpm0 = session.field(&SensorField::ERpm(MotorIndex(0)));
+    assert!(!erpm0.is_empty(), "should have ESC RPM data for motor 0");
+    assert!(
+        erpm0[0].abs() < 1e-2,
+        "ESC[0] first RPM expected 0.0, got {}",
+        erpm0[0]
+    );
 
-    // Multiple motors should have data
-    let erpm1 = session.field(&SensorField::ERpm(propwash_core::types::MotorIndex(1)));
-    assert!(!erpm1.is_empty(), "should have ESC RPM data for motor 1");
+    // 5 motor instances should have eRPM data (indices 0-4)
+    for i in 0..5 {
+        let erpm = session.field(&SensorField::ERpm(MotorIndex(i)));
+        assert!(!erpm.is_empty(), "should have ESC RPM data for motor {i}");
+    }
+
+    // Firmware version
+    assert!(
+        session.firmware_version().contains("ArduPlane V4.4.4"),
+        "expected firmware to contain 'ArduPlane V4.4.4', got: {}",
+        session.firmware_version()
+    );
+
+    // IMU frame count > 13000
+    assert!(
+        session.frame_count() > 13000,
+        "expected >13000 IMU frames, got {}",
+        session.frame_count()
+    );
+
+    // First gyro[roll] value should be small (near zero in deg/s)
+    let gyro_roll = session.field(&SensorField::Gyro(Axis::Roll));
+    assert!(!gyro_roll.is_empty(), "should have gyro data");
+    assert!(
+        gyro_roll[0].abs() < 0.1,
+        "first gyro[roll] should be near zero deg/s, got {}",
+        gyro_roll[0]
+    );
 }
