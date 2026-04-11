@@ -6,7 +6,7 @@ pub mod types;
 
 use crate::types::{Log, Session, Warning};
 use header::{find_sessions, parse_headers};
-use types::{BfHeaderValue, BfSession};
+use types::{BfFrame, BfHeaderValue, BfSession};
 
 /// Decodes a Betaflight-family blackbox log.
 pub(crate) fn decode(data: &[u8]) -> Log {
@@ -66,9 +66,18 @@ pub(crate) fn decode(data: &[u8]) -> Log {
                 &raw_session,
                 &mut warnings,
             );
-            raw_session.frames = parsed_frames.main;
-            raw_session.slow_frames = parsed_frames.slow;
-            raw_session.gps_frames = parsed_frames.gps;
+
+            // Transpose row-oriented frames into columnar storage
+            raw_session.main_columns =
+                transpose(&parsed_frames.main, raw_session.main_field_defs.len());
+            raw_session.frame_kinds = parsed_frames.main.iter().map(|f| f.kind).collect();
+            if let Some(ref defs) = raw_session.slow_field_defs {
+                raw_session.slow_columns = transpose(&parsed_frames.slow, defs.len());
+            }
+            if let Some(ref defs) = raw_session.gps_field_defs {
+                raw_session.gps_columns = transpose(&parsed_frames.gps, defs.len());
+            }
+
             raw_session.gps_home = parsed_frames.gps_home;
             raw_session.events = parsed_frames.events;
             raw_session.stats = parsed_frames.stats;
@@ -83,4 +92,19 @@ pub(crate) fn decode(data: &[u8]) -> Log {
         sessions,
         warnings: global_warnings,
     }
+}
+
+/// Transpose row-oriented `BfFrame` vectors into column-oriented `Vec<Vec<f64>>`.
+#[allow(clippy::cast_precision_loss)]
+fn transpose(frames: &[BfFrame], n_fields: usize) -> Vec<Vec<f64>> {
+    let mut columns = Vec::with_capacity(n_fields);
+    for _ in 0..n_fields {
+        columns.push(Vec::with_capacity(frames.len()));
+    }
+    for frame in frames {
+        for (i, col) in columns.iter_mut().enumerate() {
+            col.push(frame.values.get(i).copied().unwrap_or(0) as f64);
+        }
+    }
+    columns
 }

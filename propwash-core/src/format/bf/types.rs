@@ -246,12 +246,14 @@ pub struct BfSession {
     pub gps_field_defs: Option<BfFrameDefs>,
     /// GPS home field definitions.
     pub gps_home_field_defs: Option<BfFrameDefs>,
-    /// Decoded main frames (I + P interleaved in order).
-    pub frames: Vec<BfFrame>,
-    /// Decoded slow frames.
-    pub slow_frames: Vec<BfFrame>,
-    /// Decoded GPS frames.
-    pub gps_frames: Vec<BfFrame>,
+    /// Columnar main frame data — one `Vec<f64>` per field, parallel to `main_field_defs`.
+    pub main_columns: Vec<Vec<f64>>,
+    /// Frame kind (Intra/Inter) for each main frame.
+    pub frame_kinds: Vec<BfFrameKind>,
+    /// Columnar slow-frame data, parallel to `slow_field_defs`.
+    pub slow_columns: Vec<Vec<f64>>,
+    /// Columnar GPS-frame data, parallel to `gps_field_defs`.
+    pub gps_columns: Vec<Vec<f64>>,
     /// GPS Home reference position (field values matching `gps_home_field_defs`).
     /// Used as the base for delta-compressed GPS coordinate reconstruction.
     pub gps_home: Option<Vec<i64>>,
@@ -305,9 +307,10 @@ impl BfSession {
             slow_field_defs,
             gps_field_defs,
             gps_home_field_defs,
-            frames: Vec::new(),
-            slow_frames: Vec::new(),
-            gps_frames: Vec::new(),
+            main_columns: Vec::new(),
+            frame_kinds: Vec::new(),
+            slow_columns: Vec::new(),
+            gps_columns: Vec::new(),
             gps_home: None,
             events: Vec::new(),
             stats: BfParseStats::default(),
@@ -357,22 +360,20 @@ impl BfSession {
         self.vbat_ref
     }
 
-    /// Gets a field value from a frame by name string.
-    pub fn get_field(&self, frame: &BfFrame, name: &str) -> Option<i64> {
-        let idx = self.main_field_defs.index_of_str(name)?;
-        frame.values.get(idx).copied()
-    }
-
-    /// Gets a field value from a frame by name, with a default.
-    pub fn get_field_or(&self, frame: &BfFrame, name: &str, default: i64) -> i64 {
-        self.get_field(frame, name).unwrap_or(default)
+    /// Gets a main-frame field value by field index and frame index.
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn main_value(&self, frame_idx: usize, field_idx: usize) -> i64 {
+        self.main_columns
+            .get(field_idx)
+            .and_then(|col| col.get(frame_idx))
+            .map_or(0, |&v| v as i64)
     }
 
     // ── Methods absorbed from BfAnalyzedView ────────────────────────
 
     /// Returns the number of main frames.
     pub fn frame_count(&self) -> usize {
-        self.frames.len()
+        self.main_columns.first().map_or(0, Vec::len)
     }
 
     /// Returns field names from header definitions.
@@ -390,56 +391,42 @@ impl BfSession {
         &self.craft_name
     }
 
+    /// Returns the time column for main frames, if present.
+    fn time_column(&self) -> Option<&[f64]> {
+        let idx = self.main_field_defs.index_of(&SensorField::Time)?;
+        self.main_columns.get(idx).map(Vec::as_slice)
+    }
+
     /// Computes sample rate from first/last frame timestamps.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
     pub fn sample_rate_hz(&self) -> f64 {
-        if self.frames.len() < 2 {
-            return 0.0;
-        }
-        let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
+        let Some(time) = self.time_column() else {
             return 0.0;
         };
-        let t0 = self
-            .frames
-            .first()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let tn = self
-            .frames
-            .last()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let dt_us = tn - t0;
-        if dt_us <= 0 {
+        if time.len() < 2 {
             return 0.0;
         }
-        (self.frames.len() - 1) as f64 / (dt_us as f64 / 1_000_000.0)
+        let dt_us = time.last().unwrap() - time.first().unwrap();
+        if dt_us <= 0.0 {
+            return 0.0;
+        }
+        (time.len() - 1) as f64 / (dt_us / 1_000_000.0)
     }
 
     /// Returns flight duration in seconds.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
     pub fn duration_seconds(&self) -> f64 {
-        if self.frames.len() < 2 {
-            return 0.0;
-        }
-        let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
+        let Some(time) = self.time_column() else {
             return 0.0;
         };
-        let t0 = self
-            .frames
-            .first()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let tn = self
-            .frames
-            .last()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let dt_us = tn - t0;
-        if dt_us <= 0 {
+        if time.len() < 2 {
             return 0.0;
         }
-        dt_us as f64 / 1_000_000.0
+        let dt_us = time.last().unwrap() - time.first().unwrap();
+        if dt_us <= 0.0 {
+            return 0.0;
+        }
+        dt_us / 1_000_000.0
     }
 
     /// Extracts one field as a `Vec<f64>` across all frames.
@@ -451,32 +438,26 @@ impl BfSession {
     /// field index. Unresolvable fields return an empty `Vec`.
     #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
-        // Check main frames first
+        // Check main columns first
         if let Some(idx) = self.main_field_defs.index_of(sensor_field) {
-            return self
-                .frames
-                .iter()
-                .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-                .collect();
-        }
-        // Fall back to slow frames
-        if let Some(ref slow_defs) = self.slow_field_defs {
-            if let Some(idx) = slow_defs.index_of(sensor_field) {
-                return self
-                    .slow_frames
-                    .iter()
-                    .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-                    .collect();
+            if let Some(col) = self.main_columns.get(idx) {
+                return col.clone();
             }
         }
-        // Fall back to GPS frames (coordinates already reconstructed with home offset)
+        // Fall back to slow columns
+        if let Some(ref slow_defs) = self.slow_field_defs {
+            if let Some(idx) = slow_defs.index_of(sensor_field) {
+                if let Some(col) = self.slow_columns.get(idx) {
+                    return col.clone();
+                }
+            }
+        }
+        // Fall back to GPS columns (coordinates already reconstructed with home offset)
         if let Some(ref gps_defs) = self.gps_field_defs {
             if let Some(idx) = gps_defs.index_of(sensor_field) {
-                return self
-                    .gps_frames
-                    .iter()
-                    .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-                    .collect();
+                if let Some(col) = self.gps_columns.get(idx) {
+                    return col.clone();
+                }
             }
         }
         Vec::new()
