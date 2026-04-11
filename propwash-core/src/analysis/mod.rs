@@ -10,7 +10,7 @@ use events::{EventKind, FlightEvent};
 use fft::VibrationAnalysis;
 use summary::FlightSummary;
 
-use crate::format::ap::types::{ApSession, ApValue};
+use crate::format::ap::types::ApSession;
 use crate::format::px4::types::Px4Session;
 use crate::types::Session;
 
@@ -99,27 +99,31 @@ fn detect_px4_log_events(px4: &Px4Session) -> Vec<FlightEvent> {
 fn detect_ardupilot_events(ap: &ApSession) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
-    for msg in ap.messages_by_name("EV") {
-        let id = msg.values.get(1).map_or(0, ApValue::as_i64);
-        let kind = match id {
-            10 => EventKind::ThrottlePunch {
-                from_percent: 0.0,
-                to_percent: 100.0,
-                duration_ms: 0.0,
-            },
-            11 => EventKind::ThrottleChop {
-                from_percent: 100.0,
-                to_percent: 0.0,
-                duration_ms: 0.0,
-            },
-            _ => continue,
-        };
-        events.push(FlightEvent {
-            frame_index: 0,
-            time_us: msg.time_us.cast_signed(),
-            time_seconds: msg.time_us as f64 / 1_000_000.0,
-            kind,
-        });
+    let ev_ts = ap.msg_timestamps("EV");
+    if let Some(id_col) = ap.msg_column("EV", "Id") {
+        for (i, &id) in id_col.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let kind = match id as i64 {
+                10 => EventKind::ThrottlePunch {
+                    from_percent: 0.0,
+                    to_percent: 100.0,
+                    duration_ms: 0.0,
+                },
+                11 => EventKind::ThrottleChop {
+                    from_percent: 100.0,
+                    to_percent: 0.0,
+                    duration_ms: 0.0,
+                },
+                _ => continue,
+            };
+            let t = ev_ts.get(i).copied().unwrap_or(0);
+            events.push(FlightEvent {
+                frame_index: 0,
+                time_us: t.cast_signed(),
+                time_seconds: t as f64 / 1_000_000.0,
+                kind,
+            });
+        }
     }
 
     events
@@ -130,18 +134,23 @@ fn detect_ardupilot_events(ap: &ApSession) -> Vec<FlightEvent> {
 fn detect_ardupilot_firmware_messages(ap: &ApSession) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
-    for msg in ap.messages_by_name("ERR") {
-        let subsys = msg.values.get(1).map_or(0, ApValue::as_i64);
-        let code = msg.values.get(2).map_or(0, ApValue::as_i64);
-        events.push(FlightEvent {
-            frame_index: 0,
-            time_us: msg.time_us.cast_signed(),
-            time_seconds: msg.time_us as f64 / 1_000_000.0,
-            kind: EventKind::FirmwareMessage {
-                level: "error".to_string(),
-                message: format!("Subsystem {subsys} error code {code}"),
-            },
-        });
+    let err_ts = ap.msg_timestamps("ERR");
+    let subsys_col = ap.msg_column("ERR", "Subsys");
+    let ecode_col = ap.msg_column("ERR", "ECode");
+    if let (Some(subsys), Some(codes)) = (subsys_col, ecode_col) {
+        #[allow(clippy::cast_possible_truncation)]
+        for (i, (&s, &c)) in subsys.iter().zip(codes.iter()).enumerate() {
+            let t = err_ts.get(i).copied().unwrap_or(0);
+            events.push(FlightEvent {
+                frame_index: 0,
+                time_us: t.cast_signed(),
+                time_seconds: t as f64 / 1_000_000.0,
+                kind: EventKind::FirmwareMessage {
+                    level: "error".to_string(),
+                    message: format!("Subsystem {} error code {}", s as i64, c as i64),
+                },
+            });
+        }
     }
 
     events

@@ -74,44 +74,51 @@ pub struct ULogSubscription {
     pub format_name: String,
 }
 
-/// A decoded data value.
-#[derive(Debug, Clone)]
-pub enum ULogValue {
-    Int(i64),
-    UInt(u64),
-    Float(f64),
-    Str(String),
+/// Columnar storage for one subscription's data messages.
+///
+/// All column vectors have the same length as `timestamps`.
+#[derive(Debug)]
+pub struct TopicData {
+    /// Timestamps in microseconds, one per message.
+    pub timestamps: Vec<u64>,
+    /// Parallel column vectors of decoded field values.
+    pub columns: Vec<Vec<f64>>,
+    /// Field names, parallel to `columns`.
+    pub field_names: Vec<String>,
+    /// name -> column index for O(1) field lookup.
+    field_index: HashMap<String, usize>,
 }
 
-impl ULogValue {
-    pub fn as_i64(&self) -> i64 {
-        match self {
-            Self::Int(v) => *v,
-            #[allow(clippy::cast_possible_wrap)]
-            Self::UInt(v) => *v as i64,
-            #[allow(clippy::cast_possible_truncation)]
-            Self::Float(v) => *v as i64,
-            Self::Str(_) => 0,
+impl TopicData {
+    pub(crate) fn new(field_names: Vec<String>) -> Self {
+        let field_index = field_names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.clone(), i))
+            .collect();
+        let columns = vec![Vec::new(); field_names.len()];
+        Self {
+            timestamps: Vec::new(),
+            columns,
+            field_names,
+            field_index,
         }
     }
 
-    #[allow(clippy::cast_precision_loss)]
-    pub fn as_f64(&self) -> f64 {
-        match self {
-            Self::Int(v) => *v as f64,
-            Self::UInt(v) => *v as f64,
-            Self::Float(v) => *v,
-            Self::Str(_) => 0.0,
+    /// Returns the column for a given field name.
+    pub fn column(&self, field: &str) -> Option<&[f64]> {
+        let idx = self.field_index.get(field)?;
+        Some(&self.columns[*idx])
+    }
+
+    /// Pushes one row of decoded values into the columns.
+    #[inline]
+    pub(crate) fn push_row(&mut self, timestamp: u64, values: &[f64]) {
+        self.timestamps.push(timestamp);
+        for (col, &val) in self.columns.iter_mut().zip(values.iter()) {
+            col.push(val);
         }
     }
-}
-
-/// A decoded data message.
-#[derive(Debug, Clone)]
-pub struct ULogDataMsg {
-    pub msg_id: u16,
-    pub timestamp_us: u64,
-    pub values: HashMap<String, ULogValue>,
 }
 
 /// A log message emitted by PX4 firmware (debug/warning/error).
@@ -134,8 +141,8 @@ pub struct Px4Session {
     pub formats: HashMap<String, ULogFormat>,
     /// Subscriptions keyed by `msg_id`.
     pub subscriptions: HashMap<u16, ULogSubscription>,
-    /// All decoded data messages in file order.
-    pub data_messages: Vec<ULogDataMsg>,
+    /// Columnar data keyed by `msg_id`.
+    pub topics: HashMap<u16, TopicData>,
     /// Info key-value pairs.
     pub info: HashMap<String, String>,
     /// Parameters.
@@ -166,37 +173,6 @@ pub struct Px4ParseStats {
 }
 
 impl Px4Session {
-    /// Returns data messages for the primary instance of a topic (lowest `multi_id`).
-    ///
-    /// PX4 logs can contain multiple sensor instances (e.g. two gyros).
-    /// This returns only the primary instance to avoid interleaving data
-    /// from different physical sensors.
-    pub fn topic_data(&self, topic_name: &str) -> Vec<&ULogDataMsg> {
-        let primary_id = self.primary_msg_id(topic_name);
-        match primary_id {
-            Some(id) => self
-                .data_messages
-                .iter()
-                .filter(|d| d.msg_id == id)
-                .collect(),
-            None => Vec::new(),
-        }
-    }
-
-    /// Returns data messages for all instances of a topic, interleaved in file order.
-    pub fn topic_data_all_instances(&self, topic_name: &str) -> Vec<&ULogDataMsg> {
-        let msg_ids: Vec<u16> = self
-            .subscriptions
-            .values()
-            .filter(|s| s.format_name == topic_name)
-            .map(|s| s.msg_id)
-            .collect();
-        self.data_messages
-            .iter()
-            .filter(|d| msg_ids.contains(&d.msg_id))
-            .collect()
-    }
-
     /// Returns the `msg_id` for the primary (lowest `multi_id`) instance of a topic.
     fn primary_msg_id(&self, topic_name: &str) -> Option<u16> {
         self.subscriptions
@@ -206,25 +182,51 @@ impl Px4Session {
             .map(|s| s.msg_id)
     }
 
-    /// Extracts a time-series of one field from one topic (primary instance).
-    fn extract_series(&self, topic: &str, field: &str) -> Vec<(u64, f64)> {
-        self.topic_data(topic)
-            .iter()
-            .filter_map(|msg| {
-                let val = msg.values.get(field)?;
-                Some((msg.timestamp_us, val.as_f64()))
-            })
-            .collect()
+    /// Returns whether the primary instance of a topic has data.
+    fn has_topic(&self, topic_name: &str) -> bool {
+        self.primary_msg_id(topic_name)
+            .and_then(|id| self.topics.get(&id))
+            .is_some_and(|td| !td.timestamps.is_empty())
+    }
+
+    /// Returns the timestamps for the primary instance of a topic.
+    pub fn topic_timestamps(&self, topic_name: &str) -> &[u64] {
+        self.primary_msg_id(topic_name)
+            .and_then(|id| self.topics.get(&id))
+            .map_or(&[], |td| &td.timestamps)
+    }
+
+    /// Returns the column data for a field in the primary instance of a topic.
+    pub fn topic_column(&self, topic_name: &str, field: &str) -> Option<&[f64]> {
+        let id = self.primary_msg_id(topic_name)?;
+        let td = self.topics.get(&id)?;
+        td.column(field)
+    }
+
+    /// Returns the field names available for the primary instance of a topic.
+    pub fn topic_field_names(&self, topic_name: &str) -> &[String] {
+        self.primary_msg_id(topic_name)
+            .and_then(|id| self.topics.get(&id))
+            .map_or(&[], |td| &td.field_names)
+    }
+
+    /// Returns the total message count across all instances of a topic.
+    pub fn topic_all_instances_count(&self, topic_name: &str) -> usize {
+        self.subscriptions
+            .values()
+            .filter(|s| s.format_name == topic_name)
+            .filter_map(|s| self.topics.get(&s.msg_id))
+            .map(|td| td.timestamps.len())
+            .sum()
     }
 
     /// Returns the number of main frames from the highest-rate gyro source.
     pub fn frame_count(&self) -> usize {
-        // Use highest-rate gyro source as frame count
         let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
         for topic in candidates {
-            let count = self.topic_data(topic).len();
-            if count > 0 {
-                return count;
+            let len = self.topic_timestamps(topic).len();
+            if len > 0 {
+                return len;
             }
         }
         0
@@ -232,11 +234,9 @@ impl Px4Session {
 
     /// Returns field names available in this session.
     pub fn field_names(&self) -> Vec<String> {
-        let has_gyro = !self.topic_data("sensor_combined").is_empty()
-            || !self.topic_data("sensor_gyro").is_empty();
-        let has_accel = !self.topic_data("sensor_combined").is_empty()
-            || !self.topic_data("sensor_accel").is_empty();
-        let has_rc = !self.topic_data("input_rc").is_empty();
+        let has_gyro = self.has_topic("sensor_combined") || self.has_topic("sensor_gyro");
+        let has_accel = self.has_topic("sensor_combined") || self.has_topic("sensor_accel");
+        let has_rc = self.has_topic("input_rc");
         let n_motors = self.motor_count();
 
         Axis::ALL
@@ -278,23 +278,16 @@ impl Px4Session {
     #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
     pub fn sample_rate_hz(&self) -> f64 {
         let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
-        let mut series = Vec::new();
         for topic in candidates {
-            series = self.extract_series(topic, "timestamp");
-            if series.len() >= 2 {
-                break;
+            let ts = self.topic_timestamps(topic);
+            if ts.len() >= 2 {
+                let dt = ts.last().unwrap().saturating_sub(*ts.first().unwrap());
+                if dt > 0 {
+                    return (ts.len() - 1) as f64 / (dt as f64 / 1_000_000.0);
+                }
             }
         }
-        if series.len() < 2 {
-            return 0.0;
-        }
-        let t0 = series.first().unwrap().0;
-        let tn = series.last().unwrap().0;
-        let dt = tn.saturating_sub(t0);
-        if dt == 0 {
-            return 0.0;
-        }
-        (series.len() - 1) as f64 / (dt as f64 / 1_000_000.0)
+        0.0
     }
 
     /// Returns flight duration in seconds.
@@ -302,10 +295,14 @@ impl Px4Session {
     pub fn duration_seconds(&self) -> f64 {
         let mut min_t = u64::MAX;
         let mut max_t = 0u64;
-        for m in &self.data_messages {
-            if m.timestamp_us > 0 {
-                min_t = min_t.min(m.timestamp_us);
-                max_t = max_t.max(m.timestamp_us);
+        for td in self.topics.values() {
+            if let Some(&first) = td.timestamps.first() {
+                if first > 0 {
+                    min_t = min_t.min(first);
+                }
+            }
+            if let Some(&last) = td.timestamps.last() {
+                max_t = max_t.max(last);
             }
         }
         if min_t >= max_t {
@@ -315,16 +312,6 @@ impl Px4Session {
     }
 
     /// Extracts one field as a `Vec<f64>` across all relevant messages.
-    ///
-    /// Uses the primary sensor instance (lowest `multi_id`) for each topic,
-    /// which is the correct default for flight analysis. Secondary sensor
-    /// instances (e.g. a second gyro) are accessible via
-    /// [`topic_data_all_instances`](Self::topic_data_all_instances) for raw
-    /// access consumers.
-    ///
-    /// `SensorField::Unknown` names containing a `.` are resolved as
-    /// `"topic.field"` against native PX4 subscription data.
-    /// Unresolvable fields return an empty `Vec`.
     #[allow(
         clippy::cast_precision_loss,
         clippy::too_many_lines,
@@ -335,91 +322,84 @@ impl Px4Session {
             SensorField::Time => {
                 let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
                 for topic in candidates {
-                    let series = self.extract_series(topic, "timestamp");
-                    if !series.is_empty() {
-                        return series.into_iter().map(|(_, v)| v).collect();
+                    let ts = self.topic_timestamps(topic);
+                    if !ts.is_empty() {
+                        return ts.iter().map(|&t| t as f64).collect();
                     }
                 }
                 Vec::new()
             }
-            // PX4 gyro is in rad/s — convert to deg/s (rounded to nearest integer)
             SensorField::Gyro(axis) => {
                 let idx = axis.index();
-                // Try sensor_combined (gyro_rad[N]), then vehicle_angular_velocity (xyz[N]),
-                // then sensor_gyro (x/y/z)
-                let mut series =
-                    self.extract_series("sensor_combined", &format!("gyro_rad[{idx}]"));
-                if series.is_empty() {
-                    series =
-                        self.extract_series("vehicle_angular_velocity", &format!("xyz[{idx}]"));
+                let try_topics = [
+                    ("sensor_combined", format!("gyro_rad[{idx}]")),
+                    ("vehicle_angular_velocity", format!("xyz[{idx}]")),
+                    (
+                        "sensor_gyro",
+                        match axis {
+                            Axis::Roll => "x",
+                            Axis::Pitch => "y",
+                            Axis::Yaw => "z",
+                        }
+                        .to_string(),
+                    ),
+                ];
+                for (topic, field_name) in &try_topics {
+                    if let Some(col) = self.topic_column(topic, field_name) {
+                        return col.iter().map(|&v| v * 57.295_779_513_082_32).collect();
+                    }
                 }
-                if series.is_empty() {
-                    let field_name = match axis {
-                        Axis::Roll => "x",
-                        Axis::Pitch => "y",
-                        Axis::Yaw => "z",
-                    };
-                    series = self.extract_series("sensor_gyro", field_name);
-                }
-                series
-                    .into_iter()
-                    .map(|(_, v)| v * 57.295_779_513_082_32)
-                    .collect()
+                Vec::new()
             }
             SensorField::Accel(axis) => {
                 let idx = axis.index();
-                let mut series =
-                    self.extract_series("sensor_combined", &format!("accelerometer_m_s2[{idx}]"));
-                if series.is_empty() {
-                    let field_name = match axis {
-                        Axis::Roll => "x",
-                        Axis::Pitch => "y",
-                        Axis::Yaw => "z",
-                    };
-                    series = self.extract_series("sensor_accel", field_name);
+                if let Some(col) =
+                    self.topic_column("sensor_combined", &format!("accelerometer_m_s2[{idx}]"))
+                {
+                    return col.to_vec();
                 }
-                series.into_iter().map(|(_, v)| v).collect()
+                let field_name = match axis {
+                    Axis::Roll => "x",
+                    Axis::Pitch => "y",
+                    Axis::Yaw => "z",
+                };
+                self.topic_column("sensor_accel", field_name)
+                    .map_or_else(Vec::new, <[f64]>::to_vec)
             }
             SensorField::Motor(idx) => {
                 let field_name = format!("output[{}]", idx.0);
-                let series = self.extract_series("actuator_outputs", &field_name);
-                series.into_iter().map(|(_, v)| v).collect()
+                self.topic_column("actuator_outputs", &field_name)
+                    .map_or_else(Vec::new, <[f64]>::to_vec)
             }
             SensorField::Rc(ch) => {
                 let field_name = format!("values[{}]", ch.index());
-                let series = self.extract_series("input_rc", &field_name);
-                series.into_iter().map(|(_, v)| v).collect()
+                self.topic_column("input_rc", &field_name)
+                    .map_or_else(Vec::new, <[f64]>::to_vec)
             }
-            SensorField::Altitude => {
-                let series = self.extract_series("vehicle_global_position", "alt");
-                series.into_iter().map(|(_, v)| v).collect()
-            }
-            SensorField::GpsLat => {
-                let series = self.extract_series("vehicle_gps_position", "lat");
-                series.into_iter().map(|(_, v)| v).collect()
-            }
-            SensorField::GpsLng => {
-                let series = self.extract_series("vehicle_gps_position", "lon");
-                series.into_iter().map(|(_, v)| v).collect()
-            }
-            SensorField::Vbat => {
-                let series = self.extract_series("battery_status", "voltage_v");
-                series.into_iter().map(|(_, v)| v).collect()
-            }
+            SensorField::Altitude => self
+                .topic_column("vehicle_global_position", "alt")
+                .map_or_else(Vec::new, <[f64]>::to_vec),
+            SensorField::GpsLat => self
+                .topic_column("vehicle_gps_position", "lat")
+                .map_or_else(Vec::new, <[f64]>::to_vec),
+            SensorField::GpsLng => self
+                .topic_column("vehicle_gps_position", "lon")
+                .map_or_else(Vec::new, <[f64]>::to_vec),
+            SensorField::Vbat => self
+                .topic_column("battery_status", "voltage_v")
+                .map_or_else(Vec::new, <[f64]>::to_vec),
             SensorField::Unknown(name) => {
                 if let Some((topic, fld)) = name.split_once('.') {
-                    self.extract_series(topic, fld)
-                        .into_iter()
-                        .map(|(_, v)| v)
-                        .collect()
+                    self.topic_column(topic, fld)
+                        .map_or_else(Vec::new, <[f64]>::to_vec)
                 } else {
                     Vec::new()
                 }
             }
             SensorField::ERpm(idx) => {
                 let field_name = format!("esc[{}].esc_rpm", idx.0);
-                let series = self.extract_series("esc_status", &field_name);
-                series.into_iter().map(|(_, v)| v).collect()
+                self.topic_column("esc_status", &field_name)
+                    .map_or_else(Vec::new, <[f64]>::to_vec)
             }
             SensorField::GyroUnfilt(axis) => {
                 let field_name = match axis {
@@ -427,12 +407,10 @@ impl Px4Session {
                     Axis::Pitch => "y",
                     Axis::Yaw => "z",
                 };
-                // sensor_gyro is raw in rad/s — convert to deg/s
-                let series = self.extract_series("sensor_gyro", field_name);
-                series
-                    .into_iter()
-                    .map(|(_, v)| v * 57.295_779_513_082_32)
-                    .collect()
+                self.topic_column("sensor_gyro", field_name)
+                    .map_or_else(Vec::new, |col| {
+                        col.iter().map(|&v| v * 57.295_779_513_082_32).collect()
+                    })
             }
             SensorField::Setpoint(axis) => {
                 let field_name = match axis {
@@ -440,12 +418,10 @@ impl Px4Session {
                     Axis::Pitch => "pitch",
                     Axis::Yaw => "yaw",
                 };
-                // vehicle_rates_setpoint is in rad/s — convert to deg/s
-                let series = self.extract_series("vehicle_rates_setpoint", field_name);
-                series
-                    .into_iter()
-                    .map(|(_, v)| v * 57.295_779_513_082_32)
-                    .collect()
+                self.topic_column("vehicle_rates_setpoint", field_name)
+                    .map_or_else(Vec::new, |col| {
+                        col.iter().map(|&v| v * 57.295_779_513_082_32).collect()
+                    })
             }
             _ => Vec::new(),
         }
@@ -453,20 +429,23 @@ impl Px4Session {
 
     /// Returns the number of motors detected from parameters or data.
     pub fn motor_count(&self) -> usize {
-        // Use MOT_COUNT parameter if available
         if let Some(&count) = self.params.get("MOT_COUNT") {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             return (count as usize).min(8);
         }
-        // Count actuator_outputs fields with non-zero values in first message
-        let msgs = self.topic_data("actuator_outputs");
-        if let Some(msg) = msgs.first() {
+        let id = self.primary_msg_id("actuator_outputs");
+        if let Some(td) = id.and_then(|id| self.topics.get(&id)) {
             let mut count = 0;
             for i in 0..16 {
                 let key = format!("output[{i}]");
-                match msg.values.get(&key) {
-                    Some(v) if v.as_f64().abs() > 0.0 => count += 1,
-                    _ => break,
+                if let Some(col) = td.column(&key) {
+                    if col.first().is_some_and(|&v| v.abs() > 0.0) {
+                        count += 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
                 }
             }
             count
@@ -477,17 +456,19 @@ impl Px4Session {
 
     /// Returns the motor output range `(min, max)` detected from data.
     pub fn motor_range(&self) -> (f64, f64) {
-        // Detect from actual data: if max < 10, it's normalized (0-1); otherwise PWM
-        let msgs = self.topic_data("actuator_outputs");
-        let max_val = msgs
-            .iter()
-            .flat_map(|m| m.values.values())
-            .map(ULogValue::as_f64)
-            .fold(0.0_f64, f64::max);
-        if max_val > 10.0 {
-            (1000.0, 2000.0) // PWM range
+        let id = self.primary_msg_id("actuator_outputs");
+        if let Some(td) = id.and_then(|id| self.topics.get(&id)) {
+            let max_val = (0..16)
+                .filter_map(|i| td.column(&format!("output[{i}]")))
+                .flat_map(|col| col.iter())
+                .fold(0.0_f64, |a, &b| a.max(b));
+            if max_val > 10.0 {
+                (1000.0, 2000.0)
+            } else {
+                (0.0, 1.0)
+            }
         } else {
-            (0.0, 1.0) // Normalized
+            (0.0, 1.0)
         }
     }
 
