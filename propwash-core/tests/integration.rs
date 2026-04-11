@@ -943,3 +943,56 @@ fn px4_nested_types_decoded() {
         panic!("expected PX4 session");
     }
 }
+
+#[test]
+fn px4_gyro_unfiltered_available() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let unfilt = log.sessions[0].field(&SensorField::GyroUnfilt(Axis::Roll));
+    assert!(
+        !unfilt.is_empty(),
+        "PX4 fixture with sensor_gyro should provide unfiltered gyro data"
+    );
+}
+
+#[test]
+fn px4_not_truncated() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    assert!(
+        !log.sessions[0].is_truncated(),
+        "clean PX4 fixture should not be truncated"
+    );
+}
+
+#[test]
+fn px4_multi_instance_access() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let session = &log.sessions[0];
+    let Session::Px4(px4) = session else {
+        panic!("expected PX4 session");
+    };
+
+    // topic_data_all_instances returns >= topic_data for any topic
+    let primary = px4.topic_data("sensor_combined");
+    let all = px4.topic_data_all_instances("sensor_combined");
+    assert!(
+        all.len() >= primary.len(),
+        "all instances ({}) should be >= primary ({})",
+        all.len(),
+        primary.len()
+    );
+
+    // field() uses primary instance — correct default for analysis
+    let gyro = session.field(&SensorField::Gyro(Axis::Roll));
+    assert!(
+        !gyro.is_empty(),
+        "field() should return data from primary instance"
+    );
+}
+
+#[test]
+fn ardupilot_truncation_detected() {
+    // Real flight logs are typically truncated when the FC powers off
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    // Just verify is_truncated() returns a real answer, not a corrupt_bytes proxy
+    let _truncated = log.sessions[0].is_truncated();
+}

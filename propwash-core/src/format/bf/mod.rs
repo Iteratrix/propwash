@@ -69,6 +69,7 @@ pub(crate) fn decode(data: &[u8]) -> Log {
             raw_session.frames = parsed_frames.main;
             raw_session.slow_frames = parsed_frames.slow;
             raw_session.gps_frames = parsed_frames.gps;
+            raw_session.gps_home = parsed_frames.gps_home;
             raw_session.events = parsed_frames.events;
             raw_session.stats = parsed_frames.stats;
         }

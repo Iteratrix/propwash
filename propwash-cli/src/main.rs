@@ -119,18 +119,28 @@ fn cmd_info(path: &str, json: bool) {
 
         println!(
             "  RPM telemetry:  {}",
-            if session.has_rpm_telemetry() {
-                "yes"
-            } else {
+            if session
+                .field(&propwash_core::types::SensorField::ERpm(
+                    propwash_core::types::MotorIndex(0),
+                ))
+                .is_empty()
+            {
                 "no"
+            } else {
+                "yes"
             }
         );
         println!(
             "  Gyro unfilt:    {}",
-            if session.has_gyro_unfiltered() {
-                "yes"
-            } else {
+            if session
+                .field(&propwash_core::types::SensorField::GyroUnfilt(
+                    propwash_core::types::Axis::Roll,
+                ))
+                .is_empty()
+            {
                 "no"
+            } else {
+                "yes"
             }
         );
         println!(

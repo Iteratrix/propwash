@@ -370,12 +370,6 @@ impl Session {
     pub fn is_truncated(&self) -> bool {
         dispatch!(self, is_truncated)
     }
-    pub fn has_rpm_telemetry(&self) -> bool {
-        dispatch!(self, has_rpm_telemetry)
-    }
-    pub fn has_gyro_unfiltered(&self) -> bool {
-        dispatch!(self, has_gyro_unfiltered)
-    }
     pub fn corrupt_bytes(&self) -> usize {
         dispatch!(self, corrupt_bytes)
     }

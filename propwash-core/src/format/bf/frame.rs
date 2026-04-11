@@ -13,6 +13,7 @@ pub(crate) struct ParsedFrames {
     pub main: Vec<BfFrame>,
     pub slow: Vec<BfFrame>,
     pub gps: Vec<BfFrame>,
+    pub gps_home: Option<Vec<i64>>,
     pub events: Vec<BfEvent>,
     pub stats: BfParseStats,
 }
@@ -66,6 +67,7 @@ pub(crate) fn parse_session_frames(
     let mut main_frames: Vec<BfFrame> = Vec::new();
     let mut slow_frames: Vec<BfFrame> = Vec::new();
     let mut gps_frames: Vec<BfFrame> = Vec::new();
+    let mut gps_home: Option<Vec<i64>> = None;
     let mut events: Vec<BfEvent> = Vec::new();
 
     let fields = &session.main_field_defs.fields;
@@ -221,9 +223,15 @@ pub(crate) fn parse_session_frames(
 
             FrameMarker::GpsHome => {
                 if let Some(home_defs) = &session.gps_home_field_defs {
-                    if decode_simple_frame(&mut reader, &home_defs.fields).is_err() {
-                        reader.restore(frame_start);
-                        reader.skip(1);
+                    match decode_simple_frame(&mut reader, &home_defs.fields) {
+                        Ok(values) => {
+                            gps_home = Some(values);
+                        }
+                        Err(InternalError::Eof) => break,
+                        Err(_) => {
+                            reader.restore(frame_start);
+                            reader.skip(1);
+                        }
                     }
                 }
             }
@@ -270,6 +278,7 @@ pub(crate) fn parse_session_frames(
         main: main_frames,
         slow: slow_frames,
         gps: gps_frames,
+        gps_home,
         events,
         stats,
     }
