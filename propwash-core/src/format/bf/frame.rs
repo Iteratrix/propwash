@@ -74,6 +74,22 @@ pub(crate) fn parse_session_frames(
     let p_encodings = &session.p_encodings;
     let p_predictors = &session.p_predictors;
 
+    // Pre-cache I-frame encodings (was .collect() per frame)
+    let i_encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
+    // Pre-cache simple frame encodings
+    let slow_encodings: Vec<Encoding> = session
+        .slow_field_defs
+        .as_ref()
+        .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+    let gps_encodings: Vec<Encoding> = session
+        .gps_field_defs
+        .as_ref()
+        .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+    let gps_home_encodings: Vec<Encoding> = session
+        .gps_home_field_defs
+        .as_ref()
+        .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+
     let motor0_idx = session
         .main_field_defs
         .index_of(&SensorField::Motor(MotorIndex(0)));
@@ -85,6 +101,8 @@ pub(crate) fn parse_session_frames(
     let mut ctx = DecodeContext::new(session);
     let mut frame_index: usize = 0;
     let mut stats = BfParseStats::default();
+    // Reusable scratch buffer for raw decoded values
+    let mut raw_buf: Vec<i32> = Vec::with_capacity(fields.len());
 
     while !reader.is_exhausted() {
         let frame_start = reader.save_point();
@@ -104,10 +122,12 @@ pub(crate) fn parse_session_frames(
                 let result = decode_i_frame(
                     &mut reader,
                     fields,
+                    &i_encodings,
                     session,
                     motor0_idx,
                     frame_abs_offset,
                     frame_index,
+                    &mut raw_buf,
                 );
                 match result {
                     Ok(frame) => {
@@ -155,6 +175,7 @@ pub(crate) fn parse_session_frames(
                     skipped,
                     frame_abs_offset,
                     frame_index,
+                    &mut raw_buf,
                 );
                 match result {
                     Ok(frame) => {
@@ -181,7 +202,12 @@ pub(crate) fn parse_session_frames(
 
             FrameMarker::Slow => {
                 if let Some(slow_defs) = &session.slow_field_defs {
-                    match decode_simple_frame(&mut reader, &slow_defs.fields) {
+                    match decode_simple_frame(
+                        &mut reader,
+                        &slow_encodings,
+                        &mut raw_buf,
+                        slow_defs.len(),
+                    ) {
                         Ok(values) => {
                             slow_frames.push(BfFrame {
                                 values,
@@ -202,7 +228,12 @@ pub(crate) fn parse_session_frames(
 
             FrameMarker::Gps => {
                 if let Some(gps_defs) = &session.gps_field_defs {
-                    match decode_simple_frame(&mut reader, &gps_defs.fields) {
+                    match decode_simple_frame(
+                        &mut reader,
+                        &gps_encodings,
+                        &mut raw_buf,
+                        gps_defs.len(),
+                    ) {
                         Ok(values) => {
                             gps_frames.push(BfFrame {
                                 values,
@@ -223,7 +254,12 @@ pub(crate) fn parse_session_frames(
 
             FrameMarker::GpsHome => {
                 if let Some(home_defs) = &session.gps_home_field_defs {
-                    match decode_simple_frame(&mut reader, &home_defs.fields) {
+                    match decode_simple_frame(
+                        &mut reader,
+                        &gps_home_encodings,
+                        &mut raw_buf,
+                        home_defs.len(),
+                    ) {
                         Ok(values) => {
                             gps_home = Some(values);
                         }
@@ -303,21 +339,21 @@ pub(crate) fn parse_session_frames(
 }
 
 /// Decode raw field values from the stream, handling grouped encodings.
-/// Returns a Vec of i32 values in field-definition order.
+/// Writes directly into the caller-provided `values` buffer (must be `fields.len()` long).
 fn decode_fields(
     reader: &mut Reader<'_>,
-    fields: &[BfFieldDef],
     encodings: &[Encoding],
-) -> Result<Vec<i32>, InternalError> {
-    let n = fields.len();
-    let mut values = vec![0i32; n];
+    values: &mut [i32],
+) -> Result<(), InternalError> {
+    let n = values.len();
     let mut i = 0;
 
     while i < n {
-        let enc = encodings.get(i).copied().unwrap_or(Encoding::SignedVb);
+        let enc = encodings[i];
 
         match enc {
             Encoding::Null => {
+                values[i] = 0;
                 i += 1;
             }
             Encoding::UnsignedVb => {
@@ -346,8 +382,7 @@ fn decode_fields(
             }
             Encoding::Tag8_8Svb => {
                 let count = count_consecutive(encodings, i, enc, 8);
-                let raw = read_tag8_8svb(reader, count)?;
-                values[i..i + count].copy_from_slice(&raw[..count]);
+                read_tag8_8svb(reader, count, &mut values[i..i + count])?;
                 i += count;
             }
             Encoding::Tag2_3SVariable => {
@@ -362,7 +397,7 @@ fn decode_fields(
             }
         }
     }
-    Ok(values)
+    Ok(())
 }
 
 fn count_consecutive(
@@ -383,23 +418,26 @@ fn count_consecutive(
 }
 
 /// Decode an I-frame (keyframe).
+#[allow(clippy::too_many_arguments)]
 fn decode_i_frame(
     reader: &mut Reader<'_>,
     fields: &[BfFieldDef],
+    i_encodings: &[Encoding],
     session: &BfSession,
     motor0_idx: Option<usize>,
     byte_offset: usize,
     frame_index: usize,
+    raw_buf: &mut Vec<i32>,
 ) -> Result<BfFrame, InternalError> {
-    let encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
-    let raw = decode_fields(reader, fields, &encodings)?;
+    raw_buf.resize(fields.len(), 0);
+    decode_fields(reader, i_encodings, raw_buf)?;
 
     // Apply I-frame predictors in order (MOTOR_0 depends on motor[0])
     let mut values: Vec<i64> = Vec::with_capacity(fields.len());
     for (i, field) in fields.iter().enumerate() {
         let predicted = apply_i_predictor(
             field.predictor,
-            raw[i],
+            raw_buf[i],
             field.value_sign,
             &values,
             motor0_idx,
@@ -430,15 +468,17 @@ fn decode_p_frame(
     skipped_frames: u32,
     byte_offset: usize,
     frame_index: usize,
+    raw_buf: &mut Vec<i32>,
 ) -> Result<BfFrame, InternalError> {
-    let raw = decode_fields(reader, fields, p_encodings)?;
+    raw_buf.resize(fields.len(), 0);
+    decode_fields(reader, p_encodings, raw_buf)?;
 
     let mut values: Vec<i64> = Vec::with_capacity(fields.len());
     for (j, field) in fields.iter().enumerate() {
         let predictor = p_predictors.get(j).copied().unwrap_or(Predictor::Zero);
         let predicted = apply_p_predictor(
             predictor,
-            raw[j],
+            raw_buf[j],
             j,
             field.value_sign,
             prev1,
@@ -461,11 +501,13 @@ fn decode_p_frame(
 /// Decode a simple frame (S, G, H) — no predictors, just raw decode.
 fn decode_simple_frame(
     reader: &mut Reader<'_>,
-    fields: &[BfFieldDef],
+    encodings: &[Encoding],
+    raw_buf: &mut Vec<i32>,
+    n_fields: usize,
 ) -> Result<Vec<i64>, InternalError> {
-    let encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
-    let raw = decode_fields(reader, fields, &encodings)?;
-    Ok(raw.into_iter().map(i64::from).collect())
+    raw_buf.resize(n_fields, 0);
+    decode_fields(reader, encodings, raw_buf)?;
+    Ok(raw_buf.iter().map(|&v| i64::from(v)).collect())
 }
 
 /// Parse an event frame.
