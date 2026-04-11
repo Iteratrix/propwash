@@ -1181,3 +1181,418 @@ fn ap_esc_telemetry_parsed() {
         gyro_roll[0]
     );
 }
+
+// ── BF event parsing ──────────────────────────────────────────────
+
+#[test]
+fn bf_events_parsed() {
+    use propwash_core::format::bf::types::BfEvent;
+
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let Session::Betaflight(bf) = &log.sessions[1] else {
+        panic!("expected Betaflight");
+    };
+    assert!(!bf.events.is_empty(), "should have parsed events");
+    let has_log_end = bf.events.iter().any(|e| matches!(e, BfEvent::LogEnd));
+    assert!(has_log_end, "session 1 should have a LogEnd event");
+}
+
+#[test]
+fn bf_events_gps_rescue_fixture() {
+    use propwash_core::format::bf::types::BfEvent;
+
+    let log = parse_fixture("fc-blackbox/btfl_gps_rescue.bbl");
+    let Session::Betaflight(bf) = &log.sessions[0] else {
+        panic!("expected Betaflight");
+    };
+    assert!(
+        !bf.events.is_empty(),
+        "GPS rescue fixture should have events"
+    );
+    let has_sync = bf
+        .events
+        .iter()
+        .any(|e| matches!(e, BfEvent::SyncBeep { .. }));
+    assert!(has_sync, "should have a SyncBeep event");
+    assert_eq!(
+        bf.events.len(),
+        bf.stats.event_count,
+        "events vec length should match stats.event_count"
+    );
+}
+
+// ── BF slow frame / Vbat ──────────────────────────────────────────
+
+#[test]
+fn bf_vbat_from_slow_frames() {
+    let log = parse_fixture("fc-blackbox/btfl_gps_rescue.bbl");
+    let vbat = log.sessions[0].field(&SensorField::Vbat);
+    assert!(!vbat.is_empty(), "should have Vbat data from slow frames");
+    for &v in vbat.iter().take(10) {
+        assert!(
+            v >= 0.0 && v < 5000.0,
+            "Vbat value should be reasonable, got {v}"
+        );
+    }
+}
+
+// ── AP Vbat ───────────────────────────────────────────────────────
+
+#[test]
+fn ap_vbat() {
+    let log = parse_fixture("ardupilot/esc-telem-quadplane-v4.4.4.bin");
+    let vbat = log.sessions[0].field(&SensorField::Vbat);
+    assert!(!vbat.is_empty(), "ESC fixture should have BAT voltage data");
+    assert!(
+        vbat[0] > 20.0 && vbat[0] < 60.0,
+        "voltage should be reasonable (~28V), got {}",
+        vbat[0]
+    );
+}
+
+// ── AP PID data ───────────────────────────────────────────────────
+
+#[test]
+fn ap_pid_data() {
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    let pid_p = log.sessions[0].field(&SensorField::PidP(Axis::Roll));
+    assert!(
+        !pid_p.is_empty(),
+        "copter should have PIDR messages with P values"
+    );
+    let pid_i = log.sessions[0].field(&SensorField::PidI(Axis::Roll));
+    assert!(!pid_i.is_empty(), "should have PIDR I values");
+    let pid_d = log.sessions[0].field(&SensorField::PidD(Axis::Roll));
+    assert!(!pid_d.is_empty(), "should have PIDR D values");
+    assert_eq!(
+        pid_p.len(),
+        pid_i.len(),
+        "PID P and I should have same length"
+    );
+    assert_eq!(
+        pid_p.len(),
+        pid_d.len(),
+        "PID P and D should have same length"
+    );
+}
+
+// ── PX4 setpoint ──────────────────────────────────────────────────
+
+#[test]
+fn px4_setpoint_data() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let setpoint = log.sessions[0].field(&SensorField::Setpoint(Axis::Roll));
+    assert!(
+        !setpoint.is_empty(),
+        "should have vehicle_rates_setpoint data for roll"
+    );
+    for axis in Axis::ALL {
+        let data = log.sessions[0].field(&SensorField::Setpoint(axis));
+        assert!(!data.is_empty(), "setpoint {axis} should have data");
+    }
+}
+
+// ── PX4 logging message content ───────────────────────────────────
+
+#[test]
+fn px4_logging_message_content() {
+    let log = parse_fixture("px4/sample_logging_tagged_and_default_params.ulg");
+    let Session::Px4(px4) = &log.sessions[0] else {
+        panic!("expected PX4 session");
+    };
+    assert!(!px4.log_messages.is_empty(), "should have logging messages");
+    let first = &px4.log_messages[0];
+    assert!(
+        !first.message.is_empty(),
+        "first log message should have text"
+    );
+    for msg in &px4.log_messages {
+        assert!(msg.level <= 7, "log level should be 0-7, got {}", msg.level);
+    }
+}
+
+// ---- Golden value tests: BF-family variants ----------------------
+
+#[test]
+fn emuflight_golden_values() {
+    let log = parse_fixture("gimbal-ghost/emuf_001.bbl");
+    let session = &log.sessions[0];
+
+    assert!(
+        session.firmware_version().contains("EmuFlight"),
+        "expected EmuFlight firmware, got: {}",
+        session.firmware_version()
+    );
+    assert!(
+        session.firmware_version().contains("0.4.1"),
+        "expected version 0.4.1, got: {}",
+        session.firmware_version()
+    );
+    assert_eq!(session.frame_count(), 223_997);
+    assert_eq!(session.motor_count(), 4);
+    assert!(
+        (session.sample_rate_hz() - 1639.75).abs() < 1.0,
+        "expected ~1639.75 Hz sample rate, got {}",
+        session.sample_rate_hz()
+    );
+
+    let bf = get_bf(session);
+    assert_eq!(field_val(bf, 0, "gyroADC[0]"), 0);
+}
+
+#[test]
+fn rotorflight_golden_values() {
+    let log = parse_fixture("rotorflight/LOG246.TXT");
+    let session = &log.sessions[0];
+
+    assert!(
+        session.firmware_version().contains("Rotorflight"),
+        "expected Rotorflight firmware, got: {}",
+        session.firmware_version()
+    );
+    assert!(
+        session.firmware_version().contains("4.3.0"),
+        "expected version 4.3.0, got: {}",
+        session.firmware_version()
+    );
+    assert_eq!(session.frame_count(), 9390);
+    assert_eq!(session.motor_count(), 2);
+    assert!(
+        (session.sample_rate_hz() - 498.5).abs() < 1.0,
+        "expected ~498.5 Hz sample rate, got {}",
+        session.sample_rate_hz()
+    );
+
+    let bf = get_bf(session);
+    assert_eq!(field_val(bf, 0, "gyroADC[0]"), -14);
+}
+
+#[test]
+fn inav_golden_values() {
+    let log = parse_fixture("inav/LOG00001.TXT");
+    let session = &log.sessions[0];
+
+    assert!(
+        session.firmware_version().contains("INAV"),
+        "expected INAV firmware, got: {}",
+        session.firmware_version()
+    );
+    assert!(
+        session.firmware_version().contains("7.0.0"),
+        "expected version 7.0.0, got: {}",
+        session.firmware_version()
+    );
+    assert_eq!(session.frame_count(), 824);
+    assert_eq!(session.motor_count(), 0);
+    assert!(
+        (session.sample_rate_hz() - 99.94).abs() < 1.0,
+        "expected ~99.94 Hz sample rate, got {}",
+        session.sample_rate_hz()
+    );
+
+    let bf = get_bf(session);
+    assert_eq!(field_val(bf, 0, "gyroADC[0]"), 0);
+}
+
+#[test]
+fn cleanflight_golden_values() {
+    let log = parse_fixture("cleanflight/LOG00568.TXT");
+    let session = &log.sessions[0];
+
+    // Cleanflight firmware string is just the git hash
+    assert!(
+        session.firmware_version().contains("d72983e"),
+        "expected firmware hash d72983e, got: {}",
+        session.firmware_version()
+    );
+    assert_eq!(session.frame_count(), 170_492);
+    assert_eq!(session.motor_count(), 4);
+    assert!(
+        (session.sample_rate_hz() - 415.44).abs() < 1.0,
+        "expected ~415.44 Hz sample rate, got {}",
+        session.sample_rate_hz()
+    );
+
+    let bf = get_bf(session);
+    assert_eq!(field_val(bf, 0, "gyroADC[0]"), -2);
+}
+
+// ---- Golden value tests: ArduPilot variants -----------------------
+
+#[test]
+fn ardupilot_dronekit_golden_values() {
+    let log = parse_fixture("ardupilot/dronekit-copter-log171.bin");
+    let session = &log.sessions[0];
+
+    // Firmware version verified against pymavlink MSG output
+    assert!(
+        session.firmware_version().contains("Copter"),
+        "expected Copter firmware, got: {}",
+        session.firmware_version()
+    );
+    assert!(
+        session.firmware_version().contains("3.3"),
+        "expected version 3.3, got: {}",
+        session.firmware_version()
+    );
+
+    // IMU frame count verified against pymavlink: 11916
+    assert_eq!(session.frame_count(), 11_916);
+    assert_eq!(session.motor_count(), 4);
+
+    // First gyro value verified against pymavlink GyrX: 0.000143...
+    let gyro = session.field(&SensorField::Gyro(Axis::Roll));
+    assert!(!gyro.is_empty(), "should have gyro data");
+    assert!(
+        gyro[0].abs() < 0.01,
+        "first gyro[roll] should be near zero, got {}",
+        gyro[0]
+    );
+
+    assert!(
+        (session.duration_seconds() - 254.07).abs() < 1.0,
+        "expected ~254s duration, got {}",
+        session.duration_seconds()
+    );
+}
+
+// ── Analysis pipeline tests ────────────────────────────────────────
+
+#[test]
+fn analysis_detects_events() {
+    // LOG00007.BFL is a large flight log — should trigger event detectors
+    let log = parse_fixture("fc-blackbox/LOG00007.BFL");
+    let analysis = propwash_core::analysis::analyze(&log.sessions[0]);
+    assert!(
+        !analysis.events.is_empty(),
+        "LOG00007 should detect events (gyro spikes, motor saturation, etc.)"
+    );
+}
+
+#[test]
+fn analysis_produces_vibration_spectra() {
+    let log = parse_fixture("fc-blackbox/LOG00007.BFL");
+    let analysis = propwash_core::analysis::analyze(&log.sessions[0]);
+    let vib = analysis
+        .vibration
+        .as_ref()
+        .expect("should have vibration analysis");
+    assert!(!vib.spectra.is_empty(), "should have frequency spectra");
+    for spectrum in &vib.spectra {
+        assert!(
+            !spectrum.peaks.is_empty(),
+            "should have peaks for {}",
+            spectrum.axis
+        );
+        for peak in &spectrum.peaks {
+            assert!(peak.frequency_hz > 0.0, "peak frequency should be positive");
+            assert!(
+                peak.frequency_hz < 500.0,
+                "peak {} Hz should be below Nyquist for ~1kHz sample rate",
+                peak.frequency_hz
+            );
+        }
+    }
+}
+
+#[test]
+fn analysis_produces_diagnostics() {
+    let log = parse_fixture("fc-blackbox/LOG00007.BFL");
+    let analysis = propwash_core::analysis::analyze(&log.sessions[0]);
+    // Large flight log should trigger diagnostics
+    assert!(
+        !analysis.diagnostics.is_empty(),
+        "LOG00007 should produce diagnostics"
+    );
+}
+
+#[test]
+fn analysis_summary_matches_session() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let session = &log.sessions[0];
+    let analysis = propwash_core::analysis::analyze(session);
+    assert_eq!(
+        analysis.summary.frame_count,
+        session.frame_count(),
+        "summary frame count should match session"
+    );
+    assert_eq!(
+        analysis.summary.motor_count,
+        session.motor_count(),
+        "summary motor count should match session"
+    );
+}
+
+#[test]
+fn analysis_episodes_consolidate() {
+    let log = parse_fixture("fc-blackbox/LOG00007.BFL");
+    let analysis = propwash_core::analysis::analyze(&log.sessions[0]);
+    let episodes = propwash_core::analysis::episodes::consolidate(&analysis.events);
+    // With events present, consolidation should produce episodes
+    if !analysis.events.is_empty() {
+        assert!(
+            !episodes.is_empty(),
+            "consolidate should produce episodes from {} events",
+            analysis.events.len()
+        );
+        for ep in &episodes {
+            assert!(ep.event_count > 0, "each episode should have events");
+            assert!(ep.end_time >= ep.start_time, "end >= start");
+        }
+    }
+}
+
+#[test]
+fn analysis_works_for_ardupilot() {
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    let analysis = propwash_core::analysis::analyze(&log.sessions[0]);
+    assert!(
+        analysis.summary.frame_count > 0,
+        "ardupilot analysis should have frames"
+    );
+}
+
+#[test]
+fn analysis_works_for_px4() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let analysis = propwash_core::analysis::analyze(&log.sessions[0]);
+    assert!(
+        analysis.summary.frame_count > 0,
+        "px4 analysis should have frames"
+    );
+}
+
+// ── Filter config tests ────────────────────────────────────────────
+
+#[test]
+fn bf_filter_config() {
+    let log = parse_fixture("fc-blackbox/btfl_001.bbl");
+    let config = log.sessions[0].filter_config();
+    // Betaflight logs should have a gyro LPF configured
+    assert!(
+        config.gyro_lpf_hz.is_some(),
+        "BF should have gyro_lpf_hz, got {config:?}"
+    );
+}
+
+#[test]
+fn ap_filter_config() {
+    let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
+    let config = log.sessions[0].filter_config();
+    // ArduPilot with INS_GYRO_FILTER parameter
+    assert!(
+        config.gyro_lpf_hz.is_some(),
+        "AP should have gyro_lpf_hz from INS_GYRO_FILTER, got {config:?}"
+    );
+}
+
+#[test]
+fn px4_filter_config() {
+    let log = parse_fixture("px4/sample_log_small.ulg");
+    let config = log.sessions[0].filter_config();
+    // PX4 should have IMU_GYRO_CUTOFF parameter
+    assert!(
+        config.gyro_lpf_hz.is_some(),
+        "PX4 should have gyro_lpf_hz from IMU_GYRO_CUTOFF, got {config:?}"
+    );
+}
