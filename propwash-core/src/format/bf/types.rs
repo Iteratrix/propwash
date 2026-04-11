@@ -154,19 +154,14 @@ pub enum BfFrameKind {
     Inter,
 }
 
-/// A single decoded Betaflight frame with provenance.
-/// Values are indexed by field position (matching `BfFrameDefs`).
-/// Use `BfSession::get_field()` for name-based access.
+/// A single decoded Betaflight frame (transient — used during parsing,
+/// then transposed into columnar storage).
 #[derive(Debug, Clone)]
-pub struct BfFrame {
+pub(crate) struct BfFrame {
     /// Field values indexed by position in the session's `main_field_defs`.
     pub values: Vec<i64>,
     /// Whether this was an I-frame or P-frame.
     pub kind: BfFrameKind,
-    /// Byte offset in the original file.
-    pub byte_offset: usize,
-    /// Sequential index within the session (0-based).
-    pub frame_index: usize,
 }
 
 /// Discrete events recorded during a Betaflight flight.

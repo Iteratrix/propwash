@@ -99,14 +99,12 @@ pub(crate) fn parse_session_frames(
         .index_of(&SensorField::LoopIteration);
 
     let mut ctx = DecodeContext::new(session);
-    let mut frame_index: usize = 0;
     let mut stats = BfParseStats::default();
     // Reusable scratch buffer for raw decoded values
     let mut raw_buf: Vec<i32> = Vec::with_capacity(fields.len());
 
     while !reader.is_exhausted() {
         let frame_start = reader.save_point();
-        let frame_abs_offset = reader.abs_pos();
 
         let marker = match reader.read_byte().map(FrameMarker::try_from) {
             Ok(Ok(m)) => m,
@@ -125,8 +123,6 @@ pub(crate) fn parse_session_frames(
                     &i_encodings,
                     session,
                     motor0_idx,
-                    frame_abs_offset,
-                    frame_index,
                     &mut raw_buf,
                 );
                 match result {
@@ -138,7 +134,6 @@ pub(crate) fn parse_session_frames(
                                 .unwrap_or(0) as u32;
                             ctx.reset_from_i_frame(&frame.values, iteration);
                             main_frames.push(frame);
-                            frame_index += 1;
                             stats.i_frame_count += 1;
                         } else {
                             stats.corrupt_bytes += 1;
@@ -173,8 +168,6 @@ pub(crate) fn parse_session_frames(
                     session,
                     time_idx,
                     skipped,
-                    frame_abs_offset,
-                    frame_index,
                     &mut raw_buf,
                 );
                 match result {
@@ -182,7 +175,6 @@ pub(crate) fn parse_session_frames(
                         if validate_next_marker(&reader) {
                             ctx.advance_from_p_frame(&frame.values);
                             main_frames.push(frame);
-                            frame_index += 1;
                             stats.p_frame_count += 1;
                         } else {
                             stats.corrupt_bytes += 1;
@@ -212,8 +204,6 @@ pub(crate) fn parse_session_frames(
                             slow_frames.push(BfFrame {
                                 values,
                                 kind: BfFrameKind::Intra,
-                                byte_offset: frame_abs_offset,
-                                frame_index: slow_frames.len(),
                             });
                             stats.slow_frame_count += 1;
                         }
@@ -238,8 +228,6 @@ pub(crate) fn parse_session_frames(
                             gps_frames.push(BfFrame {
                                 values,
                                 kind: BfFrameKind::Intra,
-                                byte_offset: frame_abs_offset,
-                                frame_index: gps_frames.len(),
                             });
                             stats.gps_frame_count += 1;
                         }
@@ -425,14 +413,11 @@ fn decode_i_frame(
     i_encodings: &[Encoding],
     session: &BfSession,
     motor0_idx: Option<usize>,
-    byte_offset: usize,
-    frame_index: usize,
     raw_buf: &mut Vec<i32>,
 ) -> Result<BfFrame, InternalError> {
     raw_buf.resize(fields.len(), 0);
     decode_fields(reader, i_encodings, raw_buf)?;
 
-    // Apply I-frame predictors in order (MOTOR_0 depends on motor[0])
     let mut values: Vec<i64> = Vec::with_capacity(fields.len());
     for (i, field) in fields.iter().enumerate() {
         let predicted = apply_i_predictor(
@@ -449,8 +434,6 @@ fn decode_i_frame(
     Ok(BfFrame {
         values,
         kind: BfFrameKind::Intra,
-        byte_offset,
-        frame_index,
     })
 }
 
@@ -466,8 +449,6 @@ fn decode_p_frame(
     session: &BfSession,
     time_idx: Option<usize>,
     skipped_frames: u32,
-    byte_offset: usize,
-    frame_index: usize,
     raw_buf: &mut Vec<i32>,
 ) -> Result<BfFrame, InternalError> {
     raw_buf.resize(fields.len(), 0);
@@ -493,8 +474,6 @@ fn decode_p_frame(
     Ok(BfFrame {
         values,
         kind: BfFrameKind::Inter,
-        byte_offset,
-        frame_index,
     })
 }
 
