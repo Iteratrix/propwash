@@ -56,6 +56,10 @@ const FFT_OVERLAP: usize = 512;
 const PEAK_COUNT: usize = 5;
 const MIN_FREQ_HZ: f64 = 10.0;
 
+const SPEC_WINDOW: usize = 512;
+const SPEC_OVERLAP: usize = 384;
+const SPEC_MAX_FREQ: f64 = 1000.0;
+
 const THROTTLE_BANDS: [(f64, f64, &str); 4] = [
     (0.0, 25.0, "0-25%"),
     (25.0, 50.0, "25-50%"),
@@ -367,4 +371,108 @@ fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVib
     } else {
         None
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SpectrogramAxis {
+    pub axis: String,
+    pub time_s: Vec<f64>,
+    pub frequencies_hz: Vec<f64>,
+    pub magnitudes_db: Vec<Vec<f64>>,
+    pub max_freq_hz: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Spectrogram {
+    pub axes: Vec<SpectrogramAxis>,
+    pub sample_rate_hz: f64,
+}
+
+/// Computes a time-frequency spectrogram for the given axes.
+///
+/// Each entry in `axes` is `(axis_name, sensor_field)`. Returns `None` if the
+/// session has no valid sample rate or no axis produced output.
+#[allow(clippy::cast_precision_loss)]
+pub fn compute_spectrogram(
+    session: &Session,
+    axes: &[(&str, &SensorField)],
+) -> Option<Spectrogram> {
+    let sample_rate = session.sample_rate_hz();
+    if sample_rate <= 0.0 {
+        return None;
+    }
+
+    let freq_res = sample_rate / SPEC_WINDOW as f64;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let max_bin = ((SPEC_MAX_FREQ / freq_res) as usize).min(SPEC_WINDOW / 2);
+    let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
+
+    let time_raw = session.field(&SensorField::Time);
+    let t0 = time_raw.first().copied().unwrap_or(0.0);
+
+    let hann = hann_window(SPEC_WINDOW);
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(SPEC_WINDOW);
+
+    let step = SPEC_WINDOW - SPEC_OVERLAP;
+    let mut result_axes = Vec::new();
+
+    for &(axis_name, field) in axes {
+        let raw = session.field(field);
+        if raw.len() < SPEC_WINDOW {
+            continue;
+        }
+
+        let n_windows = (raw.len() - SPEC_WINDOW) / step + 1;
+        let mut time_s = Vec::with_capacity(n_windows);
+        let mut magnitudes_db = Vec::with_capacity(n_windows);
+
+        for w in 0..n_windows {
+            let start = w * step;
+            let mid = start + SPEC_WINDOW / 2;
+
+            let t = if mid < time_raw.len() {
+                (time_raw[mid] - t0) / 1_000_000.0
+            } else {
+                0.0
+            };
+            time_s.push(t);
+
+            let mut buffer: Vec<Complex<f64>> = (0..SPEC_WINDOW)
+                .map(|i| Complex::new(raw[start + i] * hann[i], 0.0))
+                .collect();
+
+            fft.process(&mut buffer);
+
+            let row: Vec<f64> = (0..max_bin)
+                .map(|i| {
+                    let c = buffer[i];
+                    let mag = (c.re * c.re + c.im * c.im).sqrt();
+                    if mag > 0.0 {
+                        20.0 * mag.log10()
+                    } else {
+                        -120.0
+                    }
+                })
+                .collect();
+            magnitudes_db.push(row);
+        }
+
+        result_axes.push(SpectrogramAxis {
+            axis: axis_name.to_string(),
+            time_s,
+            frequencies_hz: frequencies_hz.clone(),
+            magnitudes_db,
+            max_freq_hz: SPEC_MAX_FREQ,
+        });
+    }
+
+    if result_axes.is_empty() {
+        return None;
+    }
+
+    Some(Spectrogram {
+        axes: result_axes,
+        sample_rate_hz: sample_rate,
+    })
 }

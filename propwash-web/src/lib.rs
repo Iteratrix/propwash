@@ -1,12 +1,10 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use rustfft::num_complex::Complex;
-use rustfft::FftPlanner;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use propwash_core::analysis::{self, FlightAnalysis};
+use propwash_core::analysis::{self, fft, FlightAnalysis};
 use propwash_core::types::{Log, SensorField};
 
 thread_local! {
@@ -37,21 +35,6 @@ struct TimeseriesResult {
     sample_rate_hz: f64,
     total_frames: usize,
     decimation: usize,
-}
-
-#[derive(Serialize)]
-struct SpectrogramResult {
-    axis: String,
-    time_s: Vec<f64>,
-    frequencies_hz: Vec<f64>,
-    magnitudes_db: Vec<Vec<f64>>,
-    max_freq_hz: f64,
-}
-
-#[derive(Serialize)]
-struct SpectrogramResponse {
-    axes: Vec<SpectrogramResult>,
-    sample_rate_hz: f64,
 }
 
 #[wasm_bindgen(start)]
@@ -158,12 +141,7 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
     })
 }
 
-const SPEC_WINDOW: usize = 512;
-const SPEC_OVERLAP: usize = 384;
-const SPEC_MAX_FREQ: f64 = 1000.0;
-
 #[wasm_bindgen]
-#[allow(clippy::cast_precision_loss)]
 pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
     CURRENT_LOG.with(|cell| {
         let borrow = cell.borrow();
@@ -175,98 +153,27 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
             return r#"{"error":"invalid session index"}"#.to_string();
         };
 
-        let sample_rate = session.sample_rate_hz();
-        if sample_rate <= 0.0 {
-            return r#"{"error":"no sample rate"}"#.to_string();
-        }
-
-        let freq_res = sample_rate / SPEC_WINDOW as f64;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let max_bin = ((SPEC_MAX_FREQ / freq_res) as usize).min(SPEC_WINDOW / 2);
-        let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
-
-        let time_raw = session.field(&SensorField::Time);
-        let t0 = time_raw.first().copied().unwrap_or(0.0);
-
-        let hann = hann_window(SPEC_WINDOW);
-        let mut planner = FftPlanner::new();
-        let fft = planner.plan_fft_forward(SPEC_WINDOW);
-
-        let axis_fields: Vec<(&str, &str)> = axis_list
+        let axes: Vec<(&str, SensorField)> = axis_list
             .split(',')
-            .map(|a| {
-                let field = match a {
+            .filter_map(|a| {
+                let field_name = match a {
                     "roll" => "gyro[roll]",
                     "pitch" => "gyro[pitch]",
                     "yaw" => "gyro[yaw]",
                     other => other,
                 };
-                (a, field)
+                SensorField::parse(field_name).ok().map(|f| (a, f))
             })
             .collect();
 
-        let step = SPEC_WINDOW - SPEC_OVERLAP;
-        let mut axes = Vec::new();
+        let axis_refs: Vec<(&str, &SensorField)> =
+            axes.iter().map(|(name, field)| (*name, field)).collect();
 
-        for &(axis_name, field_name) in &axis_fields {
-            let Ok(field) = SensorField::parse(field_name) else {
-                continue;
-            };
-            let raw = session.field(&field);
-            if raw.len() < SPEC_WINDOW {
-                continue;
-            }
-
-            let n_windows = (raw.len() - SPEC_WINDOW) / step + 1;
-            let mut time_s = Vec::with_capacity(n_windows);
-            let mut magnitudes_db = Vec::with_capacity(n_windows);
-
-            for w in 0..n_windows {
-                let start = w * step;
-                let mid = start + SPEC_WINDOW / 2;
-
-                let t = if mid < time_raw.len() {
-                    (time_raw[mid] - t0) / 1_000_000.0
-                } else {
-                    0.0
-                };
-                time_s.push(t);
-
-                let mut buffer: Vec<Complex<f64>> = (0..SPEC_WINDOW)
-                    .map(|i| Complex::new(raw[start + i] * hann[i], 0.0))
-                    .collect();
-
-                fft.process(&mut buffer);
-
-                let row: Vec<f64> = (0..max_bin)
-                    .map(|i| {
-                        let c = buffer[i];
-                        let mag = (c.re * c.re + c.im * c.im).sqrt();
-                        if mag > 0.0 {
-                            20.0 * mag.log10()
-                        } else {
-                            -120.0
-                        }
-                    })
-                    .collect();
-                magnitudes_db.push(row);
-            }
-
-            axes.push(SpectrogramResult {
-                axis: axis_name.to_string(),
-                time_s,
-                frequencies_hz: frequencies_hz.clone(),
-                magnitudes_db,
-                max_freq_hz: SPEC_MAX_FREQ,
-            });
-        }
-
-        let response = SpectrogramResponse {
-            axes,
-            sample_rate_hz: sample_rate,
+        let Some(spectrogram) = fft::compute_spectrogram(session, &axis_refs) else {
+            return r#"{"error":"no spectrogram data"}"#.to_string();
         };
 
-        serde_json::to_string(&response)
+        serde_json::to_string(&spectrogram)
             .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
@@ -339,14 +246,4 @@ pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list
         serde_json::to_string(&result)
             .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn hann_window(size: usize) -> Vec<f64> {
-    (0..size)
-        .map(|i| {
-            let x = std::f64::consts::PI * 2.0 * i as f64 / (size - 1) as f64;
-            0.5 * (1.0 - x.cos())
-        })
-        .collect()
 }
