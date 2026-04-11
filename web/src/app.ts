@@ -1,8 +1,10 @@
 import init, { analyze, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "../pkg/propwash_web.js";
 import type { AnalysisResult, SessionResult, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
+import { formatEventType, formatEventDetails, eventColor, heatColor, bucketDiagnostics, classifyDelta } from "./format.js";
 
 declare const echarts: any;
 declare const uPlot: any;
+declare const __WASM_URL__: string;
 
 const $ = (sel: string): HTMLElement => document.querySelector(sel) as HTMLElement;
 const $$ = (sel: string): NodeListOf<HTMLElement> => document.querySelectorAll(sel) as NodeListOf<HTMLElement>;
@@ -14,7 +16,8 @@ declare global {
 }
 
 function chartWidth(): number {
-  return Math.min($("main").clientWidth - 64, 880);
+  const padding = window.innerWidth <= 640 ? 24 : 64;
+  return Math.min($("main").clientWidth - padding, 880);
 }
 
 let wasmReady = false;
@@ -66,7 +69,7 @@ let compareResult: AnalysisResult | null = null;
 let renderedViews = new Set<string>();
 
 async function boot() {
-  await init();
+  await init({ module_or_path: __WASM_URL__ });
   wasmReady = true;
   setupDropZone();
   setupCompareDropZone();
@@ -190,8 +193,7 @@ function renderComparisonSummary(a: SessionResult, b: SessionResult): void {
 
   for (const [label, va, vb, better] of eventRows) {
     const diff = (vb as number) - (va as number);
-    let cls = "neutral";
-    if (diff !== 0) cls = (better === "lower" ? (diff < 0 ? "better" : "worse") : (diff > 0 ? "better" : "worse"));
+    const cls = classifyDelta(diff, better as "lower" | "higher");
     const sign = diff > 0 ? "+" : "";
     html += `<tr><td>${label}</td><td>${va}</td><td>${vb}</td><td class="delta ${cls}">${sign}${diff}</td></tr>`;
   }
@@ -204,12 +206,7 @@ function renderComparisonDiagnostics(a: SessionResult, b: SessionResult): void {
   const diagA = a.analysis.diagnostics || [];
   const diagB = b.analysis.diagnostics || [];
 
-  const msgsA = new Set(diagA.map((d: any) => d.message));
-  const msgsB = new Set(diagB.map((d: any) => d.message));
-
-  const fixed = diagA.filter((d: any) => !msgsB.has(d.message));
-  const newIssues = diagB.filter((d: any) => !msgsA.has(d.message));
-  const unchanged = diagB.filter((d: any) => msgsA.has(d.message));
+  const { fixed, newIssues, unchanged } = bucketDiagnostics(diagA, diagB);
 
   let html = "";
 
@@ -405,6 +402,27 @@ function renderViewIfNeeded(view: string): void {
   }
 }
 
+function navigateToTime(seconds: number): void {
+  // Switch to timeline tab
+  const tabs = $$("#view-tabs .view-tab");
+  tabs.forEach((t) => t.classList.remove("active"));
+  const timelineTab = $(".view-tab[data-view='timeline']");
+  timelineTab.classList.add("active");
+  $$(".view-content").forEach((v) => v.classList.remove("active"));
+  $(`.view-content[data-view="timeline"]`)!.classList.add("active");
+
+  // Ensure timeline is rendered
+  renderViewIfNeeded("timeline");
+
+  // Zoom to ±1.5s window around the event
+  const window = 1.5;
+  const min = Math.max(0, seconds - window);
+  const max = seconds + window;
+  for (const p of tsPlots) {
+    p.setScale("x", { min, max });
+  }
+}
+
 function setupTimeseriesControls() {
   const tabs = $$("#ts-tabs .ts-tab");
   tabs.forEach((tab) => {
@@ -552,18 +570,6 @@ function eventMarkersPlugin(events: FlightEvent[]): any {
   };
 }
 
-function eventColor(type: string): string {
-  switch (type) {
-    case "ThrottleChop": return "#e85454";
-    case "GyroSpike": return "#e8944a";
-    case "MotorSaturation": return "#e8b84a";
-    case "Desync": return "#e85454";
-    case "Overshoot": return "#5b8def";
-    case "ThrottlePunch": return "#4ec88c";
-    case "FirmwareMessage": return "#e8b84a";
-    default: return "#ffffff";
-  }
-}
 
 function renderSummary(session: SessionResult): void {
   const grid = $("#summary-grid");
@@ -796,7 +802,13 @@ function renderDiagnostics(diagnostics: Diagnostic[]): void {
     return;
   }
 
-  list.innerHTML = diagnostics
+  // Sort by severity: Problem first, then Warning, then Info
+  const order: Record<string, number> = { Problem: 0, Warning: 1, Info: 2 };
+  const sorted = [...diagnostics].sort(
+    (a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3)
+  );
+
+  list.innerHTML = sorted
     .map((d) =>
       `<div class="diagnostic ${d.severity}">
         <div class="diag-header">
@@ -1096,22 +1108,6 @@ function drawSpectrogram(canvas: HTMLCanvasElement, axis: any): void {
   ctx.fillText("0 Hz", width - 4, height - 4);
 }
 
-function heatColor(t: number): [number, number, number] {
-  if (t < 0.25) {
-    const s = t / 0.25;
-    return [0, 0, Math.round(80 + 175 * s)];
-  }
-  if (t < 0.5) {
-    const s = (t - 0.25) / 0.25;
-    return [0, Math.round(255 * s), 255];
-  }
-  if (t < 0.75) {
-    const s = (t - 0.5) / 0.25;
-    return [Math.round(255 * s), 255, Math.round(255 * (1 - s))];
-  }
-  const s = (t - 0.75) / 0.25;
-  return [255, Math.round(255 * (1 - s)), 0];
-}
 
 function renderThrottleBands(vibration: VibrationAnalysis | null): void {
   const container = $("#throttle-plots");
@@ -1292,54 +1288,78 @@ function renderEvents(events: FlightEvent[]): void {
     return;
   }
 
+  // Collect unique event types for filter pills
+  const types = [...new Set(events.map((e) => e.kind.type))];
+  const activeTypes = new Set(types);
+
+  const container = document.createElement("div");
+
+  // Filter pills
+  const filters = document.createElement("div");
+  filters.className = "event-filters";
+  for (const type of types) {
+    const pill = document.createElement("button");
+    pill.className = `event-pill active ${type}`;
+    pill.textContent = `${formatEventType(type)} (${events.filter((e) => e.kind.type === type).length})`;
+    pill.dataset.type = type;
+    pill.addEventListener("click", () => {
+      if (activeTypes.has(type)) {
+        activeTypes.delete(type);
+        pill.classList.remove("active");
+      } else {
+        activeTypes.add(type);
+        pill.classList.add("active");
+      }
+      renderTable();
+    });
+    filters.appendChild(pill);
+  }
+  container.appendChild(filters);
+
+  // Table container
+  const tableWrap = document.createElement("div");
+  container.appendChild(tableWrap);
+
   const MAX_DISPLAY = 200;
-  const shown = events.slice(0, MAX_DISPLAY);
 
-  let html = `<table class="event-table">
-    <thead><tr><th>Time</th><th>Type</th><th>Details</th></tr></thead>
-    <tbody>`;
+  function renderTable() {
+    const filtered = events.filter((e) => activeTypes.has(e.kind.type));
+    const shown = filtered.slice(0, MAX_DISPLAY);
 
-  for (const e of shown) {
-    html += `<tr>
-      <td>${e.time_seconds.toFixed(2)}s</td>
-      <td><span class="event-type ${e.kind.type}">${formatEventType(e.kind.type)}</span></td>
-      <td>${formatEventDetails(e.kind)}</td>
-    </tr>`;
+    let html = `<table class="event-table">
+      <thead><tr><th>Time</th><th>Type</th><th>Details</th></tr></thead>
+      <tbody>`;
+
+    for (const e of shown) {
+      html += `<tr class="event-row" data-time="${e.time_seconds}">
+        <td>${e.time_seconds.toFixed(2)}s</td>
+        <td><span class="event-type ${e.kind.type}">${formatEventType(e.kind.type)}</span></td>
+        <td>${formatEventDetails(e.kind)}</td>
+      </tr>`;
+    }
+
+    html += "</tbody></table>";
+
+    if (filtered.length > MAX_DISPLAY) {
+      html += `<p class="events-truncated">Showing ${MAX_DISPLAY} of ${filtered.length} events</p>`;
+    }
+
+    tableWrap.innerHTML = html;
+
+    // Wire up click-to-navigate on each row
+    tableWrap.querySelectorAll(".event-row").forEach((row) => {
+      row.addEventListener("click", () => {
+        const time = parseFloat((row as HTMLElement).dataset.time!);
+        navigateToTime(time);
+      });
+    });
   }
 
-  html += "</tbody></table>";
-
-  if (events.length > MAX_DISPLAY) {
-    html += `<p class="events-truncated">Showing ${MAX_DISPLAY} of ${events.length} events</p>`;
-  }
-
-  list.innerHTML = html;
+  renderTable();
+  list.innerHTML = "";
+  list.appendChild(container);
 }
 
-function formatEventType(type: string): string {
-  return type.replace(/([A-Z])/g, " $1").trim();
-}
-
-function formatEventDetails(kind: EventKind): string {
-  switch (kind.type) {
-    case "ThrottleChop":
-      return `${kind.from_percent.toFixed(0)}% &rarr; ${kind.to_percent.toFixed(0)}% in ${kind.duration_ms.toFixed(0)}ms`;
-    case "ThrottlePunch":
-      return `${kind.from_percent.toFixed(0)}% &rarr; ${kind.to_percent.toFixed(0)}% in ${kind.duration_ms.toFixed(0)}ms`;
-    case "MotorSaturation":
-      return `Motor ${kind.motor_index} for ${kind.duration_frames} frames`;
-    case "GyroSpike":
-      return `${kind.axis} axis: ${kind.magnitude.toFixed(0)} deg/s`;
-    case "Overshoot":
-      return `${kind.axis}: ${kind.overshoot_percent.toFixed(0)}% over setpoint`;
-    case "Desync":
-      return `Motor ${kind.motor_index} (${kind.motor_value}) vs avg ${kind.average_others.toFixed(0)}`;
-    case "FirmwareMessage":
-      return `[${kind.level}] ${kind.message}`;
-    default:
-      return "";
-  }
-}
 
 function escHtml(str: string): string {
   const div = document.createElement("div");
