@@ -7,4 +7,5 @@ compare.py
 perf.data
 web/pkg/
 web/dist/
+web/out/
 web/node_modules/
