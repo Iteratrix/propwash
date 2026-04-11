@@ -71,6 +71,10 @@ fixture_test!(
 fixture_test!(ap_erasial, "ardupilot/erasial-00000001.bin");
 fixture_test!(ap_dronekit_copter, "ardupilot/dronekit-copter-log171.bin");
 fixture_test!(ap_methodic_copter, "ardupilot/methodic-copter-tarot-x4.bin");
+fixture_test!(ap_esc_telem, "ardupilot/esc-telem-quadplane-v4.4.4.bin");
+
+// BF with GPS
+fixture_test!(bf_gps_rescue, "fc-blackbox/btfl_gps_rescue.bbl");
 
 // PX4
 fixture_test!(px4_small, "px4/sample_log_small.ulg");
@@ -995,4 +999,54 @@ fn ardupilot_truncation_detected() {
     let log = parse_fixture("ardupilot/methodic-copter-tarot-x4.bin");
     // Just verify is_truncated() returns a real answer, not a corrupt_bytes proxy
     let _truncated = log.sessions[0].is_truncated();
+}
+
+#[test]
+fn bf_gps_data_parsed() {
+    let log = parse_fixture("fc-blackbox/btfl_gps_rescue.bbl");
+    let Session::Betaflight(bf) = &log.sessions[0] else {
+        panic!("expected Betaflight session");
+    };
+
+    // Should have GPS field definitions
+    assert!(
+        bf.gps_field_defs.is_some(),
+        "should have GPS field definitions"
+    );
+
+    // Should have GPS home position stored
+    assert!(bf.gps_home.is_some(), "should have GPS home position");
+    let home = bf.gps_home.as_ref().unwrap();
+    assert_eq!(home.len(), 2, "GPS home should have lat and lng");
+    // Home coordinates should be non-zero (real position)
+    assert!(home[0] != 0 || home[1] != 0, "GPS home should be non-zero");
+
+    // Should have GPS frames
+    assert!(
+        !bf.gps_frames.is_empty(),
+        "should have GPS frames, got {}",
+        bf.gps_frames.len()
+    );
+
+    // Should have gyro unfiltered data (this fixture has gyroUnfilt fields)
+    let unfilt = log.sessions[0].field(&SensorField::GyroUnfilt(Axis::Roll));
+    assert!(!unfilt.is_empty(), "should have unfiltered gyro data");
+
+    // Should have eRPM data (this fixture has eRPM fields)
+    let erpm = log.sessions[0].field(&SensorField::ERpm(propwash_core::types::MotorIndex(0)));
+    assert!(!erpm.is_empty(), "should have eRPM data");
+}
+
+#[test]
+fn ap_esc_telemetry_parsed() {
+    let log = parse_fixture("ardupilot/esc-telem-quadplane-v4.4.4.bin");
+    let session = &log.sessions[0];
+
+    // Should have ESC RPM data via field()
+    let erpm = session.field(&SensorField::ERpm(propwash_core::types::MotorIndex(0)));
+    assert!(!erpm.is_empty(), "should have ESC RPM data for motor 0");
+
+    // Multiple motors should have data
+    let erpm1 = session.field(&SensorField::ERpm(propwash_core::types::MotorIndex(1)));
+    assert!(!erpm1.is_empty(), "should have ESC RPM data for motor 1");
 }
