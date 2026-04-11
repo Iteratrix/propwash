@@ -1,16 +1,26 @@
-import init, { analyze, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "./pkg/propwash_web.js";
+import init, { analyze, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "../pkg/propwash_web.js";
+import type { AnalysisResult, SessionResult, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
 
-const $ = (sel) => document.querySelector(sel);
-const $$ = (sel) => document.querySelectorAll(sel);
+declare const echarts: any;
+declare const uPlot: any;
 
-function chartWidth() {
+const $ = (sel: string): HTMLElement => document.querySelector(sel) as HTMLElement;
+const $$ = (sel: string): NodeListOf<HTMLElement> => document.querySelectorAll(sel) as NodeListOf<HTMLElement>;
+
+declare global {
+  interface Window {
+    _rawPage: (sessionIdx: number, start: number) => void;
+  }
+}
+
+function chartWidth(): number {
   return Math.min($("main").clientWidth - 64, 880);
 }
 
 let wasmReady = false;
-let result = null;
+let result: AnalysisResult | null = null;
 
-const AXIS_COLORS = {
+const AXIS_COLORS: Record<string, string> = {
   roll:  "#5b8def",
   pitch: "#4ec88c",
   yaw:   "#e8b84a",
@@ -47,13 +57,13 @@ const FIELD_GROUPS = {
 };
 
 const TS_MAX_POINTS = 4000;
-let tsPlots = [];
-let tsSync = null;
-let filterConfig = null;
+let tsPlots: any[] = [];
+let tsSync: any = null;
+let filterConfig: FilterConfig | null = null;
 
-let compareResult = null;
+let compareResult: AnalysisResult | null = null;
 
-let renderedViews = new Set();
+let renderedViews = new Set<string>();
 
 async function boot() {
   await init();
@@ -74,8 +84,8 @@ function setupViewTabs() {
       tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
       $$(".view-content").forEach((v) => v.classList.remove("active"));
-      const view = tab.dataset.view;
-      $(`.view-content[data-view="${view}"]`).classList.add("active");
+      const view = tab.dataset.view!;
+      $(`.view-content[data-view="${view}"]`)!.classList.add("active");
       renderViewIfNeeded(view);
     });
   });
@@ -90,8 +100,8 @@ function reset() {
   $("#compare-drop").classList.add("hidden");
   $("#compare-results").classList.add("hidden");
   $("#drop-zone").classList.remove("hidden");
-  $("#file-input").value = "";
-  $("#compare-file-input").value = "";
+  ($("#file-input") as HTMLInputElement).value = "";
+  ($("#compare-file-input") as HTMLInputElement).value = "";
 }
 
 function startCompare() {
@@ -99,27 +109,28 @@ function startCompare() {
   $("#compare-drop").classList.remove("hidden");
 }
 
-function setupCompareDropZone() {
+function setupCompareDropZone(): void {
   const zone = $("#compare-drop");
-  const input = $("#compare-file-input");
+  const input = $("#compare-file-input") as HTMLInputElement;
 
   zone.addEventListener("click", () => input.click());
-  input.addEventListener("change", (e) => {
-    if (e.target.files.length > 0) handleCompareFile(e.target.files[0]);
+  input.addEventListener("change", () => {
+    if (input.files && input.files.length > 0) handleCompareFile(input.files[0]);
   });
-  zone.addEventListener("dragover", (e) => {
+  zone.addEventListener("dragover", (e: Event) => {
     e.preventDefault();
     zone.classList.add("drag-over");
   });
   zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-  zone.addEventListener("drop", (e) => {
+  zone.addEventListener("drop", (e: Event) => {
     e.preventDefault();
     zone.classList.remove("drag-over");
-    if (e.dataTransfer.files.length > 0) handleCompareFile(e.dataTransfer.files[0]);
+    const dt = (e as DragEvent).dataTransfer;
+    if (dt && dt.files.length > 0) handleCompareFile(dt.files[0]);
   });
 }
 
-async function handleCompareFile(file) {
+async function handleCompareFile(file: File): Promise<void> {
   if (!wasmReady) return;
 
   $("#compare-drop").classList.add("hidden");
@@ -134,7 +145,7 @@ async function handleCompareFile(file) {
 
   $("#loading").classList.add("hidden");
 
-  if (compareResult.sessions.length === 0) {
+  if (compareResult!.sessions.length === 0) {
     $("#compare-drop").classList.remove("hidden");
     alert("No sessions found in comparison file.");
     return;
@@ -144,16 +155,16 @@ async function handleCompareFile(file) {
   renderComparison();
 }
 
-function renderComparison() {
-  const a = result.sessions[activeSessionIdx] || result.sessions[0];
-  const b = compareResult.sessions[0];
+function renderComparison(): void {
+  const a = result!.sessions[activeSessionIdx] || result!.sessions[0];
+  const b = compareResult!.sessions[0];
 
   renderComparisonSummary(a, b);
   renderComparisonDiagnostics(a, b);
   renderComparisonSpectra(a, b);
 }
 
-function renderComparisonSummary(a, b) {
+function renderComparisonSummary(a: SessionResult, b: SessionResult): void {
   const rows = [
     ["Firmware", a.firmware, b.firmware],
     ["Craft", a.craft, b.craft],
@@ -178,7 +189,7 @@ function renderComparisonSummary(a, b) {
   }
 
   for (const [label, va, vb, better] of eventRows) {
-    const diff = vb - va;
+    const diff = (vb as number) - (va as number);
     let cls = "neutral";
     if (diff !== 0) cls = (better === "lower" ? (diff < 0 ? "better" : "worse") : (diff > 0 ? "better" : "worse"));
     const sign = diff > 0 ? "+" : "";
@@ -189,16 +200,16 @@ function renderComparisonSummary(a, b) {
   $("#compare-summary-table").innerHTML = html;
 }
 
-function renderComparisonDiagnostics(a, b) {
+function renderComparisonDiagnostics(a: SessionResult, b: SessionResult): void {
   const diagA = a.analysis.diagnostics || [];
   const diagB = b.analysis.diagnostics || [];
 
-  const msgsA = new Set(diagA.map((d) => d.message));
-  const msgsB = new Set(diagB.map((d) => d.message));
+  const msgsA = new Set(diagA.map((d: any) => d.message));
+  const msgsB = new Set(diagB.map((d: any) => d.message));
 
-  const fixed = diagA.filter((d) => !msgsB.has(d.message));
-  const newIssues = diagB.filter((d) => !msgsA.has(d.message));
-  const unchanged = diagB.filter((d) => msgsA.has(d.message));
+  const fixed = diagA.filter((d: any) => !msgsB.has(d.message));
+  const newIssues = diagB.filter((d: any) => !msgsA.has(d.message));
+  const unchanged = diagB.filter((d: any) => msgsA.has(d.message));
 
   let html = "";
 
@@ -230,7 +241,7 @@ function renderComparisonDiagnostics(a, b) {
   $("#compare-diag-content").innerHTML = html;
 }
 
-function renderComparisonSpectra(a, b) {
+function renderComparisonSpectra(a: SessionResult, b: SessionResult): void {
   const container = $("#compare-spectrum-plots");
   container.innerHTML = "";
 
@@ -243,8 +254,8 @@ function renderComparisonSpectra(a, b) {
 
   const axes = ["roll", "pitch", "yaw"];
   for (const axisName of axes) {
-    const specA = vibA.spectra.find((s) => s.axis === axisName);
-    const specB = vibB.spectra.find((s) => s.axis === axisName);
+    const specA = vibA.spectra.find((s: any) => s.axis === axisName);
+    const specB = vibB.spectra.find((s: any) => s.axis === axisName);
     if (!specA || !specB) continue;
 
     const row = document.createElement("div");
@@ -258,9 +269,9 @@ function renderComparisonSpectra(a, b) {
     container.appendChild(row);
 
     const maxFreq = Math.min(specA.sample_rate_hz / 2, 1000);
-    const endA = specA.frequencies_hz.findIndex((f) => f > maxFreq);
+    const endA = specA.frequencies_hz.findIndex((f: number) => f > maxFreq);
     const nA = endA > 0 ? endA : specA.frequencies_hz.length;
-    const endB = specB.frequencies_hz.findIndex((f) => f > maxFreq);
+    const endB = specB.frequencies_hz.findIndex((f: number) => f > maxFreq);
     const nB = endB > 0 ? endB : specB.frequencies_hz.length;
 
     const color = AXIS_COLORS[axisName] || "#5b8def";
@@ -289,28 +300,29 @@ function renderComparisonSpectra(a, b) {
   }
 }
 
-function setupDropZone() {
+function setupDropZone(): void {
   const zone = $("#drop-zone");
-  const input = $("#file-input");
+  const input = $("#file-input") as HTMLInputElement;
 
   zone.addEventListener("click", () => input.click());
-  input.addEventListener("change", (e) => {
-    if (e.target.files.length > 0) handleFile(e.target.files[0]);
+  input.addEventListener("change", () => {
+    if (input.files && input.files.length > 0) handleFile(input.files[0]);
   });
 
-  zone.addEventListener("dragover", (e) => {
+  zone.addEventListener("dragover", (e: Event) => {
     e.preventDefault();
     zone.classList.add("drag-over");
   });
   zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-  zone.addEventListener("drop", (e) => {
+  zone.addEventListener("drop", (e: Event) => {
     e.preventDefault();
     zone.classList.remove("drag-over");
-    if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+    const dt = (e as DragEvent).dataTransfer;
+    if (dt && dt.files.length > 0) handleFile(dt.files[0]);
   });
 }
 
-async function handleFile(file) {
+async function handleFile(file: File): Promise<void> {
   if (!wasmReady) return;
 
   $("#drop-zone").classList.add("hidden");
@@ -327,9 +339,9 @@ async function handleFile(file) {
 
   $("#loading").classList.add("hidden");
 
-  if (result.sessions.length === 0) {
+  if (result!.sessions.length === 0) {
     $("#drop-zone").classList.remove("hidden");
-    alert("No sessions found in this file. " + (result.warnings[0] || ""));
+    alert("No sessions found in this file. " + (result!.warnings[0] || ""));
     return;
   }
 
@@ -342,10 +354,10 @@ function renderSessionTabs() {
   const nav = $("#session-tabs");
   nav.innerHTML = "";
 
-  if (result.sessions.length === 1) return;
+  if (result!.sessions.length === 1) return;
 
-  for (let i = 0; i < result.sessions.length; i++) {
-    const s = result.sessions[i];
+  for (let i = 0; i < result!.sessions.length; i++) {
+    const s = result!.sessions[i];
     const btn = document.createElement("button");
     btn.className = "session-tab" + (i === 0 ? " active" : "");
     btn.textContent = `Session ${s.index}`;
@@ -358,7 +370,7 @@ function renderSessionTabs() {
   }
 }
 
-function showSession(idx) {
+function showSession(idx: number): void {
   activeSessionIdx = idx;
   filterConfig = JSON.parse(get_filter_config(idx));
   renderedViews.clear();
@@ -366,12 +378,12 @@ function showSession(idx) {
   renderViewIfNeeded(activeView);
 }
 
-function renderViewIfNeeded(view) {
+function renderViewIfNeeded(view: string): void {
   const key = `${view}-${activeSessionIdx}`;
   if (renderedViews.has(key)) return;
   renderedViews.add(key);
 
-  const s = result.sessions[activeSessionIdx];
+  const s = result!.sessions[activeSessionIdx];
   switch (view) {
     case "overview":
       renderSummary(s);
@@ -400,7 +412,7 @@ function setupTimeseriesControls() {
       tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
       renderedViews.delete(`timeline-${activeSessionIdx}`);
-      renderTimeseries(activeSessionIdx, tab.dataset.group);
+      renderTimeseries(activeSessionIdx, tab.dataset.group!);
     });
   });
   $("#ts-reset-zoom").addEventListener("click", () => {
@@ -410,12 +422,12 @@ function setupTimeseriesControls() {
   });
 }
 
-function renderTimeseries(sessionIdx, group) {
+function renderTimeseries(sessionIdx: number, group: string): void {
   const container = $("#ts-charts");
   container.innerHTML = "";
   tsPlots = [];
 
-  const g = FIELD_GROUPS[group];
+  const g = FIELD_GROUPS[group as keyof typeof FIELD_GROUPS];
   if (!g) return;
 
   const allFields = g.fields.join(",");
@@ -435,7 +447,7 @@ function renderTimeseries(sessionIdx, group) {
   const syncKey = "ts-sync";
   tsSync = uPlot.sync(syncKey);
 
-  const events = result.sessions[sessionIdx]?.analysis?.events || [];
+  const events = result!.sessions[sessionIdx]?.analysis?.events || [];
 
   const width = chartWidth();
 
@@ -492,7 +504,7 @@ function renderTimeseries(sessionIdx, group) {
     select: { show: true },
     hooks: {
       setSelect: [
-        (u) => {
+        (u: any) => {
           const min = u.posToVal(u.select.left, "x");
           const max = u.posToVal(u.select.left + u.select.width, "x");
           if (max - min > 0.01) {
@@ -513,11 +525,11 @@ function renderTimeseries(sessionIdx, group) {
   tsPlots.push(plot);
 }
 
-function eventMarkersPlugin(events) {
+function eventMarkersPlugin(events: FlightEvent[]): any {
   return {
     hooks: {
       draw: [
-        (u) => {
+        (u: any) => {
           const ctx = u.ctx;
           const [xMin, xMax] = [u.scales.x.min, u.scales.x.max];
           for (const e of events) {
@@ -540,7 +552,7 @@ function eventMarkersPlugin(events) {
   };
 }
 
-function eventColor(type) {
+function eventColor(type: string): string {
   switch (type) {
     case "ThrottleChop": return "#e85454";
     case "GyroSpike": return "#e8944a";
@@ -553,7 +565,7 @@ function eventColor(type) {
   }
 }
 
-function renderSummary(session) {
+function renderSummary(session: SessionResult): void {
   const grid = $("#summary-grid");
   const cards = [
     ["Firmware", session.firmware || "Unknown"],
@@ -576,7 +588,7 @@ function renderSummary(session) {
     .join("");
 }
 
-const echartsInstances = [];
+const echartsInstances: any[] = [];
 
 function disposeEcharts() {
   for (const inst of echartsInstances) {
@@ -594,7 +606,7 @@ function echartsTheme() {
   };
 }
 
-function renderSpectraEcharts(vibration) {
+function renderSpectraEcharts(vibration: VibrationAnalysis | null): void {
   const container = $("#spectrum-plots");
   container.innerHTML = "";
 
@@ -618,7 +630,7 @@ function renderSpectraEcharts(vibration) {
     container.appendChild(row);
 
     const maxFreq = Math.min(spectrum.sample_rate_hz / 2, 1000);
-    const endIdx = spectrum.frequencies_hz.findIndex((f) => f > maxFreq);
+    const endIdx = spectrum.frequencies_hz.findIndex((f: number) => f > maxFreq);
     const n = endIdx > 0 ? endIdx : spectrum.frequencies_hz.length;
     const freqs = spectrum.frequencies_hz.slice(0, n);
     const mags = spectrum.magnitudes_db.slice(0, n);
@@ -644,7 +656,7 @@ function renderSpectraEcharts(vibration) {
       }
     }
 
-    const peakPoints = (spectrum.peaks || []).slice(0, 3).map((p) => ({
+    const peakPoints = (spectrum.peaks || []).slice(0, 3).map((p: any) => ({
       coord: [p.frequency_hz, p.magnitude_db],
       label: { formatter: `${p.frequency_hz.toFixed(0)} Hz`, fontSize: 10, color: "#e0e0e6", position: "top" },
       symbol: "circle",
@@ -674,7 +686,7 @@ function renderSpectraEcharts(vibration) {
       ],
       series: [{
         type: "line",
-        data: freqs.map((f, i) => [f, mags[i]]),
+        data: freqs.map((f: number, i: number) => [f, mags[i]]),
         smooth: false,
         symbol: "none",
         lineStyle: { color, width: 1.5 },
@@ -703,7 +715,7 @@ function renderSpectraEcharts(vibration) {
   }
 }
 
-function renderThrottleBandsEcharts(vibration) {
+function renderThrottleBandsEcharts(vibration: VibrationAnalysis | null): void {
   const container = $("#throttle-plots");
   container.innerHTML = "";
 
@@ -733,7 +745,7 @@ function renderThrottleBandsEcharts(vibration) {
       container.appendChild(section);
 
       const maxFreq = Math.min(band.spectra[0].sample_rate_hz / 2, 1000);
-      const endIdx = band.spectra[0].frequencies_hz.findIndex((f) => f > maxFreq);
+      const endIdx = band.spectra[0].frequencies_hz.findIndex((f: number) => f > maxFreq);
       const n = endIdx > 0 ? endIdx : band.spectra[0].frequencies_hz.length;
 
       const chart = echarts.init(chartDiv, null, { renderer: "canvas" });
@@ -745,7 +757,7 @@ function renderThrottleBandsEcharts(vibration) {
         series.push({
           type: "line",
           name: s.axis,
-          data: s.frequencies_hz.slice(0, n).map((f, i) => [f, s.magnitudes_db[i]]),
+          data: s.frequencies_hz.slice(0, n).map((f: number, i: number) => [f, s.magnitudes_db[i]]),
           smooth: false,
           symbol: "none",
           lineStyle: { color, width: 1.5 },
@@ -777,7 +789,7 @@ function renderThrottleBandsEcharts(vibration) {
   }
 }
 
-function renderDiagnostics(diagnostics) {
+function renderDiagnostics(diagnostics: Diagnostic[]): void {
   const list = $("#diagnostics-list");
   if (!diagnostics || diagnostics.length === 0) {
     list.innerHTML = '<p class="hint">No issues detected.</p>';
@@ -798,7 +810,7 @@ function renderDiagnostics(diagnostics) {
     .join("");
 }
 
-function renderSpectra(vibration) {
+function renderSpectra(vibration: VibrationAnalysis | null): void {
   const container = $("#spectrum-plots");
   container.innerHTML = "";
 
@@ -841,16 +853,16 @@ function renderSpectra(vibration) {
   }
 }
 
-function peakMarkersPlugin(peaks, maxFreq) {
+function peakMarkersPlugin(peaks: any[], maxFreq: number): any {
   const filtered = (peaks || [])
     .filter((p) => p.frequency_hz <= maxFreq)
     .slice(0, 3);
   return {
     hooks: {
       draw: [
-        (u) => {
+        (u: any) => {
           const ctx = u.ctx;
-          const placed = [];
+          const placed: number[] = [];
           const MIN_GAP = 40;
 
           for (const peak of filtered) {
@@ -888,12 +900,12 @@ function peakMarkersPlugin(peaks, maxFreq) {
   };
 }
 
-function createSpectrumPlot(container, spectrum) {
+function createSpectrumPlot(container: HTMLElement, spectrum: Spectrum): void {
   const freqs = spectrum.frequencies_hz;
   const mags = spectrum.magnitudes_db;
 
   const maxFreq = Math.min(spectrum.sample_rate_hz / 2, 1000);
-  const endIdx = freqs.findIndex((f) => f > maxFreq);
+  const endIdx = freqs.findIndex((f: number) => f > maxFreq);
   const n = endIdx > 0 ? endIdx : freqs.length;
 
   const xData = freqs.slice(0, n);
@@ -929,11 +941,11 @@ function createSpectrumPlot(container, spectrum) {
   new uPlot(opts, [xData, yData], container);
 }
 
-function filterOverlayPlugin(maxFreq) {
+function filterOverlayPlugin(maxFreq: number): any {
   return {
     hooks: {
       draw: [
-        (u) => {
+        (u: any) => {
           try {
           if (!filterConfig || filterConfig.error) return;
           const ctx = u.ctx;
@@ -993,7 +1005,7 @@ function filterOverlayPlugin(maxFreq) {
   };
 }
 
-function renderSpectrogram(sessionIdx) {
+function renderSpectrogram(sessionIdx: number): void {
   const container = $("#spectrogram-plots");
   container.innerHTML = "";
 
@@ -1032,8 +1044,8 @@ function renderSpectrogram(sessionIdx) {
   }
 }
 
-function drawSpectrogram(canvas, axis) {
-  const ctx = canvas.getContext("2d");
+function drawSpectrogram(canvas: HTMLCanvasElement, axis: any): void {
+  const ctx = canvas.getContext("2d")!;
   const { width, height } = canvas;
   const nTime = axis.time_s.length;
   const nFreq = axis.frequencies_hz.length;
@@ -1072,7 +1084,7 @@ function drawSpectrogram(canvas, axis) {
   const tmpCanvas = document.createElement("canvas");
   tmpCanvas.width = nTime;
   tmpCanvas.height = nFreq;
-  tmpCanvas.getContext("2d").putImageData(img, 0, 0);
+  tmpCanvas.getContext("2d")!.putImageData(img, 0, 0);
 
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(tmpCanvas, 0, 0, width, height);
@@ -1084,7 +1096,7 @@ function drawSpectrogram(canvas, axis) {
   ctx.fillText("0 Hz", width - 4, height - 4);
 }
 
-function heatColor(t) {
+function heatColor(t: number): [number, number, number] {
   if (t < 0.25) {
     const s = t / 0.25;
     return [0, 0, Math.round(80 + 175 * s)];
@@ -1101,7 +1113,7 @@ function heatColor(t) {
   return [255, Math.round(255 * (1 - s)), 0];
 }
 
-function renderThrottleBands(vibration) {
+function renderThrottleBands(vibration: VibrationAnalysis | null): void {
   const container = $("#throttle-plots");
   container.innerHTML = "";
 
@@ -1133,11 +1145,11 @@ function renderThrottleBands(vibration) {
   }
 }
 
-function createMultiAxisPlot(container, spectra) {
+function createMultiAxisPlot(container: HTMLElement, spectra: Spectrum[]): void {
   if (spectra.length === 0) return;
 
   const maxFreq = Math.min(spectra[0].sample_rate_hz / 2, 1000);
-  const endIdx = spectra[0].frequencies_hz.findIndex((f) => f > maxFreq);
+  const endIdx = spectra[0].frequencies_hz.findIndex((f: number) => f > maxFreq);
   const n = endIdx > 0 ? endIdx : spectra[0].frequencies_hz.length;
 
   const xData = spectra[0].frequencies_hz.slice(0, n);
@@ -1170,7 +1182,7 @@ function createMultiAxisPlot(container, spectra) {
   new uPlot(opts, datasets, container);
 }
 
-function renderAccel(vibration) {
+function renderAccel(vibration: VibrationAnalysis | null): void {
   const panel = $("#accel-panel");
   const infoDiv = $("#accel-info");
   const plotsDiv = $("#accel-plots");
@@ -1185,7 +1197,7 @@ function renderAccel(vibration) {
 
   const axes = ["X", "Y", "Z"];
   infoDiv.innerHTML = `<div class="accel-rms">` +
-    accel.rms.map((v, i) =>
+    accel.rms.map((v: number, i: number) =>
       `<div class="rms-card">
         <div class="axis">${axes[i]}</div>
         <div class="rms-value">${v.toFixed(1)}</div>
@@ -1204,16 +1216,16 @@ function renderAccel(vibration) {
 const RAW_PAGE_SIZE = 200;
 const RAW_DEFAULT_FIELDS = ["time", "gyro[roll]", "gyro[pitch]", "gyro[yaw]", "motor[0]", "motor[1]", "motor[2]", "motor[3]", "rc[throttle]"];
 
-function renderRawData(sessionIdx) {
-  const s = result.sessions[sessionIdx];
-  const allFields = s.analysis.summary ? result.sessions[sessionIdx] : null;
+function renderRawData(sessionIdx: number): void {
+  const s = result!.sessions[sessionIdx];
+  const allFields = s.analysis.summary ? result!.sessions[sessionIdx] : null;
 
-  const select = $("#raw-field-select");
+  const select = $("#raw-field-select") as HTMLSelectElement;
   select.innerHTML = "";
 
   const fieldNames = get_timeseries(sessionIdx, 1, "time");
   const ts = JSON.parse(fieldNames);
-  const unified = result.sessions[sessionIdx];
+  const unified = result!.sessions[sessionIdx];
 
   const defaultFields = RAW_DEFAULT_FIELDS;
   const available = defaultFields;
@@ -1230,8 +1242,8 @@ function renderRawData(sessionIdx) {
   loadRawPage(sessionIdx, 0);
 }
 
-function loadRawPage(sessionIdx, start) {
-  const select = $("#raw-field-select");
+function loadRawPage(sessionIdx: number, start: number): void {
+  const select = $("#raw-field-select") as HTMLSelectElement;
   const selected = Array.from(select.selectedOptions).map((o) => o.value);
   if (selected.length === 0) return;
 
@@ -1273,7 +1285,7 @@ function loadRawPage(sessionIdx, start) {
 
 window._rawPage = loadRawPage;
 
-function renderEvents(events) {
+function renderEvents(events: FlightEvent[]): void {
   const list = $("#events-list");
   if (!events || events.length === 0) {
     list.innerHTML = '<p class="hint">No events detected.</p>';
@@ -1304,11 +1316,11 @@ function renderEvents(events) {
   list.innerHTML = html;
 }
 
-function formatEventType(type) {
+function formatEventType(type: string): string {
   return type.replace(/([A-Z])/g, " $1").trim();
 }
 
-function formatEventDetails(kind) {
+function formatEventDetails(kind: EventKind): string {
   switch (kind.type) {
     case "ThrottleChop":
       return `${kind.from_percent.toFixed(0)}% &rarr; ${kind.to_percent.toFixed(0)}% in ${kind.duration_ms.toFixed(0)}ms`;
@@ -1329,16 +1341,16 @@ function formatEventDetails(kind) {
   }
 }
 
-function escHtml(str) {
+function escHtml(str: string): string {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
 }
 
 let activeSessionIdx = 0;
-let resizeTimer = null;
+let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 window.addEventListener("resize", () => {
-  clearTimeout(resizeTimer);
+  if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
     for (const inst of echartsInstances) {
       inst.resize();

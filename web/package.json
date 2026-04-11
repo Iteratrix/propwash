@@ -1,0 +1,12 @@
+{
+  "name": "propwash-web",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/app.ts --bundle --outfile=dist/app.js --format=esm --sourcemap --target=es2020 --external:../pkg/propwash_web.js",
+    "dev": "esbuild src/app.ts --bundle --outfile=dist/app.js --format=esm --sourcemap --target=es2020 --watch --external:../pkg/propwash_web.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.0"
+  }
+}
