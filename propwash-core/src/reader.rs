@@ -72,8 +72,12 @@ impl<'a> Reader<'a> {
     }
 
     /// Read one byte, advancing position. Auto-aligns to byte boundary first.
+    #[inline]
     pub fn read_byte(&mut self) -> Result<u8, InternalError> {
-        self.byte_align();
+        if self.bit_pos > 0 {
+            self.bit_pos = 0;
+            self.pos += 1;
+        }
         if self.pos >= self.data.len() {
             return Err(InternalError::Eof);
         }

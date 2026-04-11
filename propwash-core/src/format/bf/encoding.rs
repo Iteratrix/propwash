@@ -7,10 +7,21 @@ fn sign_extend(value: u32, bits: u8) -> i32 {
 }
 
 /// Read an unsigned variable-byte (LEB128) integer.
+#[inline]
 pub(crate) fn read_unsigned_vb(r: &mut Reader<'_>) -> Result<u32, InternalError> {
-    let mut result: u32 = 0;
-    let mut shift: u32 = 0;
-    for _ in 0..5 {
+    // Fast path: ~80% of values fit in a single byte
+    let b0 = r.read_byte()?;
+    if b0 & 0x80 == 0 {
+        return Ok(u32::from(b0));
+    }
+    read_unsigned_vb_slow(r, b0)
+}
+
+#[cold]
+fn read_unsigned_vb_slow(r: &mut Reader<'_>, b0: u8) -> Result<u32, InternalError> {
+    let mut result = u32::from(b0 & 0x7F);
+    let mut shift: u32 = 7;
+    for _ in 1..5 {
         let byte = r.read_byte()?;
         result |= u32::from(byte & 0x7F) << shift;
         if byte & 0x80 == 0 {
@@ -22,9 +33,9 @@ pub(crate) fn read_unsigned_vb(r: &mut Reader<'_>) -> Result<u32, InternalError>
 }
 
 /// Read a signed variable-byte integer (zigzag-decoded).
+#[inline]
 pub(crate) fn read_signed_vb(r: &mut Reader<'_>) -> Result<i32, InternalError> {
     let raw = read_unsigned_vb(r)?;
-    // ZigZag decode: (raw >> 1) ^ -(raw & 1)
     Ok((raw >> 1).cast_signed() ^ -((raw & 1).cast_signed()))
 }
 
@@ -39,21 +50,25 @@ pub(crate) fn read_neg_14bit(r: &mut Reader<'_>) -> Result<i32, InternalError> {
 /// Read `TAG8_8SVB` encoded values (encoding ID 6).
 /// Up to 8 signed values with a bitmask indicating which are non-zero.
 /// Special case: if count == 1, no bitmask — reads directly as signed VB.
-pub(crate) fn read_tag8_8svb(r: &mut Reader<'_>, count: usize) -> Result<Vec<i32>, InternalError> {
+pub(crate) fn read_tag8_8svb(
+    r: &mut Reader<'_>,
+    count: usize,
+    out: &mut [i32],
+) -> Result<(), InternalError> {
     if count == 1 {
-        return Ok(vec![read_signed_vb(r)?]);
+        out[0] = read_signed_vb(r)?;
+        return Ok(());
     }
 
     let header = r.read_byte()?;
-    let mut values = Vec::with_capacity(count);
-    for i in 0..count {
-        if header & (1 << i) != 0 {
-            values.push(read_signed_vb(r)?);
+    for (i, slot) in out[..count].iter_mut().enumerate() {
+        *slot = if header & (1 << i) != 0 {
+            read_signed_vb(r)?
         } else {
-            values.push(0);
-        }
+            0
+        };
     }
-    Ok(values)
+    Ok(())
 }
 
 /// Read `TAG2_3S32` encoded values (encoding ID 7).
@@ -288,19 +303,25 @@ mod tests {
     #[test]
     fn tag8_8svb_single_field() {
         let mut r = Reader::new(&[0x02]);
-        assert_eq!(read_tag8_8svb(&mut r, 1).unwrap(), vec![1]);
+        let mut out = [0i32; 1];
+        read_tag8_8svb(&mut r, 1, &mut out).unwrap();
+        assert_eq!(out, [1]);
     }
 
     #[test]
     fn tag8_8svb_all_zeros() {
         let mut r = Reader::new(&[0x00]);
-        assert_eq!(read_tag8_8svb(&mut r, 3).unwrap(), vec![0, 0, 0]);
+        let mut out = [0i32; 3];
+        read_tag8_8svb(&mut r, 3, &mut out).unwrap();
+        assert_eq!(out, [0, 0, 0]);
     }
 
     #[test]
     fn tag8_8svb_one_nonzero() {
         let mut r = Reader::new(&[0x02, 0x02]);
-        assert_eq!(read_tag8_8svb(&mut r, 3).unwrap(), vec![0, 1, 0]);
+        let mut out = [0i32; 3];
+        read_tag8_8svb(&mut r, 3, &mut out).unwrap();
+        assert_eq!(out, [0, 1, 0]);
     }
 
     #[test]
