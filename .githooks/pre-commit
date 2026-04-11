@@ -3,4 +3,5 @@ set -e
 echo "Running pre-commit checks..."
 cargo fmt --all -- --check
 cargo clippy --workspace --features raw -- -D warnings
+cd web && npx vitest run && cd ..
 echo "Pre-commit checks passed."
