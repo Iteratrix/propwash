@@ -38,7 +38,7 @@ Pedantic is set to `warn` locally but CI enforces `-D warnings` (ci.yml:20), so 
 ### ⏭️ 4. [nit] `Cargo.toml:19` — `lto = "thin"` on dist profile
 Fine as-is. Thin LTO gives most perf/size benefits without the compile time cost of fat LTO. Only applies to distribution builds.
 
-### 🔲 5. [arch] `web/app.js` — should be TypeScript
+### ✅ 5. [arch] `web/app.js` — should be TypeScript
 The web frontend is ~44KB of vanilla JS. Given WASM interop and UI complexity, TypeScript would add meaningful type safety, especially for enforcing the WASM bridge contract. Tradeoff: adds a build step to what is currently a zero-build frontend.
 
 ### ⏭️ 6. [nit] `propwash-web/src/lib.rs:12-14` — `thread_local!` + `RefCell` for WASM state
@@ -58,7 +58,7 @@ Several loops push into Vecs where `.map().collect()` would be more idiomatic:
 - Lines 94-96: warning string conversion
 - Lines 384-390: raw frame row building
 
-### 🔲 9. [arch] `propwash-web/src/lib.rs:167-272` — spectrogram computation belongs in core
+### ✅ 9. [arch] `propwash-web/src/lib.rs:167-272` — spectrogram computation belongs in core
 Full FFT windowing/spectrogram generation is implemented in the WASM bridge. Core already has `analysis/fft.rs` for FFT work. This should live in core so CLI and other consumers can also generate spectrograms. Currently WASM-only.
 
 ### ✅ 10. [arch] `propwash-web/src/lib.rs:294-350` — filter config bypasses Unified trait
