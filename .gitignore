@@ -6,3 +6,5 @@ perf.data.old
 compare.py
 perf.data
 web/pkg/
+web/dist/
+web/node_modules/
