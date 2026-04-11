@@ -1,4 +1,5 @@
 import init, { analyze, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "../pkg/propwash_web.js";
+import type { AnalysisResult, SessionResult, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
 
 declare const echarts: any;
 declare const uPlot: any;
@@ -17,7 +18,7 @@ function chartWidth(): number {
 }
 
 let wasmReady = false;
-let result: any = null;
+let result: AnalysisResult | null = null;
 
 const AXIS_COLORS: Record<string, string> = {
   roll:  "#5b8def",
@@ -58,9 +59,9 @@ const FIELD_GROUPS = {
 const TS_MAX_POINTS = 4000;
 let tsPlots: any[] = [];
 let tsSync: any = null;
-let filterConfig: any = null;
+let filterConfig: FilterConfig | null = null;
 
-let compareResult: any = null;
+let compareResult: AnalysisResult | null = null;
 
 let renderedViews = new Set<string>();
 
@@ -144,7 +145,7 @@ async function handleCompareFile(file: File): Promise<void> {
 
   $("#loading").classList.add("hidden");
 
-  if (compareResult.sessions.length === 0) {
+  if (compareResult!.sessions.length === 0) {
     $("#compare-drop").classList.remove("hidden");
     alert("No sessions found in comparison file.");
     return;
@@ -154,16 +155,16 @@ async function handleCompareFile(file: File): Promise<void> {
   renderComparison();
 }
 
-function renderComparison() {
-  const a = result.sessions[activeSessionIdx] || result.sessions[0];
-  const b = compareResult.sessions[0];
+function renderComparison(): void {
+  const a = result!.sessions[activeSessionIdx] || result!.sessions[0];
+  const b = compareResult!.sessions[0];
 
   renderComparisonSummary(a, b);
   renderComparisonDiagnostics(a, b);
   renderComparisonSpectra(a, b);
 }
 
-function renderComparisonSummary(a: any, b: any): void {
+function renderComparisonSummary(a: SessionResult, b: SessionResult): void {
   const rows = [
     ["Firmware", a.firmware, b.firmware],
     ["Craft", a.craft, b.craft],
@@ -188,7 +189,7 @@ function renderComparisonSummary(a: any, b: any): void {
   }
 
   for (const [label, va, vb, better] of eventRows) {
-    const diff = vb - va;
+    const diff = (vb as number) - (va as number);
     let cls = "neutral";
     if (diff !== 0) cls = (better === "lower" ? (diff < 0 ? "better" : "worse") : (diff > 0 ? "better" : "worse"));
     const sign = diff > 0 ? "+" : "";
@@ -199,7 +200,7 @@ function renderComparisonSummary(a: any, b: any): void {
   $("#compare-summary-table").innerHTML = html;
 }
 
-function renderComparisonDiagnostics(a: any, b: any): void {
+function renderComparisonDiagnostics(a: SessionResult, b: SessionResult): void {
   const diagA = a.analysis.diagnostics || [];
   const diagB = b.analysis.diagnostics || [];
 
@@ -240,7 +241,7 @@ function renderComparisonDiagnostics(a: any, b: any): void {
   $("#compare-diag-content").innerHTML = html;
 }
 
-function renderComparisonSpectra(a: any, b: any): void {
+function renderComparisonSpectra(a: SessionResult, b: SessionResult): void {
   const container = $("#compare-spectrum-plots");
   container.innerHTML = "";
 
@@ -338,9 +339,9 @@ async function handleFile(file: File): Promise<void> {
 
   $("#loading").classList.add("hidden");
 
-  if (result.sessions.length === 0) {
+  if (result!.sessions.length === 0) {
     $("#drop-zone").classList.remove("hidden");
-    alert("No sessions found in this file. " + (result.warnings[0] || ""));
+    alert("No sessions found in this file. " + (result!.warnings[0] || ""));
     return;
   }
 
@@ -353,10 +354,10 @@ function renderSessionTabs() {
   const nav = $("#session-tabs");
   nav.innerHTML = "";
 
-  if (result.sessions.length === 1) return;
+  if (result!.sessions.length === 1) return;
 
-  for (let i = 0; i < result.sessions.length; i++) {
-    const s = result.sessions[i];
+  for (let i = 0; i < result!.sessions.length; i++) {
+    const s = result!.sessions[i];
     const btn = document.createElement("button");
     btn.className = "session-tab" + (i === 0 ? " active" : "");
     btn.textContent = `Session ${s.index}`;
@@ -382,7 +383,7 @@ function renderViewIfNeeded(view: string): void {
   if (renderedViews.has(key)) return;
   renderedViews.add(key);
 
-  const s = result.sessions[activeSessionIdx];
+  const s = result!.sessions[activeSessionIdx];
   switch (view) {
     case "overview":
       renderSummary(s);
@@ -446,7 +447,7 @@ function renderTimeseries(sessionIdx: number, group: string): void {
   const syncKey = "ts-sync";
   tsSync = uPlot.sync(syncKey);
 
-  const events = result.sessions[sessionIdx]?.analysis?.events || [];
+  const events = result!.sessions[sessionIdx]?.analysis?.events || [];
 
   const width = chartWidth();
 
@@ -524,7 +525,7 @@ function renderTimeseries(sessionIdx: number, group: string): void {
   tsPlots.push(plot);
 }
 
-function eventMarkersPlugin(events: any[]): any {
+function eventMarkersPlugin(events: FlightEvent[]): any {
   return {
     hooks: {
       draw: [
@@ -564,7 +565,7 @@ function eventColor(type: string): string {
   }
 }
 
-function renderSummary(session: any): void {
+function renderSummary(session: SessionResult): void {
   const grid = $("#summary-grid");
   const cards = [
     ["Firmware", session.firmware || "Unknown"],
@@ -605,7 +606,7 @@ function echartsTheme() {
   };
 }
 
-function renderSpectraEcharts(vibration: any): void {
+function renderSpectraEcharts(vibration: VibrationAnalysis | null): void {
   const container = $("#spectrum-plots");
   container.innerHTML = "";
 
@@ -714,7 +715,7 @@ function renderSpectraEcharts(vibration: any): void {
   }
 }
 
-function renderThrottleBandsEcharts(vibration: any): void {
+function renderThrottleBandsEcharts(vibration: VibrationAnalysis | null): void {
   const container = $("#throttle-plots");
   container.innerHTML = "";
 
@@ -788,7 +789,7 @@ function renderThrottleBandsEcharts(vibration: any): void {
   }
 }
 
-function renderDiagnostics(diagnostics: any[]): void {
+function renderDiagnostics(diagnostics: Diagnostic[]): void {
   const list = $("#diagnostics-list");
   if (!diagnostics || diagnostics.length === 0) {
     list.innerHTML = '<p class="hint">No issues detected.</p>';
@@ -809,7 +810,7 @@ function renderDiagnostics(diagnostics: any[]): void {
     .join("");
 }
 
-function renderSpectra(vibration: any): void {
+function renderSpectra(vibration: VibrationAnalysis | null): void {
   const container = $("#spectrum-plots");
   container.innerHTML = "";
 
@@ -899,7 +900,7 @@ function peakMarkersPlugin(peaks: any[], maxFreq: number): any {
   };
 }
 
-function createSpectrumPlot(container: HTMLElement, spectrum: any): void {
+function createSpectrumPlot(container: HTMLElement, spectrum: Spectrum): void {
   const freqs = spectrum.frequencies_hz;
   const mags = spectrum.magnitudes_db;
 
@@ -1112,7 +1113,7 @@ function heatColor(t: number): [number, number, number] {
   return [255, Math.round(255 * (1 - s)), 0];
 }
 
-function renderThrottleBands(vibration: any): void {
+function renderThrottleBands(vibration: VibrationAnalysis | null): void {
   const container = $("#throttle-plots");
   container.innerHTML = "";
 
@@ -1144,7 +1145,7 @@ function renderThrottleBands(vibration: any): void {
   }
 }
 
-function createMultiAxisPlot(container: HTMLElement, spectra: any[]): void {
+function createMultiAxisPlot(container: HTMLElement, spectra: Spectrum[]): void {
   if (spectra.length === 0) return;
 
   const maxFreq = Math.min(spectra[0].sample_rate_hz / 2, 1000);
@@ -1181,7 +1182,7 @@ function createMultiAxisPlot(container: HTMLElement, spectra: any[]): void {
   new uPlot(opts, datasets, container);
 }
 
-function renderAccel(vibration: any): void {
+function renderAccel(vibration: VibrationAnalysis | null): void {
   const panel = $("#accel-panel");
   const infoDiv = $("#accel-info");
   const plotsDiv = $("#accel-plots");
@@ -1216,15 +1217,15 @@ const RAW_PAGE_SIZE = 200;
 const RAW_DEFAULT_FIELDS = ["time", "gyro[roll]", "gyro[pitch]", "gyro[yaw]", "motor[0]", "motor[1]", "motor[2]", "motor[3]", "rc[throttle]"];
 
 function renderRawData(sessionIdx: number): void {
-  const s = result.sessions[sessionIdx];
-  const allFields = s.analysis.summary ? result.sessions[sessionIdx] : null;
+  const s = result!.sessions[sessionIdx];
+  const allFields = s.analysis.summary ? result!.sessions[sessionIdx] : null;
 
   const select = $("#raw-field-select") as HTMLSelectElement;
   select.innerHTML = "";
 
   const fieldNames = get_timeseries(sessionIdx, 1, "time");
   const ts = JSON.parse(fieldNames);
-  const unified = result.sessions[sessionIdx];
+  const unified = result!.sessions[sessionIdx];
 
   const defaultFields = RAW_DEFAULT_FIELDS;
   const available = defaultFields;
@@ -1284,7 +1285,7 @@ function loadRawPage(sessionIdx: number, start: number): void {
 
 window._rawPage = loadRawPage;
 
-function renderEvents(events: any[]): void {
+function renderEvents(events: FlightEvent[]): void {
   const list = $("#events-list");
   if (!events || events.length === 0) {
     list.innerHTML = '<p class="hint">No events detected.</p>';
@@ -1319,7 +1320,7 @@ function formatEventType(type: string): string {
   return type.replace(/([A-Z])/g, " $1").trim();
 }
 
-function formatEventDetails(kind: any): string {
+function formatEventDetails(kind: EventKind): string {
   switch (kind.type) {
     case "ThrottleChop":
       return `${kind.from_percent.toFixed(0)}% &rarr; ${kind.to_percent.toFixed(0)}% in ${kind.duration_ms.toFixed(0)}ms`;
