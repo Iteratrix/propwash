@@ -274,6 +274,24 @@ pub(crate) fn parse_session_frames(
         });
     }
 
+    // Apply GPS home offset to reconstruct absolute coordinates
+    if let (Some(ref home), Some(gps_defs)) = (&gps_home, &session.gps_field_defs) {
+        let coord0_idx = gps_defs.index_of_str("GPS_coord[0]");
+        let coord1_idx = gps_defs.index_of_str("GPS_coord[1]");
+        for frame in &mut gps_frames {
+            if let Some(idx) = coord0_idx {
+                if let Some(val) = frame.values.get_mut(idx) {
+                    *val = val.wrapping_add(home[0]);
+                }
+            }
+            if let Some(idx) = coord1_idx {
+                if let Some(val) = frame.values.get_mut(idx) {
+                    *val = val.wrapping_add(home[1]);
+                }
+            }
+        }
+    }
+
     ParsedFrames {
         main: main_frames,
         slow: slow_frames,

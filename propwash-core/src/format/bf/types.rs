@@ -57,6 +57,8 @@ pub enum Predictor {
     Motor0,
     /// Incrementing counter (loop iteration).
     Increment,
+    /// Offset from GPS home coordinate.
+    HomeCoord,
     /// Offset from 1500.
     FifteenHundred,
     /// Offset from `vbatref` header value.
@@ -78,6 +80,7 @@ impl From<u8> for Predictor {
             4 => Self::MinThrottle,
             5 => Self::Motor0,
             6 => Self::Increment,
+            7 => Self::HomeCoord,
             8 => Self::FifteenHundred,
             9 => Self::VbatRef,
             10 => Self::LastMainFrameTime,
@@ -461,6 +464,16 @@ impl BfSession {
             if let Some(idx) = slow_defs.index_of(sensor_field) {
                 return self
                     .slow_frames
+                    .iter()
+                    .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
+                    .collect();
+            }
+        }
+        // Fall back to GPS frames (coordinates already reconstructed with home offset)
+        if let Some(ref gps_defs) = self.gps_field_defs {
+            if let Some(idx) = gps_defs.index_of(sensor_field) {
+                return self
+                    .gps_frames
                     .iter()
                     .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
                     .collect();

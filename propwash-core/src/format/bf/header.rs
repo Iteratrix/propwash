@@ -275,6 +275,11 @@ pub(crate) fn parse_bf_field_name(name: &str) -> SensorField {
             || SensorField::Unknown(name.to_string()),
             |i| SensorField::ERpm(MotorIndex(i)),
         ),
+        "GPS_coord[0]" => SensorField::GpsLat,
+        "GPS_coord[1]" => SensorField::GpsLng,
+        "GPS_altitude" => SensorField::Altitude,
+        "GPS_speed" => SensorField::GpsSpeed,
+        "GPS_ground_course" => SensorField::Heading,
         other => SensorField::Unknown(other.to_string()),
     }
 }

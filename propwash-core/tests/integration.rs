@@ -1028,6 +1028,28 @@ fn bf_gps_data_parsed() {
         bf.gps_frames.len()
     );
 
+    // GPS coordinates should be absolute (home offset applied)
+    let gps_lat = log.sessions[0].field(&SensorField::GpsLat);
+    let gps_lng = log.sessions[0].field(&SensorField::GpsLng);
+    assert!(!gps_lat.is_empty(), "should have GPS lat data via field()");
+    assert!(!gps_lng.is_empty(), "should have GPS lng data via field()");
+
+    // First GPS coord should be near the home position (within ~1km = 0.01 degrees)
+    let lat_deg = gps_lat[0] / 1e7;
+    let lng_deg = gps_lng[0] / 1e7;
+    #[allow(clippy::cast_precision_loss)]
+    let home_lat = home[0] as f64 / 1e7;
+    #[allow(clippy::cast_precision_loss)]
+    let home_lng = home[1] as f64 / 1e7;
+    assert!(
+        (lat_deg - home_lat).abs() < 0.01,
+        "GPS lat {lat_deg} should be near home {home_lat}"
+    );
+    assert!(
+        (lng_deg - home_lng).abs() < 0.01,
+        "GPS lng {lng_deg} should be near home {home_lng}"
+    );
+
     // Should have gyro unfiltered data (this fixture has gyroUnfilt fields)
     let unfilt = log.sessions[0].field(&SensorField::GyroUnfilt(Axis::Roll));
     assert!(!unfilt.is_empty(), "should have unfiltered gyro data");
