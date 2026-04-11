@@ -162,6 +162,7 @@ pub struct Px4ParseStats {
     pub subscription_count: usize,
     pub dropout_count: usize,
     pub corrupt_bytes: usize,
+    pub truncated: bool,
 }
 
 impl Px4Session {
@@ -315,6 +316,12 @@ impl Px4Session {
 
     /// Extracts one field as a `Vec<f64>` across all relevant messages.
     ///
+    /// Uses the primary sensor instance (lowest `multi_id`) for each topic,
+    /// which is the correct default for flight analysis. Secondary sensor
+    /// instances (e.g. a second gyro) are accessible via
+    /// [`topic_data_all_instances`](Self::topic_data_all_instances) for raw
+    /// access consumers.
+    ///
     /// `SensorField::Unknown` names containing a `.` are resolved as
     /// `"topic.field"` against native PX4 subscription data.
     /// Unresolvable fields return an empty `Vec`.
@@ -409,6 +416,24 @@ impl Px4Session {
                     Vec::new()
                 }
             }
+            SensorField::ERpm(idx) => {
+                let field_name = format!("esc[{}].esc_rpm", idx.0);
+                let series = self.extract_series("esc_status", &field_name);
+                series.into_iter().map(|(_, v)| v).collect()
+            }
+            SensorField::GyroUnfilt(axis) => {
+                let field_name = match axis {
+                    Axis::Roll => "x",
+                    Axis::Pitch => "y",
+                    Axis::Yaw => "z",
+                };
+                // sensor_gyro is raw in rad/s — convert to deg/s
+                let series = self.extract_series("sensor_gyro", field_name);
+                series
+                    .into_iter()
+                    .map(|(_, v)| v * 57.295_779_513_082_32)
+                    .collect()
+            }
             SensorField::Setpoint(axis) => {
                 let field_name = match axis {
                     Axis::Roll => "roll",
@@ -466,19 +491,9 @@ impl Px4Session {
         }
     }
 
-    /// Returns whether the log appears truncated.
+    /// Returns whether the log appears truncated (ended mid-message).
     pub fn is_truncated(&self) -> bool {
-        self.stats.corrupt_bytes > 0
-    }
-
-    /// Returns whether bidirectional RPM telemetry is present.
-    pub fn has_rpm_telemetry(&self) -> bool {
-        false
-    }
-
-    /// Returns whether unfiltered gyro data is logged.
-    pub fn has_gyro_unfiltered(&self) -> bool {
-        false
+        self.stats.truncated
     }
 
     /// Returns the number of corrupt bytes encountered during parsing.

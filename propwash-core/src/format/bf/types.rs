@@ -249,6 +249,9 @@ pub struct BfSession {
     pub slow_frames: Vec<BfFrame>,
     /// Decoded GPS frames.
     pub gps_frames: Vec<BfFrame>,
+    /// GPS Home reference position (field values matching `gps_home_field_defs`).
+    /// Used as the base for delta-compressed GPS coordinate reconstruction.
+    pub gps_home: Option<Vec<i64>>,
     /// Discrete events.
     pub events: Vec<BfEvent>,
     /// Parse statistics.
@@ -302,6 +305,7 @@ impl BfSession {
             frames: Vec::new(),
             slow_frames: Vec::new(),
             gps_frames: Vec::new(),
+            gps_home: None,
             events: Vec::new(),
             stats: BfParseStats::default(),
             warnings: Vec::new(),
@@ -435,21 +439,34 @@ impl BfSession {
         dt_us as f64 / 1_000_000.0
     }
 
-    /// Extracts one field as a `Vec<f64>` across all main frames.
+    /// Extracts one field as a `Vec<f64>` across all frames.
     ///
     /// BF fields are indexed by position, so lookup is via the field-definition
-    /// hashmap. `SensorField::Unknown` values resolve only if the parser
-    /// previously mapped that exact string to a field index. Unresolvable
-    /// fields (including truly unknown names) return an empty `Vec`.
+    /// hashmap. Falls back to slow frames (battery voltage, RSSI, etc.) when
+    /// a field isn't found in main frames. `SensorField::Unknown` values
+    /// resolve only if the parser previously mapped that exact string to a
+    /// field index. Unresolvable fields return an empty `Vec`.
     #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
-        let Some(idx) = self.main_field_defs.index_of(sensor_field) else {
-            return Vec::new();
-        };
-        self.frames
-            .iter()
-            .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-            .collect()
+        // Check main frames first
+        if let Some(idx) = self.main_field_defs.index_of(sensor_field) {
+            return self
+                .frames
+                .iter()
+                .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
+                .collect();
+        }
+        // Fall back to slow frames
+        if let Some(ref slow_defs) = self.slow_field_defs {
+            if let Some(idx) = slow_defs.index_of(sensor_field) {
+                return self
+                    .slow_frames
+                    .iter()
+                    .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
+                    .collect();
+            }
+        }
+        Vec::new()
     }
 
     /// Returns the number of motors detected from field definitions.
@@ -459,22 +476,6 @@ impl BfSession {
             .iter()
             .filter(|f| matches!(f.name, SensorField::Motor(_)))
             .count()
-    }
-
-    /// Returns whether bidirectional `DShot` RPM telemetry is present.
-    pub fn has_rpm_telemetry(&self) -> bool {
-        self.main_field_defs
-            .fields
-            .iter()
-            .any(|f| matches!(f.name, SensorField::ERpm(_)))
-    }
-
-    /// Returns whether unfiltered gyro data is logged.
-    pub fn has_gyro_unfiltered(&self) -> bool {
-        self.main_field_defs
-            .fields
-            .iter()
-            .any(|f| matches!(f.name, SensorField::GyroUnfilt(_)))
     }
 
     /// Returns the debug mode from headers.
