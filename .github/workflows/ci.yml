@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # Weekly Monday 6am UTC
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -47,3 +49,13 @@ jobs:
           targets: wasm32-unknown-unknown
       - run: cargo install wasm-pack
       - run: wasm-pack build propwash-web --target web --out-dir ../web/pkg
+
+  perf:
+    name: Performance
+    runs-on: ubuntu-latest
+    # Run on main pushes and weekly, not on every PR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --release -p propwash-core --test perf -- --ignored
