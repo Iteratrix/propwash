@@ -122,6 +122,19 @@ fn perf_px4_tagged() {
     );
 }
 
+// ── MAVLink ─────────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn perf_mavlink_dronekit() {
+    let (mb_s, frames) = bench_parse("mavlink/dronekit-flight.tlog");
+    assert!(frames > 0, "should parse frames");
+    assert!(
+        mb_s > 20.0,
+        "MAVLink parse throughput {mb_s:.0} MB/s below floor of 20 MB/s"
+    );
+}
+
 // ── Field extraction ─────────────────────────────────────────────────
 
 #[test]
@@ -140,6 +153,7 @@ fn perf_field_extraction_all_formats() {
         ("BF", "fc-blackbox/btfl_001.bbl"),
         ("AP", "ardupilot/methodic-copter-tarot-x4.bin"),
         ("PX4", "px4/sample_log_small.ulg"),
+        ("MAVLink", "mavlink/dronekit-flight.tlog"),
     ] {
         let path = fixture_path(fixture);
         let data = std::fs::read(&path).unwrap();

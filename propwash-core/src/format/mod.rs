@@ -1,5 +1,6 @@
 pub mod ap;
 pub mod bf;
+pub mod mavlink;
 pub mod px4;
 
 use crate::types::{Log, ParseError};
@@ -28,5 +29,32 @@ pub fn decode(data: &[u8]) -> Result<Log, ParseError> {
         return Ok(px4::decode(data));
     }
 
+    if is_mavlink_tlog(data) {
+        return Ok(mavlink::decode(data));
+    }
+
     Err(ParseError::UnrecognizedFormat)
+}
+
+/// Heuristic detection for `MAVLink` telemetry logs (.tlog).
+///
+/// A tlog is a sequence of `[8-byte timestamp][MAVLink frame]` records.
+/// We check that byte 8 is a `MAVLink` marker (0xFE for v1, 0xFD for v2)
+/// and that the first 8 bytes decode to a plausible Unix timestamp.
+fn is_mavlink_tlog(data: &[u8]) -> bool {
+    if data.len() < 17 {
+        return false; // Need at least timestamp + minimal v1 frame
+    }
+
+    let marker = data[8];
+    if marker != 0xFE && marker != 0xFD {
+        // 0xFE = MAVLink v1, 0xFD = MAVLink v2
+        return false;
+    }
+
+    // Validate timestamp: must be between year 2000 and 2100
+    let ts = u64::from_be_bytes(data[..8].try_into().unwrap_or([0; 8]));
+    let ts_seconds = ts / 1_000_000;
+    // 2000-01-01 = 946_684_800, 2100-01-01 = 4_102_444_800
+    (946_684_800..4_102_444_800).contains(&ts_seconds)
 }

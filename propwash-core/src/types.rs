@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use crate::format::ap::types::ApSession;
 use crate::format::bf::types::BfSession;
+use crate::format::mavlink::types::MavlinkSession;
 use crate::format::px4::types::Px4Session;
 
 /// Rotational axis: roll, pitch, or yaw.
@@ -316,6 +317,7 @@ pub enum Session {
     Betaflight(BfSession),
     ArduPilot(ApSession),
     Px4(Px4Session),
+    Mavlink(MavlinkSession),
 }
 
 /// Dispatches a method call to the inner format-specific type.
@@ -325,6 +327,7 @@ macro_rules! dispatch {
             Self::Betaflight(s) => s.$method($($arg),*),
             Self::ArduPilot(s) => s.$method($($arg),*),
             Self::Px4(s) => s.$method($($arg),*),
+            Self::Mavlink(s) => s.$method($($arg),*),
         }
     };
 }

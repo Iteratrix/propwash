@@ -1576,6 +1576,221 @@ fn analysis_works_for_px4() {
     );
 }
 
+// ── MAVLink tlog tests ─────────────────────────────────────────────
+
+fixture_test!(mavlink_dronekit, "mavlink/dronekit-flight.tlog");
+
+#[test]
+fn mavlink_dronekit_golden_values() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+
+    // Firmware version from STATUSTEXT
+    assert!(
+        session.firmware_version().contains("APM:Copter"),
+        "expected APM:Copter firmware, got: {}",
+        session.firmware_version()
+    );
+
+    // Vehicle type from HEARTBEAT
+    assert_eq!(
+        session.craft_name(),
+        "Quadrotor",
+        "expected Quadrotor vehicle type"
+    );
+
+    // ATTITUDE message count verified against pymavlink: 6292
+    assert_eq!(session.frame_count(), 6292);
+    assert_eq!(session.motor_count(), 4);
+
+    // Duration ~2443s (from tlog timestamps), sample rate ~4 Hz
+    assert!(
+        session.duration_seconds() > 2000.0,
+        "expected >2000s duration, got {}",
+        session.duration_seconds()
+    );
+    assert!(
+        session.sample_rate_hz() > 1.0 && session.sample_rate_hz() < 20.0,
+        "expected telemetry rate 1-20 Hz, got {}",
+        session.sample_rate_hz()
+    );
+}
+
+#[test]
+fn mavlink_gyro_from_attitude() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+
+    let gyro_roll = session.field(&SensorField::Gyro(Axis::Roll));
+    assert_eq!(
+        gyro_roll.len(),
+        6292,
+        "gyro data should match ATTITUDE count"
+    );
+
+    // First ATTITUDE rollspeed = -0.04941 rad/s = -2.831 deg/s
+    let expected_deg = -0.049_409_743_398_427_96 * 57.295_779_513_082_32;
+    assert!(
+        (gyro_roll[0] - expected_deg).abs() < 0.01,
+        "first gyro[roll] expected ~{expected_deg:.3}, got {:.3}",
+        gyro_roll[0]
+    );
+}
+
+#[test]
+fn mavlink_gps_data() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+
+    let lat = session.field(&SensorField::GpsLat);
+    let lng = session.field(&SensorField::GpsLng);
+    assert!(!lat.is_empty(), "should have GPS latitude data");
+    assert!(!lng.is_empty(), "should have GPS longitude data");
+
+    // First GPS_RAW_INT: lat = -352080891 → -35.2080891 deg
+    assert!(
+        (lat[0] - (-35.2080891)).abs() < 0.0001,
+        "first lat expected ~-35.208, got {}",
+        lat[0]
+    );
+    assert!(
+        (lng[0] - 149.0435193).abs() < 0.0001,
+        "first lon expected ~149.044, got {}",
+        lng[0]
+    );
+}
+
+#[test]
+fn mavlink_motor_output() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+
+    use propwash_core::types::MotorIndex;
+    let motor1 = session.field(&SensorField::Motor(MotorIndex(0)));
+    assert!(!motor1.is_empty(), "should have motor output data");
+
+    // First SERVO_OUTPUT_RAW servo1_raw = 968
+    assert!(
+        (motor1[0] - 968.0).abs() < 0.5,
+        "first motor[0] expected 968, got {}",
+        motor1[0]
+    );
+}
+
+#[test]
+fn mavlink_vbat() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+
+    let vbat = session.field(&SensorField::Vbat);
+    assert!(!vbat.is_empty(), "should have battery voltage data");
+
+    // First SYS_STATUS voltage_battery = 12202 mV = 12.202 V
+    assert!(
+        (vbat[0] - 12.202).abs() < 0.01,
+        "first vbat expected ~12.2V, got {}",
+        vbat[0]
+    );
+}
+
+#[test]
+fn mavlink_altitude() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+
+    let alt = session.field(&SensorField::Altitude);
+    assert!(!alt.is_empty(), "should have altitude data");
+
+    // VFR_HUD alt = 1.93m
+    assert!(
+        (alt[0] - 1.93).abs() < 0.1,
+        "first alt expected ~1.93m, got {}",
+        alt[0]
+    );
+}
+
+#[test]
+fn mavlink_raw_imu_accel() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+
+    let accel_z = session.field(&SensorField::Accel(Axis::Yaw));
+    assert!(!accel_z.is_empty(), "should have accel data");
+
+    // RAW_IMU zacc = -1006 mG ≈ -9.87 m/s²
+    let expected = -1006.0 * 0.001 * 9.806_65;
+    assert!(
+        (accel_z[0] - expected).abs() < 0.1,
+        "first accel[z] expected ~{expected:.2}, got {:.2}",
+        accel_z[0]
+    );
+}
+
+#[test]
+fn mavlink_analysis_works() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let analysis = propwash_core::analysis::analyze(&log.sessions[0]);
+    assert!(
+        analysis.summary.frame_count > 0,
+        "mavlink analysis should have frames"
+    );
+}
+
+#[test]
+fn mavlink_field_names_populated() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let session = &log.sessions[0];
+    let names = session.field_names();
+    assert!(
+        names.contains(&"gyro[roll]".to_string()),
+        "field_names should include gyro: {names:?}"
+    );
+    assert!(
+        names.contains(&"motor[0]".to_string()),
+        "field_names should include motor: {names:?}"
+    );
+}
+
+#[test]
+fn mavlink_statustext_captured() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let Session::Mavlink(mav) = &log.sessions[0] else {
+        panic!("expected Mavlink session");
+    };
+    // 66 STATUSTEXT messages verified against pymavlink
+    assert_eq!(
+        mav.status_messages.len(),
+        66,
+        "expected 66 STATUSTEXT messages"
+    );
+    assert!(
+        mav.status_messages[0].text.contains("APM:Copter"),
+        "first status message should be firmware version"
+    );
+}
+
+#[test]
+fn mavlink_parse_stats() {
+    let log = parse_fixture("mavlink/dronekit-flight.tlog");
+    let Session::Mavlink(mav) = &log.sessions[0] else {
+        panic!("expected Mavlink session");
+    };
+    // 163851 total packets verified against pymavlink
+    assert!(
+        mav.stats.total_packets > 100_000,
+        "expected >100K packets, got {}",
+        mav.stats.total_packets
+    );
+    assert_eq!(
+        mav.stats.crc_errors, 0,
+        "clean file should have no CRC errors"
+    );
+    assert_eq!(
+        mav.stats.corrupt_bytes, 0,
+        "clean file should have no corrupt bytes"
+    );
+}
+
 // ── Filter config tests ────────────────────────────────────────────
 
 #[test]
