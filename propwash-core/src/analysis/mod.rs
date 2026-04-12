@@ -11,6 +11,7 @@ use fft::VibrationAnalysis;
 use summary::FlightSummary;
 
 use crate::format::ap::types::ApSession;
+use crate::format::mavlink::types::MavlinkSession;
 use crate::format::px4::types::Px4Session;
 use crate::types::Session;
 
@@ -39,6 +40,9 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
             }
             Session::Px4(px4) => {
                 events.extend(detect_px4_log_events(px4));
+            }
+            Session::Mavlink(mav) => {
+                events.extend(detect_mavlink_status_messages(mav));
             }
         }
 
@@ -127,6 +131,27 @@ fn detect_ardupilot_events(ap: &ApSession) -> Vec<FlightEvent> {
     }
 
     events
+}
+
+/// Detect events from `MAVLink` `STATUSTEXT` messages (warnings/errors).
+#[allow(clippy::cast_precision_loss)]
+fn detect_mavlink_status_messages(mav: &MavlinkSession) -> Vec<FlightEvent> {
+    use crate::format::mavlink::types::Severity;
+
+    mav.status_messages
+        .iter()
+        .filter(|msg| msg.severity <= Severity::Warning)
+        .map(|msg| FlightEvent {
+            frame_index: 0,
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+            time_us: msg.timestamp_us as i64,
+            time_seconds: msg.timestamp_us as f64 / 1_000_000.0,
+            kind: EventKind::FirmwareMessage {
+                level: msg.severity.as_str().to_string(),
+                message: msg.text.clone(),
+            },
+        })
+        .collect()
 }
 
 /// Detect firmware messages from `ArduPilot` ERR log messages.
