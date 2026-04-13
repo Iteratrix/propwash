@@ -441,7 +441,7 @@ impl Px4Session {
                         col.iter().map(|&v| v * 57.295_779_513_082_32).collect()
                     })
             }
-            _ => Vec::new(),
+            SensorField::PidP(_) | SensorField::PidI(_) | SensorField::PidD(_) => Vec::new(),
         }
     }
 

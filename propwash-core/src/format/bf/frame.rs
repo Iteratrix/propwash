@@ -96,7 +96,7 @@ pub(crate) fn parse_session_frames(
     let time_idx = session.main_field_defs.index_of(&SensorField::Time);
     let iter_idx = session
         .main_field_defs
-        .index_of(&SensorField::LoopIteration);
+        .index_of(&SensorField::Unknown("loopIteration".to_string()));
 
     let mut ctx = DecodeContext::new(session);
     let mut stats = BfParseStats::default();

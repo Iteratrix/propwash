@@ -88,7 +88,6 @@ impl fmt::Display for MotorIndex {
 #[non_exhaustive]
 pub enum SensorField {
     Time,
-    LoopIteration,
     Gyro(Axis),
     Motor(MotorIndex),
     Rc(RcChannel),
@@ -123,7 +122,6 @@ impl SensorField {
     pub fn parse(name: &str) -> Result<Self, String> {
         match name {
             "time" => Ok(Self::Time),
-            "loop_iteration" => Ok(Self::LoopIteration),
             "vbat" => Ok(Self::Vbat),
             "altitude" => Ok(Self::Altitude),
             "gps_speed" => Ok(Self::GpsSpeed),
@@ -170,7 +168,6 @@ impl fmt::Display for SensorField {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Time => write!(f, "time"),
-            Self::LoopIteration => write!(f, "loop_iteration"),
             Self::Gyro(a) => write!(f, "gyro[{a}]"),
             Self::Motor(m) => write!(f, "motor[{m}]"),
             Self::Rc(ch) => write!(f, "rc[{ch}]"),

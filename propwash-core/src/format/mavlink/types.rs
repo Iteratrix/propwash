@@ -406,8 +406,7 @@ impl MavlinkSession {
             | SensorField::Setpoint(_)
             | SensorField::PidP(_)
             | SensorField::PidI(_)
-            | SensorField::PidD(_)
-            | SensorField::LoopIteration => Vec::new(),
+            | SensorField::PidD(_) => Vec::new(),
             SensorField::Unknown(name) => {
                 // Try "MSG_NAME.field_name" format
                 if let Some((msg, fld)) = name.split_once('.') {

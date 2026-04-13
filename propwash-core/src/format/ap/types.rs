@@ -406,7 +406,6 @@ impl ApSession {
                     Vec::new()
                 }
             }
-            _ => Vec::new(),
         }
     }
 

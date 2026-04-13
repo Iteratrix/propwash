@@ -573,7 +573,7 @@ fn golden_loop_iteration_matches_official_decoder() {
     let bf = get_bf(&log.sessions[1]);
     let iter_idx = bf
         .main_field_defs
-        .index_of(&SensorField::LoopIteration)
+        .index_of(&SensorField::Unknown("loopIteration".to_string()))
         .unwrap();
 
     assert_eq!(bf.main_value(0, iter_idx), 0);
@@ -670,7 +670,7 @@ fn regression_loop_iteration_uses_frame_schedule() {
     let bf = get_bf(&log.sessions[1]);
     let iter_idx = bf
         .main_field_defs
-        .index_of(&SensorField::LoopIteration)
+        .index_of(&SensorField::Unknown("loopIteration".to_string()))
         .unwrap();
 
     let delta = bf.main_value(1, iter_idx) - bf.main_value(0, iter_idx);
