@@ -388,6 +388,24 @@ impl Px4Session {
             SensorField::Vbat => self
                 .topic_column("battery_status", "voltage_v")
                 .map_or_else(Vec::new, <[f64]>::to_vec),
+            SensorField::Heading => self
+                .topic_column("vehicle_global_position", "yaw")
+                .map_or_else(Vec::new, |col| {
+                    col.iter().map(|&v| v * 57.295_779_513_082_32).collect()
+                }),
+            SensorField::GpsSpeed => {
+                // Compute ground speed from vel_n and vel_e
+                let vn = self.topic_column("vehicle_global_position", "vel_n");
+                let ve = self.topic_column("vehicle_global_position", "vel_e");
+                match (vn, ve) {
+                    (Some(vn), Some(ve)) => vn
+                        .iter()
+                        .zip(ve.iter())
+                        .map(|(&n, &e)| (n * n + e * e).sqrt())
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            }
             SensorField::Unknown(name) => {
                 if let Some((topic, fld)) = name.split_once('.') {
                     self.topic_column(topic, fld)
