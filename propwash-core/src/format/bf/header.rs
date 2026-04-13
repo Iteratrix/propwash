@@ -237,7 +237,7 @@ fn get_u8_list(
 pub(crate) fn parse_bf_field_name(name: &str) -> SensorField {
     match name {
         "time" => SensorField::Time,
-        "loopIteration" => SensorField::LoopIteration,
+        "loopIteration" => SensorField::Unknown("loopIteration".to_string()),
         "vbatLatest" | "vbat" => SensorField::Vbat,
         "altitude" | "BarAlt" | "Alt" => SensorField::Altitude,
         "gpsSpeed" | "Spd" => SensorField::GpsSpeed,
@@ -296,8 +296,9 @@ fn build_field_defs(
         .enumerate()
         .map(|(i, name)| {
             let field = parse_bf_field_name(name);
-            let value_sign = match field {
-                SensorField::Time | SensorField::LoopIteration => BfFieldSign::Unsigned,
+            let value_sign = match &field {
+                SensorField::Time => BfFieldSign::Unsigned,
+                SensorField::Unknown(n) if n == "loopIteration" => BfFieldSign::Unsigned,
                 _ => BfFieldSign::Signed,
             };
             BfFieldDef {
@@ -385,7 +386,7 @@ mod tests {
 
         // Check expected fields
         let names = h.main_field_defs.names();
-        assert!(names.iter().any(|n| n == "loop_iteration"));
+        assert!(names.iter().any(|n| n == "loopIteration"));
         assert!(names.iter().any(|n| n == "time"));
         assert!(names.iter().any(|n| n == "gyro[roll]"));
         assert!(names.iter().any(|n| n == "motor[0]"));
