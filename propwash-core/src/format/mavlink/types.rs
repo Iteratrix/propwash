@@ -435,9 +435,21 @@ impl MavlinkSession {
         })
     }
 
-    #[allow(clippy::unused_self)]
     pub fn motor_range(&self) -> (f64, f64) {
-        (1000.0, 2000.0)
+        // ArduPilot params
+        let min = self
+            .params
+            .get("MOT_PWM_MIN")
+            .or_else(|| self.params.get("PWM_MIN"))
+            .copied()
+            .unwrap_or(1000.0);
+        let max = self
+            .params
+            .get("MOT_PWM_MAX")
+            .or_else(|| self.params.get("PWM_MAX"))
+            .copied()
+            .unwrap_or(2000.0);
+        (min, max)
     }
 
     pub fn is_truncated(&self) -> bool {
@@ -448,16 +460,31 @@ impl MavlinkSession {
         self.stats.corrupt_bytes
     }
 
-    #[allow(clippy::unused_self)]
     pub fn filter_config(&self) -> FilterConfig {
+        let non_zero = |v: f64| if v > 0.0 { Some(v) } else { None };
+        let p = |k: &str| self.params.get(k).copied().unwrap_or(0.0);
+
+        // ArduPilot params (same as AP DataFlash)
         FilterConfig {
-            gyro_lpf_hz: None,
+            gyro_lpf_hz: non_zero(p("INS_GYRO_FILTER")),
             gyro_lpf2_hz: None,
-            dterm_lpf_hz: None,
-            dyn_notch_min_hz: None,
+            dterm_lpf_hz: non_zero(p("ATC_RAT_RLL_FLTE")),
+            dyn_notch_min_hz: if p("INS_HNTCH_ENABLE") > 0.0 {
+                non_zero(p("INS_HNTCH_FREQ"))
+            } else {
+                None
+            },
             dyn_notch_max_hz: None,
-            gyro_notch1_hz: None,
-            gyro_notch2_hz: None,
+            gyro_notch1_hz: if p("INS_NOTCH_ENABLE") > 0.0 {
+                non_zero(p("INS_NOTCH_FREQ"))
+            } else {
+                None
+            },
+            gyro_notch2_hz: if p("INS_NOTC2_ENABLE") > 0.0 {
+                non_zero(p("INS_NOTC2_FREQ"))
+            } else {
+                None
+            },
         }
     }
 
