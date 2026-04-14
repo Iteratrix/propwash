@@ -29,6 +29,13 @@ export interface FlightSummary {
   motor_saturations: number;
   overshoots: number;
   motor_count: number;
+  motor_balance: MotorStats[];
+}
+
+export interface MotorStats {
+  index: number;
+  mean: number;
+  deviation_percent: number;
 }
 
 export interface FlightEvent {

@@ -655,6 +655,51 @@ footer a {
   .peak-badge { font-size: 0.7rem; padding: 0.25rem 0.4rem; }
 }
 
+/* Motor balance bars */
+.motor-balance-section {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.motor-balance-section h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-weight: normal;
+}
+.motor-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+.motor-bar-label {
+  width: 4.5rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.motor-bar-track {
+  flex: 1;
+  height: 1rem;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.motor-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s;
+}
+.motor-bar-value {
+  width: 3.5rem;
+  font-size: 0.8rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 /* Ensure tables scroll horizontally on narrow screens */
 .event-table, .compare-table {
   display: block;
