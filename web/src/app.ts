@@ -616,6 +616,32 @@ function renderSummary(session: SessionResult): void {
       </div>`
     )
     .join("");
+
+  // Motor balance bars (remove previous if re-rendering)
+  document.querySelector(".motor-balance-section")?.remove();
+  const balance = session.analysis.summary.motor_balance;
+  if (balance.length > 0) {
+    const maxMean = Math.max(...balance.map(m => m.mean));
+    const balanceHtml = balance.map(m => {
+      const pct = maxMean > 0 ? (m.mean / maxMean * 100) : 0;
+      const dev = m.deviation_percent;
+      const color = Math.abs(dev) > 5 ? "#e85454" : Math.abs(dev) > 2 ? "#e8b84a" : "#4ec88c";
+      const sign = dev > 0 ? "+" : "";
+      return `<div class="motor-bar-row">
+        <span class="motor-bar-label">Motor ${m.index + 1}</span>
+        <div class="motor-bar-track">
+          <div class="motor-bar-fill" style="width:${pct.toFixed(1)}%;background:${color}"></div>
+        </div>
+        <span class="motor-bar-value">${sign}${dev.toFixed(1)}%</span>
+      </div>`;
+    }).join("");
+    grid.insertAdjacentHTML("afterend",
+      `<div class="motor-balance-section">
+        <h3>Motor Balance</h3>
+        ${balanceHtml}
+      </div>`
+    );
+  }
 }
 
 const echartsInstances: any[] = [];

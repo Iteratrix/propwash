@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
-use crate::types::Session;
+use crate::types::{MotorIndex, SensorField, Session};
 
 #[derive(Debug, Serialize)]
 pub struct FlightSummary {
@@ -19,6 +19,17 @@ pub struct FlightSummary {
     pub overshoots: usize,
     pub desyncs: usize,
     pub total_events: usize,
+    /// Per-motor average output and overall balance. Empty if no motor data.
+    pub motor_balance: Vec<MotorStats>,
+}
+
+/// Average output and deviation for one motor.
+#[derive(Debug, Serialize)]
+pub struct MotorStats {
+    pub index: usize,
+    pub mean: f64,
+    /// Percentage deviation from the all-motor average. Positive = working harder.
+    pub deviation_percent: f64,
 }
 
 /// Builds a summary from a session and its detected events.
@@ -42,6 +53,8 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
         }
     }
 
+    let motor_balance = compute_motor_balance(session);
+
     FlightSummary {
         session_index: session.index(),
         firmware: session.firmware_version().to_string(),
@@ -57,5 +70,47 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
         overshoots,
         desyncs,
         total_events: events.len(),
+        motor_balance,
     }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn compute_motor_balance(session: &Session) -> Vec<MotorStats> {
+    let n = session.motor_count();
+    if n == 0 {
+        return Vec::new();
+    }
+
+    let means: Vec<(usize, f64)> = (0..n)
+        .filter_map(|i| {
+            let col = session.field(&SensorField::Motor(MotorIndex(i)));
+            if col.is_empty() {
+                return None;
+            }
+            let sum: f64 = col.iter().sum();
+            Some((i, sum / col.len() as f64))
+        })
+        .collect();
+
+    if means.is_empty() {
+        return Vec::new();
+    }
+
+    let overall_avg = means.iter().map(|(_, m)| m).sum::<f64>() / means.len() as f64;
+
+    means
+        .iter()
+        .map(|&(index, mean)| {
+            let deviation_percent = if overall_avg > 0.0 {
+                (mean - overall_avg) / overall_avg * 100.0
+            } else {
+                0.0
+            };
+            MotorStats {
+                index,
+                mean,
+                deviation_percent,
+            }
+        })
+        .collect()
 }
