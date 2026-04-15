@@ -310,7 +310,10 @@ function setupDropZone(): void {
   const zone = $("#drop-zone");
   const input = $("#file-input") as HTMLInputElement;
 
-  zone.addEventListener("click", () => input.click());
+  zone.addEventListener("click", (e: Event) => {
+    if (e.target !== input) input.click();
+  });
+  input.addEventListener("click", (e: Event) => e.stopPropagation());
   input.addEventListener("change", () => {
     if (input.files && input.files.length > 0) handleFiles(input.files);
   });
