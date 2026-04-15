@@ -82,6 +82,49 @@ impl fmt::Display for MotorIndex {
 
 /// Format-agnostic sensor field identifier.
 ///
+/// Canonical unit for a sensor field's values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unit {
+    /// Microseconds (timestamps).
+    Microseconds,
+    /// Degrees per second (angular rates).
+    DegreesPerSecond,
+    /// Meters per second squared (linear acceleration).
+    MetersPerSecondSquared,
+    /// PWM microseconds (motor/servo/RC outputs).
+    Pwm,
+    /// Revolutions per minute.
+    Rpm,
+    /// Volts.
+    Volts,
+    /// Meters.
+    Meters,
+    /// Meters per second.
+    MetersPerSecond,
+    /// Degrees (angle or coordinate).
+    Degrees,
+    /// No meaningful unit.
+    Dimensionless,
+}
+
+impl fmt::Display for Unit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Microseconds | Self::Pwm => write!(f, "μs"),
+            Self::DegreesPerSecond => write!(f, "deg/s"),
+            Self::MetersPerSecondSquared => write!(f, "m/s²"),
+            Self::Rpm => write!(f, "rpm"),
+            Self::Volts => write!(f, "V"),
+            Self::Meters => write!(f, "m"),
+            Self::MetersPerSecond => write!(f, "m/s"),
+            Self::Degrees => write!(f, "deg"),
+            Self::Dimensionless => write!(f, ""),
+        }
+    }
+}
+
+/// Format-agnostic sensor field identifier.
+///
 /// Known fields get proper variants with typed indices.
 /// Unknown fields preserve the original header string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -119,6 +162,31 @@ impl SensorField {
     ///
     /// Returns `Err` if an indexed field has an invalid axis or index
     /// (e.g., `"gyro[invalid]"`).
+    /// Returns the canonical unit for this field's values.
+    ///
+    /// All format implementations must convert to these units in their
+    /// `field()` methods. For example, `Vbat` must return volts regardless
+    /// of whether the format stores millivolts, centivalts, or raw ADC counts.
+    pub fn unit(&self) -> Unit {
+        match self {
+            Self::Time => Unit::Microseconds,
+            Self::Gyro(_) | Self::GyroUnfilt(_) | Self::Setpoint(_) => Unit::DegreesPerSecond,
+            Self::Accel(_) => Unit::MetersPerSecondSquared,
+            Self::Motor(_) | Self::Rc(_) => Unit::Pwm,
+            Self::ERpm(_) => Unit::Rpm,
+            Self::Vbat => Unit::Volts,
+            Self::Altitude => Unit::Meters,
+            Self::GpsSpeed => Unit::MetersPerSecond,
+            Self::GpsLat | Self::GpsLng | Self::Heading => Unit::Degrees,
+            Self::PidP(_) | Self::PidI(_) | Self::PidD(_) | Self::Unknown(_) => Unit::Dimensionless,
+        }
+    }
+
+    /// Parses a canonical field name into a `SensorField`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` if an indexed field has an invalid axis or index.
     pub fn parse(name: &str) -> Result<Self, String> {
         match name {
             "time" => Ok(Self::Time),
