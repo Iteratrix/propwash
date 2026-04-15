@@ -1,5 +1,5 @@
-import init, { analyze, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "../pkg/propwash_web.js";
-import type { AnalysisResult, SessionResult, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
+import init, { add_file, clear_workspace, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "../pkg/propwash_web.js";
+import type { WorkspaceFile, SessionRef, SessionResult, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
 import { formatEventType, formatEventDetails, eventColor, heatColor, bucketDiagnostics, classifyDelta } from "./format.js";
 
 declare const echarts: any;
@@ -11,7 +11,7 @@ const $$ = (sel: string): NodeListOf<HTMLElement> => document.querySelectorAll(s
 
 declare global {
   interface Window {
-    _rawPage: (sessionIdx: number, start: number) => void;
+    _rawPage: (fileId: number, sessionIdx: number, start: number) => void;
   }
 }
 
@@ -21,7 +21,8 @@ function chartWidth(): number {
 }
 
 let wasmReady = false;
-let result: AnalysisResult | null = null;
+let workspace: WorkspaceFile[] = [];
+let activeSession: SessionRef | null = null;
 
 const AXIS_COLORS: Record<string, string> = {
   roll:  "#5b8def",
@@ -112,20 +113,41 @@ let tsPlots: any[] = [];
 let tsSync: any = null;
 let filterConfig: FilterConfig | null = null;
 
-let compareResult: AnalysisResult | null = null;
-
 let renderedViews = new Set<string>();
+
+/** Look up the active session's analysis result. */
+function activeSessionResult(): SessionResult | null {
+  if (!activeSession) return null;
+  const file = workspace.find(f => f.file_id === activeSession!.fileId);
+  return file?.sessions[activeSession.sessionIdx] ?? null;
+}
+
+/** Build a flat list of all sessions across workspace files. */
+function allSessionRefs(): SessionRef[] {
+  const refs: SessionRef[] = [];
+  for (const file of workspace) {
+    const name = file.filename || `File ${file.file_id}`;
+    for (let i = 0; i < file.sessions.length; i++) {
+      const s = file.sessions[i];
+      const label = file.sessions.length === 1
+        ? name
+        : `${name} / Session ${s.index}`;
+      refs.push({ fileId: file.file_id, sessionIdx: i, label });
+    }
+  }
+  return refs;
+}
 
 async function boot() {
   await init({ module_or_path: __WASM_URL__ });
   wasmReady = true;
   setupDropZone();
-  setupCompareDropZone();
   setupTimeseriesControls();
   setupViewTabs();
   $("#reset-btn").addEventListener("click", reset);
-  $("#compare-btn").addEventListener("click", startCompare);
-  $("#compare-reset-btn").addEventListener("click", reset);
+  $("#add-files-btn")?.addEventListener("click", () => {
+    ($("#file-input") as HTMLInputElement).click();
+  });
 }
 
 function setupViewTabs() {
@@ -143,77 +165,16 @@ function setupViewTabs() {
 }
 
 function reset() {
-  result = null;
-  compareResult = null;
+  workspace = [];
+  activeSession = null;
+  clear_workspace();
   disposeEcharts();
   renderedViews.clear();
   $("#results").classList.add("hidden");
-  $("#compare-drop").classList.add("hidden");
-  $("#compare-results").classList.add("hidden");
   $("#drop-zone").classList.remove("hidden");
   ($("#file-input") as HTMLInputElement).value = "";
-  ($("#compare-file-input") as HTMLInputElement).value = "";
 }
 
-function startCompare() {
-  $("#results").classList.add("hidden");
-  $("#compare-drop").classList.remove("hidden");
-}
-
-function setupCompareDropZone(): void {
-  const zone = $("#compare-drop");
-  const input = $("#compare-file-input") as HTMLInputElement;
-
-  zone.addEventListener("click", () => input.click());
-  input.addEventListener("change", () => {
-    if (input.files && input.files.length > 0) handleCompareFile(input.files[0]);
-  });
-  zone.addEventListener("dragover", (e: Event) => {
-    e.preventDefault();
-    zone.classList.add("drag-over");
-  });
-  zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
-  zone.addEventListener("drop", (e: Event) => {
-    e.preventDefault();
-    zone.classList.remove("drag-over");
-    const dt = (e as DragEvent).dataTransfer;
-    if (dt && dt.files.length > 0) handleCompareFile(dt.files[0]);
-  });
-}
-
-async function handleCompareFile(file: File): Promise<void> {
-  if (!wasmReady) return;
-
-  $("#compare-drop").classList.add("hidden");
-  $("#loading").classList.remove("hidden");
-
-  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-  const buffer = await file.arrayBuffer();
-  const data = new Uint8Array(buffer);
-  const json = analyze(data);
-  compareResult = JSON.parse(json);
-
-  $("#loading").classList.add("hidden");
-
-  if (compareResult!.sessions.length === 0) {
-    $("#compare-drop").classList.remove("hidden");
-    alert("No sessions found in comparison file.");
-    return;
-  }
-
-  $("#compare-results").classList.remove("hidden");
-  renderComparison();
-}
-
-function renderComparison(): void {
-  const a = result!.sessions[activeSessionIdx] || result!.sessions[0];
-  const b = compareResult!.sessions[0];
-
-  renderComparisonSummary(a, b);
-  renderComparisonDiagnostics(a, b);
-  renderComparisonSpectra(a, b);
-}
 
 function renderComparisonSummary(a: SessionResult, b: SessionResult): void {
   const rows = [
@@ -351,7 +312,7 @@ function setupDropZone(): void {
 
   zone.addEventListener("click", () => input.click());
   input.addEventListener("change", () => {
-    if (input.files && input.files.length > 0) handleFile(input.files[0]);
+    if (input.files && input.files.length > 0) handleFiles(input.files);
   });
 
   zone.addEventListener("dragover", (e: Event) => {
@@ -363,72 +324,99 @@ function setupDropZone(): void {
     e.preventDefault();
     zone.classList.remove("drag-over");
     const dt = (e as DragEvent).dataTransfer;
-    if (dt && dt.files.length > 0) handleFile(dt.files[0]);
+    if (dt && dt.files.length > 0) handleFiles(dt.files);
   });
 }
 
-async function handleFile(file: File): Promise<void> {
+async function handleFiles(files: FileList): Promise<void> {
   if (!wasmReady) return;
 
   $("#drop-zone").classList.add("hidden");
   $("#loading").classList.remove("hidden");
-  $("#results").classList.add("hidden");
 
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-  const buffer = await file.arrayBuffer();
-  const data = new Uint8Array(buffer);
-
-  const json = analyze(data);
-  result = JSON.parse(json);
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const buffer = await file.arrayBuffer();
+    const data = new Uint8Array(buffer);
+    const json = add_file(data, file.name);
+    const result: WorkspaceFile = JSON.parse(json);
+    if (result.sessions.length > 0) {
+      workspace.push(result);
+    }
+  }
 
   $("#loading").classList.add("hidden");
 
-  if (result!.sessions.length === 0) {
+  if (workspace.length === 0) {
     $("#drop-zone").classList.remove("hidden");
-    alert("No sessions found in this file. " + (result!.warnings[0] || ""));
+    alert("No sessions found in the loaded files.");
     return;
   }
 
-  renderSessionTabs();
+  renderSessionSelector();
   $("#results").classList.remove("hidden");
-  showSession(0);
-}
 
-function renderSessionTabs() {
-  const nav = $("#session-tabs");
-  nav.innerHTML = "";
-
-  if (result!.sessions.length === 1) return;
-
-  for (let i = 0; i < result!.sessions.length; i++) {
-    const s = result!.sessions[i];
-    const btn = document.createElement("button");
-    btn.className = "session-tab" + (i === 0 ? " active" : "");
-    btn.textContent = `Session ${s.index}`;
-    btn.addEventListener("click", () => {
-      $$(".session-tab").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      showSession(i);
-    });
-    nav.appendChild(btn);
+  // Select first session
+  const refs = allSessionRefs();
+  if (refs.length > 0) {
+    showSession(refs[0]);
   }
 }
 
-function showSession(idx: number): void {
-  activeSessionIdx = idx;
-  filterConfig = JSON.parse(get_filter_config(idx));
+function renderSessionSelector() {
+  const nav = $("#session-tabs");
+  nav.innerHTML = "";
+
+  const refs = allSessionRefs();
+  if (refs.length <= 1) return;
+
+  const select = document.createElement("select");
+  select.className = "session-select";
+
+  for (const file of workspace) {
+    const name = file.filename || `File ${file.file_id}`;
+    const group = document.createElement("optgroup");
+    group.label = name;
+    for (let i = 0; i < file.sessions.length; i++) {
+      const s = file.sessions[i];
+      const opt = document.createElement("option");
+      opt.value = `${file.file_id}:${i}`;
+      opt.textContent = file.sessions.length === 1
+        ? `${name} (${s.duration_seconds.toFixed(1)}s)`
+        : `Session ${s.index} (${s.duration_seconds.toFixed(1)}s)`;
+      group.appendChild(opt);
+    }
+    select.appendChild(group);
+  }
+
+  select.addEventListener("change", () => {
+    const [fileId, sessionIdx] = select.value.split(":").map(Number);
+    const ref = refs.find(r => r.fileId === fileId && r.sessionIdx === sessionIdx);
+    if (ref) showSession(ref);
+  });
+
+  nav.appendChild(select);
+}
+
+function showSession(ref: SessionRef): void {
+  activeSession = ref;
+  filterConfig = JSON.parse(get_filter_config(ref.fileId, ref.sessionIdx));
   renderedViews.clear();
   const activeView = $(".view-tab.active")?.dataset.view || "overview";
   renderViewIfNeeded(activeView);
 }
 
 function renderViewIfNeeded(view: string): void {
-  const key = `${view}-${activeSessionIdx}`;
+  if (!activeSession) return;
+  const key = `${view}-${activeSession.fileId}-${activeSession.sessionIdx}`;
   if (renderedViews.has(key)) return;
   renderedViews.add(key);
 
-  const s = result!.sessions[activeSessionIdx];
+  const s = activeSessionResult();
+  if (!s) return;
+
   switch (view) {
     case "overview":
       renderSummary(s);
@@ -436,17 +424,17 @@ function renderViewIfNeeded(view: string): void {
       renderEvents(s.analysis.events);
       break;
     case "timeline":
-      renderTimeseries(activeSessionIdx, $(".ts-tab.active")?.dataset.group || "gyro");
+      renderTimeseries(activeSession, $(".ts-tab.active")?.dataset.group || "gyro");
       break;
     case "spectrum":
       renderSpectraEcharts(s.analysis.vibration);
-      renderSpectrogram(activeSessionIdx);
+      renderSpectrogram(activeSession);
       renderThrottleBandsEcharts(s.analysis.vibration);
       renderAccel(s.analysis.vibration);
       renderPropwash(s.analysis.vibration);
       break;
     case "raw":
-      renderRawData(activeSessionIdx);
+      renderRawData(activeSession);
       break;
   }
 }
@@ -476,20 +464,22 @@ function setupTimeseriesControls() {
   const tabs = $$("#ts-tabs .ts-tab");
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
+      if (!activeSession) return;
       tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
-      renderedViews.delete(`timeline-${activeSessionIdx}`);
-      renderTimeseries(activeSessionIdx, tab.dataset.group!);
+      renderedViews.delete(`timeline-${activeSession.fileId}-${activeSession.sessionIdx}`);
+      renderTimeseries(activeSession, tab.dataset.group!);
     });
   });
   $("#ts-reset-zoom").addEventListener("click", () => {
+    if (!activeSession) return;
     const activeGroup = $(".ts-tab.active")?.dataset.group || "gyro";
-    renderedViews.delete(`timeline-${activeSessionIdx}`);
-    renderTimeseries(activeSessionIdx, activeGroup);
+    renderedViews.delete(`timeline-${activeSession.fileId}-${activeSession.sessionIdx}`);
+    renderTimeseries(activeSession, activeGroup);
   });
 }
 
-function renderTimeseries(sessionIdx: number, group: string): void {
+function renderTimeseries(ref: SessionRef, group: string): void {
   const container = $("#ts-charts");
   container.innerHTML = "";
   tsPlots = [];
@@ -498,7 +488,7 @@ function renderTimeseries(sessionIdx: number, group: string): void {
   if (!g) return;
 
   const allFields = g.fields.join(",");
-  const json = get_timeseries(sessionIdx, TS_MAX_POINTS, allFields);
+  const json = get_timeseries(ref.fileId, ref.sessionIdx, TS_MAX_POINTS, allFields);
   const ts = JSON.parse(json);
   if (ts.error) {
     container.innerHTML = `<p class="hint">${ts.error}</p>`;
@@ -514,7 +504,8 @@ function renderTimeseries(sessionIdx: number, group: string): void {
   const syncKey = "ts-sync";
   tsSync = uPlot.sync(syncKey);
 
-  const events = result!.sessions[sessionIdx]?.analysis?.events || [];
+  const sr = activeSessionResult();
+  const events = sr?.analysis?.events || [];
 
   const width = chartWidth();
 
@@ -1100,11 +1091,11 @@ function filterOverlayPlugin(maxFreq: number): any {
   };
 }
 
-function renderSpectrogram(sessionIdx: number): void {
+function renderSpectrogram(ref: SessionRef): void {
   const container = $("#spectrogram-plots");
   container.innerHTML = "";
 
-  const json = get_spectrogram(sessionIdx, "roll,pitch,yaw");
+  const json = get_spectrogram(ref.fileId, ref.sessionIdx, "roll,pitch,yaw");
   const data = JSON.parse(json);
   if (data.error || !data.axes || data.axes.length === 0) {
     container.innerHTML = '<p class="hint">No spectrogram data available.</p>';
@@ -1325,21 +1316,12 @@ function renderPropwash(vibration: VibrationAnalysis | null): void {
 const RAW_PAGE_SIZE = 200;
 const RAW_DEFAULT_FIELDS = ["time", "gyro[roll]", "gyro[pitch]", "gyro[yaw]", "motor[0]", "motor[1]", "motor[2]", "motor[3]", "rc[throttle]"];
 
-function renderRawData(sessionIdx: number): void {
-  const s = result!.sessions[sessionIdx];
-  const allFields = s.analysis.summary ? result!.sessions[sessionIdx] : null;
-
+function renderRawData(ref: SessionRef): void {
   const select = $("#raw-field-select") as HTMLSelectElement;
   select.innerHTML = "";
 
-  const fieldNames = get_timeseries(sessionIdx, 1, "time");
-  const ts = JSON.parse(fieldNames);
-  const unified = result!.sessions[sessionIdx];
-
   const defaultFields = RAW_DEFAULT_FIELDS;
-  const available = defaultFields;
-
-  for (const name of available) {
+  for (const name of defaultFields) {
     const opt = document.createElement("option");
     opt.value = name;
     opt.textContent = name;
@@ -1347,16 +1329,16 @@ function renderRawData(sessionIdx: number): void {
     select.appendChild(opt);
   }
 
-  select.onchange = () => loadRawPage(sessionIdx, 0);
-  loadRawPage(sessionIdx, 0);
+  select.onchange = () => loadRawPage(ref, 0);
+  loadRawPage(ref, 0);
 }
 
-function loadRawPage(sessionIdx: number, start: number): void {
+function loadRawPage(ref: SessionRef, start: number): void {
   const select = $("#raw-field-select") as HTMLSelectElement;
   const selected = Array.from(select.selectedOptions).map((o) => o.value);
   if (selected.length === 0) return;
 
-  const json = get_raw_frames(sessionIdx, start, RAW_PAGE_SIZE, selected.join(","));
+  const json = get_raw_frames(ref.fileId, ref.sessionIdx, start, RAW_PAGE_SIZE, selected.join(","));
   const data = JSON.parse(json);
   if (data.error) return;
 
@@ -1381,10 +1363,10 @@ function loadRawPage(sessionIdx: number, start: number): void {
   if (data.total > RAW_PAGE_SIZE) {
     html += `<div style="display:flex;gap:0.5rem;margin-top:0.5rem;justify-content:center;">`;
     if (start > 0) {
-      html += `<button class="ts-tab" onclick="window._rawPage(${sessionIdx},${Math.max(0, start - RAW_PAGE_SIZE)})">Prev</button>`;
+      html += `<button class="ts-tab" onclick="window._rawPage(${ref.fileId},${ref.sessionIdx},${Math.max(0, start - RAW_PAGE_SIZE)})">Prev</button>`;
     }
     if (start + RAW_PAGE_SIZE < data.total) {
-      html += `<button class="ts-tab" onclick="window._rawPage(${sessionIdx},${start + RAW_PAGE_SIZE})">Next</button>`;
+      html += `<button class="ts-tab" onclick="window._rawPage(${ref.fileId},${ref.sessionIdx},${start + RAW_PAGE_SIZE})">Next</button>`;
     }
     html += "</div>";
   }
@@ -1392,7 +1374,9 @@ function loadRawPage(sessionIdx: number, start: number): void {
   wrap.innerHTML = html;
 }
 
-window._rawPage = loadRawPage;
+window._rawPage = (fileId: number, sessionIdx: number, start: number) => {
+  loadRawPage({ fileId, sessionIdx, label: "" }, start);
+};
 
 function renderEvents(events: FlightEvent[]): void {
   const list = $("#events-list");
@@ -1480,7 +1464,6 @@ function escHtml(str: string): string {
   return div.innerHTML;
 }
 
-let activeSessionIdx = 0;
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 window.addEventListener("resize", () => {
   if (resizeTimer) clearTimeout(resizeTimer);
@@ -1488,10 +1471,10 @@ window.addEventListener("resize", () => {
     for (const inst of echartsInstances) {
       inst.resize();
     }
-    if (result && !$("#results").classList.contains("hidden")) {
+    if (activeSession && !$("#results").classList.contains("hidden")) {
       const view = $(".view-tab.active")?.dataset.view;
       if (view === "timeline") {
-        renderedViews.delete(`timeline-${activeSessionIdx}`);
+        renderedViews.delete(`timeline-${activeSession.fileId}-${activeSession.sessionIdx}`);
         renderViewIfNeeded("timeline");
       }
     }

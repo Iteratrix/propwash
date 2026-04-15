@@ -655,6 +655,22 @@ footer a {
   .peak-badge { font-size: 0.7rem; padding: 0.25rem 0.4rem; }
 }
 
+/* Session selector dropdown */
+.session-select {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+  min-width: 200px;
+}
+.session-select optgroup {
+  color: var(--text-dim);
+  font-style: normal;
+}
+
 /* Warning summary cards */
 .summary-warn {
   border-color: var(--red) !important;
