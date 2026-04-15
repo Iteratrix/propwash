@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
 use super::fft::VibrationAnalysis;
+use crate::types::FilterConfig;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
@@ -21,6 +22,7 @@ pub enum Severity {
 pub fn diagnose(
     events: &[FlightEvent],
     vibration: Option<&VibrationAnalysis>,
+    filter_config: &FilterConfig,
     motor_count: usize,
     duration_seconds: f64,
 ) -> Vec<Diagnostic> {
@@ -34,6 +36,7 @@ pub fn diagnose(
         diagnostics.extend(diagnose_vibration(vib));
         diagnostics.extend(diagnose_throttle_response(vib));
         diagnostics.extend(diagnose_fc_mounting(vib));
+        diagnostics.extend(diagnose_filter_adequacy(vib, filter_config));
     }
 
     diagnostics.sort_by(|a, b| b.severity.cmp(&a.severity));
@@ -361,5 +364,58 @@ fn diagnose_fc_mounting(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
             detail: "The FC board is bouncing vertically more than it vibrates laterally. This pattern suggests the soft mount grommets are too soft or the FC stack has vertical play. Check standoff height and grommet condition.".into(),
         });
     }
+    diagnostics
+}
+
+fn diagnose_filter_adequacy(vib: &VibrationAnalysis, config: &FilterConfig) -> Vec<Diagnostic> {
+    let gyro_lpf = config.gyro_lpf_hz.unwrap_or(0.0);
+    if gyro_lpf <= 0.0 {
+        return Vec::new(); // No filter config available
+    }
+
+    let mut diagnostics = Vec::new();
+
+    for spectrum in &vib.spectra {
+        let noise_floor = vib.noise_floor_db[match spectrum.axis {
+            "roll" => 0,
+            "pitch" => 1,
+            _ => 2,
+        }];
+
+        for peak in &spectrum.peaks {
+            let prominence = peak.magnitude_db - noise_floor;
+            if prominence < 15.0 {
+                continue; // Not significant enough
+            }
+
+            let freq = peak.frequency_hz;
+
+            // Check if a significant peak is below the gyro LPF cutoff (not being filtered)
+            if freq < gyro_lpf * 0.9 && freq > 20.0 {
+                // Check if any notch filter covers this frequency
+                let covered_by_notch = [config.gyro_notch1_hz, config.gyro_notch2_hz]
+                    .iter()
+                    .any(|n| n.is_some_and(|nf| (nf - freq).abs() < freq * 0.2));
+
+                let covered_by_dyn_notch = config.dyn_notch_min_hz.is_some_and(|min| freq >= min)
+                    && config.dyn_notch_max_hz.is_none_or(|max| freq <= max);
+
+                if !covered_by_notch && !covered_by_dyn_notch {
+                    diagnostics.push(Diagnostic {
+                        severity: Severity::Warning,
+                        category: "filters",
+                        message: format!(
+                            "Noise peak at {freq:.0} Hz on {} is below LPF cutoff ({gyro_lpf:.0} Hz)",
+                            spectrum.axis
+                        ),
+                        detail: format!(
+                            "A {prominence:.0} dB peak at {freq:.0} Hz passes through the gyro LPF (set at {gyro_lpf:.0} Hz) and is not covered by any notch filter. Consider adding a notch filter at {freq:.0} Hz or lowering the LPF cutoff."
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
     diagnostics
 }
