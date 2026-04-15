@@ -87,6 +87,12 @@ const FIELD_GROUPS = {
     names:  ["P", "I", "D"],
     colors: ["#5b8def", "#4ec88c", "#e85454"],
   },
+  erpm: {
+    label: "Motor RPM",
+    fields: ["erpm[0]", "erpm[1]", "erpm[2]", "erpm[3]"],
+    names:  ["Motor 1", "Motor 2", "Motor 3", "Motor 4"],
+    colors: ["#5b8def", "#4ec88c", "#e8b84a", "#e85454"],
+  },
   altitude: {
     label: "Altitude / GPS Speed",
     fields: ["altitude", "gps_speed"],
