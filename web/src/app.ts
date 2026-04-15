@@ -419,6 +419,7 @@ function renderViewIfNeeded(view: string): void {
       renderSpectrogram(activeSessionIdx);
       renderThrottleBandsEcharts(s.analysis.vibration);
       renderAccel(s.analysis.vibration);
+      renderPropwash(s.analysis.vibration);
       break;
     case "raw":
       renderRawData(activeSessionIdx);
@@ -1256,6 +1257,36 @@ function renderAccel(vibration: VibrationAnalysis | null): void {
     const plotDiv = document.createElement("div");
     plotsDiv.appendChild(plotDiv);
     createMultiAxisPlot(plotDiv, accel.spectra);
+  }
+}
+
+function renderPropwash(vibration: VibrationAnalysis | null): void {
+  const panel = $("#propwash-panel");
+  const infoDiv = $("#propwash-info");
+  const plotsDiv = $("#propwash-plots");
+
+  if (!vibration || !vibration.propwash) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  panel.classList.remove("hidden");
+  const pw = vibration.propwash;
+
+  let infoHtml = `<p class="propwash-summary">${pw.chop_count} throttle chop${pw.chop_count === 1 ? "" : "s"} analyzed`;
+  if (pw.dominant_frequency_hz != null && pw.dominant_magnitude_db != null) {
+    infoHtml += ` — dominant propwash frequency: <strong>${pw.dominant_frequency_hz.toFixed(0)} Hz</strong> (${pw.dominant_magnitude_db.toFixed(1)} dB)`;
+  } else {
+    infoHtml += ` — no dominant frequency in 20-100 Hz range`;
+  }
+  infoHtml += `</p>`;
+  infoDiv.innerHTML = infoHtml;
+
+  plotsDiv.innerHTML = "";
+  if (pw.spectra && pw.spectra.length > 0) {
+    const plotDiv = document.createElement("div");
+    plotsDiv.appendChild(plotDiv);
+    createMultiAxisPlot(plotDiv, pw.spectra);
   }
 }
 
