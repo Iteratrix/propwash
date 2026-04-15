@@ -2,6 +2,7 @@ use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 use serde::Serialize;
 
+use super::events::{EventKind, FlightEvent};
 use crate::types::{Axis, RcChannel, SensorField, Session};
 
 #[derive(Debug, Clone, Serialize)]
@@ -44,11 +45,24 @@ pub struct AccelVibration {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct PropwashAnalysis {
+    /// Per-axis FFT of gyro data in the recovery windows after throttle chops.
+    pub spectra: Vec<FrequencySpectrum>,
+    /// Number of throttle chop events used.
+    pub chop_count: usize,
+    /// Dominant propwash frequency (Hz) across all axes, if detected.
+    pub dominant_frequency_hz: Option<f64>,
+    /// Magnitude of the dominant propwash peak (dB).
+    pub dominant_magnitude_db: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct VibrationAnalysis {
     pub spectra: Vec<FrequencySpectrum>,
     pub noise_floor_db: [f64; 3],
     pub throttle_bands: Vec<ThrottleBand>,
     pub accel: Option<AccelVibration>,
+    pub propwash: Option<PropwashAnalysis>,
 }
 
 const FFT_WINDOW_SIZE: usize = 1024;
@@ -225,9 +239,12 @@ fn compute_noise_floor(magnitudes_db: &[f64]) -> f64 {
 }
 
 /// Format-agnostic vibration analysis using the `Unified` trait.
-/// Includes throttle-banded FFT and accelerometer analysis.
+/// Includes throttle-banded FFT, accelerometer analysis, and propwash analysis.
 #[allow(clippy::cast_precision_loss)]
-pub fn analyze_vibration_unified(unified: &Session) -> Option<VibrationAnalysis> {
+pub fn analyze_vibration_unified(
+    unified: &Session,
+    events: &[FlightEvent],
+) -> Option<VibrationAnalysis> {
     let sample_rate = unified.sample_rate_hz();
     if sample_rate <= 0.0 {
         return None;
@@ -262,11 +279,14 @@ pub fn analyze_vibration_unified(unified: &Session) -> Option<VibrationAnalysis>
 
     classify_peaks(&mut spectra, &throttle_bands);
 
+    let propwash = analyze_propwash(unified, events, sample_rate);
+
     Some(VibrationAnalysis {
         spectra,
         noise_floor_db,
         throttle_bands,
         accel,
+        propwash,
     })
 }
 
@@ -371,6 +391,147 @@ fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVib
     } else {
         None
     }
+}
+
+// ---------------------------------------------------------------------------
+// Propwash analysis — FFT of gyro in recovery windows after throttle chops
+// ---------------------------------------------------------------------------
+
+/// Duration of the post-chop recovery window in seconds.
+const PROPWASH_WINDOW_SECS: f64 = 0.75;
+/// Propwash oscillations typically occur in this frequency range.
+const PROPWASH_MIN_HZ: f64 = 20.0;
+const PROPWASH_MAX_HZ: f64 = 100.0;
+
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn analyze_propwash(
+    session: &Session,
+    events: &[FlightEvent],
+    sample_rate: f64,
+) -> Option<PropwashAnalysis> {
+    let chop_times: Vec<f64> = events
+        .iter()
+        .filter_map(|e| match &e.kind {
+            EventKind::ThrottleChop { .. } => Some(e.time_seconds),
+            _ => None,
+        })
+        .collect();
+
+    if chop_times.is_empty() {
+        return None;
+    }
+
+    let time = session.field(&SensorField::Time);
+    if time.is_empty() {
+        return None;
+    }
+    let t0_us = time[0];
+
+    let window_samples = (PROPWASH_WINDOW_SECS * sample_rate) as usize;
+    if window_samples < 64 {
+        return None;
+    }
+    // Use a power-of-2 FFT size that fits within the window
+    let fft_size = window_samples.next_power_of_two().min(FFT_WINDOW_SIZE);
+
+    let axis_names = ["roll", "pitch", "yaw"];
+    let gyro_data: Vec<Vec<f64>> = Axis::ALL
+        .iter()
+        .map(|a| session.field(&SensorField::Gyro(*a)))
+        .collect();
+
+    if gyro_data.iter().all(Vec::is_empty) {
+        return None;
+    }
+
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(fft_size);
+    let hann = hann_window(fft_size);
+    let n_bins = fft_size / 2;
+    let freq_resolution = sample_rate / fft_size as f64;
+    let frequencies_hz: Vec<f64> = (0..n_bins).map(|i| i as f64 * freq_resolution).collect();
+
+    let mut spectra = Vec::new();
+
+    for (axis_idx, gyro) in gyro_data.iter().enumerate() {
+        if gyro.is_empty() {
+            continue;
+        }
+
+        let mut avg_magnitudes = vec![0.0_f64; n_bins];
+        let mut window_count = 0usize;
+
+        for &chop_t in &chop_times {
+            // Convert chop time (seconds) to sample index
+            let chop_us = chop_t * 1_000_000.0 + t0_us;
+            let start_idx = time.partition_point(|&t| t < chop_us);
+
+            if start_idx + fft_size > gyro.len() {
+                continue;
+            }
+
+            let mut buffer: Vec<Complex<f64>> = (0..fft_size)
+                .map(|i| Complex::new(gyro[start_idx + i] * hann[i], 0.0))
+                .collect();
+
+            fft.process(&mut buffer);
+
+            for (i, mag) in avg_magnitudes.iter_mut().enumerate() {
+                let c = buffer[i];
+                *mag += (c.re * c.re + c.im * c.im).sqrt();
+            }
+            window_count += 1;
+        }
+
+        if window_count == 0 {
+            continue;
+        }
+
+        let scale = 1.0 / window_count as f64;
+        for mag in &mut avg_magnitudes {
+            *mag *= scale;
+        }
+
+        let magnitudes_db: Vec<f64> = avg_magnitudes
+            .iter()
+            .map(|&m| if m > 0.0 { 20.0 * m.log10() } else { -120.0 })
+            .collect();
+
+        let peaks = find_peaks(&frequencies_hz, &magnitudes_db);
+
+        spectra.push(FrequencySpectrum {
+            axis: axis_names[axis_idx],
+            sample_rate_hz: sample_rate,
+            frequencies_hz: frequencies_hz.clone(),
+            magnitudes_db,
+            peaks,
+        });
+    }
+
+    if spectra.is_empty() {
+        return None;
+    }
+
+    // Find the dominant peak in the propwash frequency range across all axes
+    let (dominant_frequency_hz, dominant_magnitude_db) = spectra
+        .iter()
+        .flat_map(|s| &s.peaks)
+        .filter(|p| p.frequency_hz >= PROPWASH_MIN_HZ && p.frequency_hz <= PROPWASH_MAX_HZ)
+        .max_by(|a, b| a.magnitude_db.partial_cmp(&b.magnitude_db).unwrap())
+        .map_or((None, None), |p| {
+            (Some(p.frequency_hz), Some(p.magnitude_db))
+        });
+
+    Some(PropwashAnalysis {
+        spectra,
+        chop_count: chop_times.len(),
+        dominant_frequency_hz,
+        dominant_magnitude_db,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]

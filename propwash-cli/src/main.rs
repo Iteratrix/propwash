@@ -504,6 +504,24 @@ fn print_summary(
                 }
             }
         }
+
+        if let Some(pw) = &vib.propwash {
+            println!();
+            println!("  Propwash Analysis ({} chop windows):", pw.chop_count);
+            for spectrum in &pw.spectra {
+                if let Some(peak) = spectrum.peaks.first() {
+                    println!(
+                        "    {}: dominant {:.0} Hz at {:.1} dB",
+                        spectrum.axis, peak.frequency_hz, peak.magnitude_db
+                    );
+                }
+            }
+            if let (Some(freq), Some(mag)) = (pw.dominant_frequency_hz, pw.dominant_magnitude_db) {
+                println!("    Propwash frequency: {freq:.0} Hz ({mag:.1} dB)");
+            } else {
+                println!("    No dominant propwash frequency detected (20-100 Hz range)");
+            }
+        }
     }
 
     println!();
