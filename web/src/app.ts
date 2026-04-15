@@ -1,5 +1,5 @@
-import init, { add_file, clear_workspace, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames } from "../pkg/propwash_web.js";
-import type { WorkspaceFile, SessionRef, SessionResult, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
+import init, { add_file, clear_workspace, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames, get_trend } from "../pkg/propwash_web.js";
+import type { WorkspaceFile, SessionRef, SessionResult, TrendPoint, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
 import { formatEventType, formatEventDetails, eventColor, heatColor, bucketDiagnostics, classifyDelta } from "./format.js";
 
 declare const echarts: any;
@@ -432,6 +432,9 @@ function renderViewIfNeeded(view: string): void {
       renderThrottleBandsEcharts(s.analysis.vibration);
       renderAccel(s.analysis.vibration);
       renderPropwash(s.analysis.vibration);
+      break;
+    case "trend":
+      renderTrend();
       break;
     case "raw":
       renderRawData(activeSession);
@@ -1311,6 +1314,58 @@ function renderPropwash(vibration: VibrationAnalysis | null): void {
     plotsDiv.appendChild(plotDiv);
     createMultiAxisPlot(plotDiv, pw.spectra);
   }
+}
+
+function renderTrend(): void {
+  const container = $("#trend-table");
+
+  if (workspace.length === 0) {
+    container.innerHTML = '<p class="hint">Load files to see trends across sessions.</p>';
+    return;
+  }
+
+  const json = get_trend();
+  const points: TrendPoint[] = JSON.parse(json);
+
+  if (points.length === 0) {
+    container.innerHTML = '<p class="hint">No sessions with data found.</p>';
+    return;
+  }
+
+  const fmt = (v: number | null, decimals = 1) =>
+    v != null ? v.toFixed(decimals) : "\u2014";
+
+  const fmtNf = (nf: [number, number, number] | null) =>
+    nf != null ? ((nf[0] + nf[1] + nf[2]) / 3).toFixed(0) : "\u2014";
+
+  let html = `<table class="event-table"><thead><tr>
+    <th>Session</th>
+    <th>Duration</th>
+    <th>Noise Floor</th>
+    <th>Motor Bal.</th>
+    <th>Rise Time</th>
+    <th>Overshoot</th>
+    <th>Events</th>
+    <th>Warnings</th>
+  </tr></thead><tbody>`;
+
+  for (const pt of points) {
+    const mbColor = pt.motor_balance_max_deviation != null && pt.motor_balance_max_deviation > 5
+      ? ' style="color:var(--red)"' : "";
+    html += `<tr>
+      <td>${escHtml(pt.label)}</td>
+      <td>${pt.duration_seconds.toFixed(1)}s</td>
+      <td>${fmtNf(pt.noise_floor_db)} dB</td>
+      <td${mbColor}>${fmt(pt.motor_balance_max_deviation)}%</td>
+      <td>${fmt(pt.step_response_rise_ms)} ms</td>
+      <td>${fmt(pt.step_response_overshoot, 0)}%</td>
+      <td>${pt.total_events}</td>
+      <td>${pt.diagnostic_count}</td>
+    </tr>`;
+  }
+
+  html += "</tbody></table>";
+  container.innerHTML = html;
 }
 
 const RAW_PAGE_SIZE = 200;

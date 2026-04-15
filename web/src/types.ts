@@ -148,6 +148,20 @@ export interface SpectrogramResponse {
   error?: string;
 }
 
+export interface TrendPoint {
+  label: string;
+  duration_seconds: number;
+  sample_rate_hz: number;
+  frame_count: number;
+  noise_floor_db: [number, number, number] | null;
+  motor_balance_max_deviation: number | null;
+  step_response_rise_ms: number | null;
+  step_response_overshoot: number | null;
+  total_events: number;
+  desyncs: number;
+  diagnostic_count: number;
+}
+
 export interface RawFramesResponse {
   start: number;
   total: number;

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use propwash_core::analysis::{self, fft, FlightAnalysis};
+use propwash_core::analysis::{self, fft, trend, FlightAnalysis};
 use propwash_core::types::{Log, SensorField};
 
 // ---------------------------------------------------------------------------
@@ -316,6 +316,38 @@ pub fn get_raw_frames(
         };
 
         serde_json::to_string(&result)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
+    })
+}
+
+/// Compute trend across all sessions in the workspace.
+#[wasm_bindgen]
+pub fn get_trend() -> String {
+    WORKSPACE.with(|cell| {
+        let ws = cell.borrow();
+
+        let mut entries: Vec<(String, FlightAnalysis)> = Vec::new();
+        for entry in &ws.entries {
+            for session in &entry.log.sessions {
+                if session.frame_count() == 0 {
+                    continue;
+                }
+                let label = if entry.log.sessions.len() == 1 {
+                    entry.filename.clone()
+                } else {
+                    format!("{} / s{}", entry.filename, session.index())
+                };
+                entries.push((label, analysis::analyze(session)));
+            }
+        }
+
+        let refs: Vec<(String, &FlightAnalysis)> = entries
+            .iter()
+            .map(|(label, a)| (label.clone(), a))
+            .collect();
+        let points = trend::compute_trend(&refs);
+
+        serde_json::to_string(&points)
             .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
