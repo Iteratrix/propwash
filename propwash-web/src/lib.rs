@@ -7,15 +7,54 @@ use wasm_bindgen::prelude::*;
 use propwash_core::analysis::{self, fft, FlightAnalysis};
 use propwash_core::types::{Log, SensorField};
 
-thread_local! {
-    static CURRENT_LOG: RefCell<Option<Log>> = const { RefCell::new(None) };
+// ---------------------------------------------------------------------------
+// Workspace state — supports multiple loaded files
+// ---------------------------------------------------------------------------
+
+#[allow(dead_code)]
+struct WorkspaceEntry {
+    id: u32,
+    filename: String,
+    log: Log,
 }
 
-#[derive(Serialize)]
-struct AnalysisResult {
-    sessions: Vec<SessionResult>,
-    warnings: Vec<String>,
+#[derive(Default)]
+struct Workspace {
+    entries: Vec<WorkspaceEntry>,
+    next_id: u32,
 }
+
+impl Workspace {
+    fn find(&self, file_id: u32) -> Option<&WorkspaceEntry> {
+        self.entries.iter().find(|e| e.id == file_id)
+    }
+}
+
+thread_local! {
+    static WORKSPACE: RefCell<Workspace> = RefCell::new(Workspace::default());
+}
+
+/// Look up a session from the workspace, call `f` with it, return its result.
+/// Returns a JSON error string if not found.
+fn with_session<F>(file_id: u32, session_idx: usize, f: F) -> String
+where
+    F: FnOnce(&propwash_core::types::Session) -> String,
+{
+    WORKSPACE.with(|cell| {
+        let borrow = cell.borrow();
+        let Some(entry) = borrow.find(file_id) else {
+            return format!(r#"{{"error":"unknown file_id {file_id}"}}"#);
+        };
+        let Some(session) = entry.log.sessions.get(session_idx) else {
+            return format!(r#"{{"error":"invalid session_idx {session_idx}"}}"#);
+        };
+        f(session)
+    })
+}
+
+// ---------------------------------------------------------------------------
+// JSON response types
+// ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
 struct SessionResult {
@@ -31,6 +70,14 @@ struct SessionResult {
 }
 
 #[derive(Serialize)]
+struct AddFileResult {
+    file_id: u32,
+    filename: String,
+    sessions: Vec<SessionResult>,
+    warnings: Vec<String>,
+}
+
+#[derive(Serialize)]
 struct TimeseriesResult {
     time_s: Vec<f64>,
     fields: HashMap<String, Vec<f64>>,
@@ -39,17 +86,32 @@ struct TimeseriesResult {
     decimation: usize,
 }
 
+#[derive(Serialize)]
+struct RawFramesResult {
+    field_names: Vec<String>,
+    frames: Vec<Vec<f64>>,
+    start: usize,
+    total: usize,
+}
+
+// ---------------------------------------------------------------------------
+// WASM exports
+// ---------------------------------------------------------------------------
+
 #[wasm_bindgen(start)]
 pub fn init() {
     console_error_panic_hook::set_once();
 }
 
+/// Add a file to the workspace. Returns JSON with `file_id`, sessions, and warnings.
 #[wasm_bindgen]
-pub fn analyze(data: &[u8]) -> String {
+pub fn add_file(data: &[u8], filename: &str) -> String {
     let log = match propwash_core::decode(data) {
         Ok(log) => log,
         Err(e) => {
-            return serde_json::to_string(&AnalysisResult {
+            return serde_json::to_string(&AddFileResult {
+                file_id: u32::MAX,
+                filename: filename.to_string(),
                 sessions: Vec::new(),
                 warnings: vec![e.to_string()],
             })
@@ -57,51 +119,85 @@ pub fn analyze(data: &[u8]) -> String {
         }
     };
 
-    let mut sessions = Vec::new();
-    for session in &log.sessions {
-        let flight_analysis = analysis::analyze(session);
+    let analyses: Vec<SessionResult> = log
+        .sessions
+        .iter()
+        .map(|session| {
+            let flight_analysis = analysis::analyze(session);
+            SessionResult {
+                index: session.index(),
+                firmware: session.firmware_version().to_string(),
+                craft: session.craft_name().to_string(),
+                duration_seconds: session.duration_seconds(),
+                sample_rate_hz: session.sample_rate_hz(),
+                frame_count: session.frame_count(),
+                is_truncated: session.is_truncated(),
+                corrupt_bytes: session.corrupt_bytes(),
+                analysis: flight_analysis,
+            }
+        })
+        .collect();
 
-        sessions.push(SessionResult {
-            index: session.index(),
-            firmware: session.firmware_version().to_string(),
-            craft: session.craft_name().to_string(),
-            duration_seconds: session.duration_seconds(),
-            sample_rate_hz: session.sample_rate_hz(),
-            frame_count: session.frame_count(),
-            is_truncated: session.is_truncated(),
-            corrupt_bytes: session.corrupt_bytes(),
-            analysis: flight_analysis,
+    let warnings: Vec<String> = log.warnings.iter().map(ToString::to_string).collect();
+
+    WORKSPACE.with(|cell| {
+        let mut ws = cell.borrow_mut();
+        let file_id = ws.next_id;
+        ws.next_id += 1;
+
+        let result = AddFileResult {
+            file_id,
+            filename: filename.to_string(),
+            sessions: analyses,
+            warnings,
+        };
+
+        ws.entries.push(WorkspaceEntry {
+            id: file_id,
+            filename: filename.to_string(),
+            log,
         });
-    }
 
-    let mut warnings = Vec::new();
-    for w in &log.warnings {
-        warnings.push(w.to_string());
-    }
-
-    let result = AnalysisResult { sessions, warnings };
-
-    CURRENT_LOG.with(|cell| {
-        *cell.borrow_mut() = Some(log);
-    });
-
-    serde_json::to_string(&result)
-        .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
+        serde_json::to_string(&result)
+            .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
+    })
 }
 
+/// Remove a file from the workspace by `file_id`.
+#[wasm_bindgen]
+pub fn remove_file(file_id: u32) {
+    WORKSPACE.with(|cell| {
+        cell.borrow_mut().entries.retain(|e| e.id != file_id);
+    });
+}
+
+/// Clear all files from the workspace.
+#[wasm_bindgen]
+pub fn clear_workspace() {
+    WORKSPACE.with(|cell| {
+        let mut ws = cell.borrow_mut();
+        ws.entries.clear();
+        ws.next_id = 0;
+    });
+}
+
+/// Backward-compatible analyze: clears workspace, adds the file, returns old-style result.
+#[wasm_bindgen]
+pub fn analyze(data: &[u8]) -> String {
+    clear_workspace();
+    add_file(data, "")
+}
+
+/// Get timeseries data for a session.
 #[wasm_bindgen]
 #[allow(clippy::cast_precision_loss)]
-pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -> String {
-    CURRENT_LOG.with(|cell| {
-        let borrow = cell.borrow();
-        let Some(log) = borrow.as_ref() else {
-            return r#"{"error":"no log loaded"}"#.to_string();
-        };
-
-        let Some(session) = log.sessions.get(session_idx) else {
-            return r#"{"error":"invalid session index"}"#.to_string();
-        };
-
+pub fn get_timeseries(
+    file_id: u32,
+    session_idx: usize,
+    max_points: usize,
+    field_list: &str,
+) -> String {
+    with_session(file_id, session_idx, |session| {
         let total_frames = session.frame_count();
         let sample_rate = session.sample_rate_hz();
 
@@ -112,7 +208,6 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
         };
 
         let requested: Vec<&str> = field_list.split(',').collect();
-
         let mut fields: HashMap<String, Vec<f64>> = HashMap::new();
 
         for &name in &requested {
@@ -145,18 +240,10 @@ pub fn get_timeseries(session_idx: usize, max_points: usize, field_list: &str) -
     })
 }
 
+/// Get spectrogram data for a session.
 #[wasm_bindgen]
-pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
-    CURRENT_LOG.with(|cell| {
-        let borrow = cell.borrow();
-        let Some(log) = borrow.as_ref() else {
-            return r#"{"error":"no log loaded"}"#.to_string();
-        };
-
-        let Some(session) = log.sessions.get(session_idx) else {
-            return r#"{"error":"invalid session index"}"#.to_string();
-        };
-
+pub fn get_spectrogram(file_id: u32, session_idx: usize, axis_list: &str) -> String {
+    with_session(file_id, session_idx, |session| {
         let axes: Vec<(&str, SensorField)> = axis_list
             .split(',')
             .filter_map(|a| {
@@ -182,63 +269,44 @@ pub fn get_spectrogram(session_idx: usize, axis_list: &str) -> String {
     })
 }
 
+/// Get filter configuration for a session.
 #[wasm_bindgen]
-pub fn get_filter_config(session_idx: usize) -> String {
-    CURRENT_LOG.with(|cell| {
-        let borrow = cell.borrow();
-        let Some(log) = borrow.as_ref() else {
-            return r#"{"error":"no log loaded"}"#.to_string();
-        };
-
-        let Some(session) = log.sessions.get(session_idx) else {
-            return r#"{"error":"invalid session index"}"#.to_string();
-        };
-
+pub fn get_filter_config(file_id: u32, session_idx: usize) -> String {
+    with_session(file_id, session_idx, |session| {
         serde_json::to_string(&session.filter_config())
             .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#))
     })
 }
 
-#[derive(Serialize)]
-struct RawFramesResult {
-    field_names: Vec<String>,
-    frames: Vec<Vec<f64>>,
-    start: usize,
-    total: usize,
-}
-
+/// Get raw frame data for a session.
 #[wasm_bindgen]
-pub fn get_raw_frames(session_idx: usize, start: usize, count: usize, field_list: &str) -> String {
-    CURRENT_LOG.with(|cell| {
-        let borrow = cell.borrow();
-        let Some(log) = borrow.as_ref() else {
-            return r#"{"error":"no log loaded"}"#.to_string();
-        };
-
-        let Some(session) = log.sessions.get(session_idx) else {
-            return r#"{"error":"invalid session index"}"#.to_string();
-        };
-
+pub fn get_raw_frames(
+    file_id: u32,
+    session_idx: usize,
+    start: usize,
+    count: usize,
+    field_list: &str,
+) -> String {
+    with_session(file_id, session_idx, |session| {
         let total = session.frame_count();
         let requested: Vec<&str> = field_list.split(',').collect();
 
         let end = (start + count).min(total);
-        let mut frames = Vec::with_capacity(end - start);
 
-        // Pre-resolve field names to SensorFields and fetch all columns
         let resolved: Vec<SensorField> = requested
             .iter()
             .filter_map(|&name| SensorField::parse(name).ok())
             .collect();
         let columns: Vec<Vec<f64>> = resolved.iter().map(|f| session.field(f)).collect();
 
-        for frame_idx in start..end {
-            let mut row = Vec::with_capacity(columns.len());
-            for col in &columns {
-                row.push(col.get(frame_idx).copied().unwrap_or(0.0));
-            }
-            frames.push(row);
-        }
+        let frames: Vec<Vec<f64>> = (start..end)
+            .map(|frame_idx| {
+                columns
+                    .iter()
+                    .map(|col| col.get(frame_idx).copied().unwrap_or(0.0))
+                    .collect()
+            })
+            .collect();
 
         let result = RawFramesResult {
             field_names: requested.iter().map(|s| (*s).to_string()).collect(),

@@ -1,6 +1,25 @@
 // Response interfaces for the WASM bridge JSON outputs
 
+// -- Workspace types --
+
+export interface WorkspaceFile {
+  file_id: number;
+  filename: string;
+  sessions: SessionResult[];
+  warnings: string[];
+}
+
+export interface SessionRef {
+  fileId: number;
+  sessionIdx: number;
+  label: string;
+}
+
+// -- Legacy single-file result (returned by analyze(), same shape as WorkspaceFile) --
+
 export interface AnalysisResult {
+  file_id: number;
+  filename: string;
   sessions: SessionResult[];
   warnings: string[];
 }

@@ -17,9 +17,9 @@
     <div id="drop-zone" class="drop-zone">
       <div class="drop-zone-content">
         <div class="drop-icon">&#x1F4C1;</div>
-        <p>Drop a flight log here</p>
-        <p class="hint"><code>.bbl</code> <code>.bin</code> <code>.ulg</code> <code>.log</code> — or click to browse</p>
-        <input type="file" id="file-input" accept=".bbl,.bin,.txt,.log,.cfl,.ulg">
+        <p>Drop flight logs here</p>
+        <p class="hint"><code>.bbl</code> <code>.bin</code> <code>.ulg</code> <code>.tlog</code> — or click to browse (multiple files OK)</p>
+        <input type="file" id="file-input" accept=".bbl,.bin,.txt,.log,.cfl,.ulg,.tlog" multiple>
       </div>
     </div>
 
@@ -32,7 +32,7 @@
       <div class="results-header">
         <nav id="session-tabs" class="session-tabs"></nav>
         <div class="results-actions">
-          <button id="compare-btn" class="reset-btn">Compare</button>
+          <button id="add-files-btn" class="reset-btn">Add files</button>
           <button id="reset-btn" class="reset-btn">Start over</button>
         </div>
       </div>
@@ -129,36 +129,6 @@
       </div>
     </div>
 
-    <div id="compare-drop" class="drop-zone hidden">
-      <div class="drop-zone-content">
-        <div class="drop-icon">&#x2194;</div>
-        <p>Drop a second flight log to compare</p>
-        <p class="hint">or click to browse</p>
-        <input type="file" id="compare-file-input" accept=".bbl,.bin,.txt,.log,.cfl,.ulg">
-      </div>
-    </div>
-
-    <div id="compare-results" class="hidden">
-      <div class="results-header">
-        <h2>Flight Comparison</h2>
-        <button id="compare-reset-btn" class="reset-btn">Start over</button>
-      </div>
-
-      <section id="compare-summary" class="panel">
-        <h2>Summary</h2>
-        <div id="compare-summary-table"></div>
-      </section>
-
-      <section id="compare-diagnostics" class="panel">
-        <h2>Diagnostics</h2>
-        <div id="compare-diag-content"></div>
-      </section>
-
-      <section id="compare-spectra" class="panel">
-        <h2>Spectrum Overlay</h2>
-        <div id="compare-spectrum-plots"></div>
-      </section>
-    </div>
   </main>
 
   <footer>
