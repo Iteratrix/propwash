@@ -45,9 +45,11 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
 
     let vibration = fft::analyze_vibration_unified(session, &detected);
     let summary = summary::summarize(session, &detected);
+    let filter_config = session.filter_config();
     let diags = diagnostics::diagnose(
         &detected,
         vibration.as_ref(),
+        &filter_config,
         summary.motor_count,
         summary.duration_seconds,
     );
