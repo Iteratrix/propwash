@@ -655,6 +655,14 @@ footer a {
   .peak-badge { font-size: 0.7rem; padding: 0.25rem 0.4rem; }
 }
 
+/* Warning summary cards */
+.summary-warn {
+  border-color: var(--red) !important;
+}
+.summary-warn .value {
+  color: var(--red);
+}
+
 /* Propwash analysis */
 .propwash-summary {
   font-size: 0.85rem;

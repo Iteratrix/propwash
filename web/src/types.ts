@@ -12,6 +12,8 @@ export interface SessionResult {
   duration_seconds: number;
   sample_rate_hz: number;
   frame_count: number;
+  is_truncated: boolean;
+  corrupt_bytes: number;
   analysis: FlightAnalysis;
 }
 

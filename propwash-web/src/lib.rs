@@ -25,6 +25,8 @@ struct SessionResult {
     duration_seconds: f64,
     sample_rate_hz: f64,
     frame_count: usize,
+    is_truncated: bool,
+    corrupt_bytes: usize,
     analysis: FlightAnalysis,
 }
 
@@ -66,6 +68,8 @@ pub fn analyze(data: &[u8]) -> String {
             duration_seconds: session.duration_seconds(),
             sample_rate_hz: session.sample_rate_hz(),
             frame_count: session.frame_count(),
+            is_truncated: session.is_truncated(),
+            corrupt_bytes: session.corrupt_bytes(),
             analysis: flight_analysis,
         });
     }
