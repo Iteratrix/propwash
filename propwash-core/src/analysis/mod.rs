@@ -4,6 +4,7 @@ pub mod events;
 pub mod fft;
 pub mod step_response;
 pub mod summary;
+pub mod trend;
 pub mod unified_events;
 
 use diagnostics::Diagnostic;

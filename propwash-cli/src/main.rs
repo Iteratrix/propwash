@@ -43,6 +43,15 @@ enum Command {
         #[arg(required = true)]
         files: Vec<String>,
     },
+    /// Track key metrics across multiple log files over time.
+    Trend {
+        /// Log files or directories to scan.
+        #[arg(required = true)]
+        files: Vec<String>,
+        /// Output as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Dump raw frame data for programmatic consumption.
     Dump {
         /// Path to a .bbl or .bfl log file.
@@ -69,6 +78,7 @@ fn main() {
         Command::Analyze { log_file, output } => cmd_analyze(&log_file, &output),
         Command::Compare { log_a, log_b } => cmd_compare(&log_a, &log_b),
         Command::Scan { files } => cmd_scan(&files),
+        Command::Trend { files, json } => cmd_trend(&files, json),
         Command::Dump {
             log_file,
             session,
@@ -343,6 +353,106 @@ fn cmd_scan(files: &[String]) {
                 episodes.len(),
             );
         }
+    }
+}
+
+fn cmd_trend(files: &[String], json: bool) {
+    use propwash_core::analysis::trend;
+
+    // Expand directories into individual files
+    let mut paths: Vec<String> = Vec::new();
+    for path in files {
+        let meta = std::fs::metadata(path);
+        if let Ok(m) = meta {
+            if m.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(path) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                            if matches!(
+                                ext.to_lowercase().as_str(),
+                                "bbl" | "bfl" | "bin" | "ulg" | "tlog" | "log" | "txt"
+                            ) {
+                                paths.push(p.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+            } else {
+                paths.push(path.clone());
+            }
+        }
+    }
+    paths.sort();
+
+    // Analyze all sessions
+    let mut analyses: Vec<(String, propwash_core::analysis::FlightAnalysis)> = Vec::new();
+    for path in &paths {
+        let log = match propwash_core::decode_file(path) {
+            Ok(log) => log,
+            Err(e) => {
+                eprintln!("SKIP {path}: {e}");
+                continue;
+            }
+        };
+        let filename = std::path::Path::new(path)
+            .file_name()
+            .map_or_else(|| path.clone(), |n| n.to_string_lossy().to_string());
+        for session in &log.sessions {
+            if session.frame_count() == 0 {
+                continue;
+            }
+            let label = if log.sessions.len() == 1 {
+                filename.clone()
+            } else {
+                format!("{filename} / s{}", session.index())
+            };
+            let result = propwash_core::analysis::analyze(session);
+            analyses.push((label, result));
+        }
+    }
+
+    if analyses.is_empty() {
+        eprintln!("No sessions found.");
+        return;
+    }
+
+    let refs: Vec<(String, &propwash_core::analysis::FlightAnalysis)> = analyses
+        .iter()
+        .map(|(label, a)| (label.clone(), a))
+        .collect();
+    let trend_data = trend::compute_trend(&refs);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&trend_data).unwrap_or_default()
+        );
+        return;
+    }
+
+    // Print table
+    println!(
+        "{:40} {:>6} {:>8} {:>8} {:>8} {:>6} {:>5}",
+        "Session", "Dur(s)", "NF(dB)", "MotBal%", "Rise(ms)", "Events", "Warns"
+    );
+    println!("{}", "-".repeat(85));
+    for pt in &trend_data {
+        let nf = pt.noise_floor_db.map_or_else(
+            || "—".to_string(),
+            |nf| format!("{:.0}", nf.iter().sum::<f64>() / 3.0),
+        );
+        let mb = pt
+            .motor_balance_max_deviation
+            .map_or_else(|| "—".to_string(), |v| format!("{v:.1}"));
+        let rise = pt
+            .step_response_rise_ms
+            .map_or_else(|| "—".to_string(), |v| format!("{v:.1}"));
+
+        println!(
+            "{:40} {:>6.1} {:>8} {:>8} {:>8} {:>6} {:>5}",
+            pt.label, pt.duration_seconds, nf, mb, rise, pt.total_events, pt.diagnostic_count
+        );
     }
 }
 
