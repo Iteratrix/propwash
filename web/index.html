@@ -41,6 +41,7 @@
         <button class="view-tab active" data-view="overview">Overview</button>
         <button class="view-tab" data-view="timeline">Timeline</button>
         <button class="view-tab" data-view="spectrum">Spectrum</button>
+        <button class="view-tab" data-view="trend">Trend</button>
         <button class="view-tab" data-view="raw">Raw Data</button>
       </nav>
 
@@ -113,6 +114,14 @@
           <h2>Propwash Analysis</h2>
           <div id="propwash-info"></div>
           <div id="propwash-plots"></div>
+        </section>
+      </div>
+
+      <!-- Trend tab -->
+      <div class="view-content" data-view="trend">
+        <section id="trend-panel" class="panel">
+          <h2>Trend Across Sessions</h2>
+          <div id="trend-table"></div>
         </section>
       </div>
 
