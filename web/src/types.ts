@@ -63,6 +63,14 @@ export interface VibrationAnalysis {
   spectra: Spectrum[];
   throttle_bands: ThrottleBand[];
   accel: AccelData | null;
+  propwash: PropwashAnalysis | null;
+}
+
+export interface PropwashAnalysis {
+  spectra: Spectrum[];
+  chop_count: number;
+  dominant_frequency_hz: number | null;
+  dominant_magnitude_db: number | null;
 }
 
 export interface Spectrum {

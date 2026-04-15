@@ -655,6 +655,16 @@ footer a {
   .peak-badge { font-size: 0.7rem; padding: 0.25rem 0.4rem; }
 }
 
+/* Propwash analysis */
+.propwash-summary {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin: 0 0 0.75rem;
+}
+.propwash-summary strong {
+  color: var(--text);
+}
+
 /* Motor balance bars */
 .motor-balance-section {
   margin-top: 1rem;
