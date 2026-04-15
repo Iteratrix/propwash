@@ -433,6 +433,17 @@ impl BfSession {
     /// field index. Unresolvable fields return an empty `Vec`.
     #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
+        let raw = self.field_raw(sensor_field);
+
+        // Apply unit conversions for fields that need them
+        match sensor_field {
+            // BF stores vbat in centivalts (0.01V units)
+            SensorField::Vbat if !raw.is_empty() => raw.iter().map(|&v| v * 0.01).collect(),
+            _ => raw,
+        }
+    }
+
+    fn field_raw(&self, sensor_field: &SensorField) -> Vec<f64> {
         // Check main columns first
         if let Some(idx) = self.main_field_defs.index_of(sensor_field) {
             if let Some(col) = self.main_columns.get(idx) {
