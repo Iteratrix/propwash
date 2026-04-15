@@ -621,13 +621,21 @@ function renderSummary(session: SessionResult): void {
     ["Desyncs", session.analysis.summary.desyncs],
   ];
 
+  if (session.is_truncated) {
+    cards.push(["Status", "TRUNCATED"]);
+  }
+  if (session.corrupt_bytes > 0) {
+    cards.push(["Corrupt", `${session.corrupt_bytes.toLocaleString()} bytes`]);
+  }
+
   grid.innerHTML = cards
-    .map(([label, value]) =>
-      `<div class="summary-card">
+    .map(([label, value]) => {
+      const warn = label === "Status" || label === "Corrupt";
+      return `<div class="summary-card${warn ? " summary-warn" : ""}">
         <div class="label">${label}</div>
         <div class="value" title="${value}">${value}</div>
-      </div>`
-    )
+      </div>`;
+    })
     .join("");
 
   // Motor balance bars (remove previous if re-rendering)
