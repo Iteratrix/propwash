@@ -45,6 +45,12 @@ const FIELD_GROUPS = {
     names:  ["SP Roll", "Gyro Roll", "SP Pitch", "Gyro Pitch", "SP Yaw", "Gyro Yaw"],
     colors: ["#5b8def66", "#5b8def", "#4ec88c66", "#4ec88c", "#e8b84a66", "#e8b84a"],
   },
+  gyroFilt: {
+    label: "Filtered vs Unfiltered Gyro (deg/s)",
+    fields: ["gyro[roll]", "gyro_unfilt[roll]", "gyro[pitch]", "gyro_unfilt[pitch]", "gyro[yaw]", "gyro_unfilt[yaw]"],
+    names:  ["Filt Roll", "Raw Roll", "Filt Pitch", "Raw Pitch", "Filt Yaw", "Raw Yaw"],
+    colors: ["#5b8def", "#5b8def44", "#4ec88c", "#4ec88c44", "#e8b84a", "#e8b84a44"],
+  },
   motors: {
     label: "Motors",
     fields: ["motor[0]", "motor[1]", "motor[2]", "motor[3]"],
