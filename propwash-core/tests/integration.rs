@@ -1825,3 +1825,64 @@ fn px4_filter_config() {
         "PX4 should have gyro_lpf_hz from IMU_GYRO_CUTOFF, got {config:?}"
     );
 }
+
+// ── Unit contract tests ───────────────────────────────────────────
+// Verify that all formats return values in the canonical units declared
+// by SensorField::unit(). Catches scaling bugs like returning millivolts
+// instead of volts.
+
+#[test]
+fn unit_contract_vbat_is_volts() {
+    // All formats with vbat should return values in the 0-60V range (1-14S battery)
+    let fixtures = [
+        "fc-blackbox/btfl_001.bbl",
+        "ardupilot/methodic-copter-tarot-x4.bin",
+        "mavlink/dronekit-flight.tlog",
+    ];
+    for fixture in fixtures {
+        let log = parse_fixture(fixture);
+        let session = &log.sessions[0];
+        let vbat = session.field(&SensorField::Vbat);
+        if vbat.is_empty() {
+            continue;
+        }
+        let max = vbat.iter().copied().fold(f64::MIN, f64::max);
+        assert!(
+            max < 60.0,
+            "{fixture}: vbat max {max:.1} exceeds 60V — likely raw/unscaled (expected volts)"
+        );
+        let min = vbat
+            .iter()
+            .copied()
+            .filter(|&v| v > 0.0)
+            .fold(f64::MAX, f64::min);
+        assert!(
+            min > 1.0,
+            "{fixture}: vbat min {min:.1} below 1V — likely already too small"
+        );
+    }
+}
+
+#[test]
+fn unit_contract_gyro_is_degrees_per_second() {
+    // Gyro should be in deg/s. Typical range: -2000 to +2000 for acro flying.
+    // Raw sensor units (mrad/s, raw ADC) would be orders of magnitude different.
+    let fixtures = [
+        "fc-blackbox/btfl_001.bbl",
+        "ardupilot/methodic-copter-tarot-x4.bin",
+        "px4/sample_log_small.ulg",
+    ];
+    for fixture in fixtures {
+        let log = parse_fixture(fixture);
+        let session = &log.sessions[0];
+        let gyro = session.field(&SensorField::Gyro(Axis::Roll));
+        if gyro.is_empty() {
+            continue;
+        }
+        let max_abs = gyro.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+        assert!(
+            max_abs < 5000.0,
+            "{fixture}: gyro max {max_abs:.0} deg/s seems too high — wrong units?"
+        );
+    }
+}
