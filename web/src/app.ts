@@ -81,6 +81,18 @@ const FIELD_GROUPS = {
     names:  ["P", "I", "D"],
     colors: ["#5b8def", "#4ec88c", "#e85454"],
   },
+  altitude: {
+    label: "Altitude / GPS Speed",
+    fields: ["altitude", "gps_speed"],
+    names:  ["Altitude (m)", "GPS Speed (m/s)"],
+    colors: ["#5b8def", "#4ec88c"],
+  },
+  gps: {
+    label: "GPS Position",
+    fields: ["gps_lat", "gps_lng", "heading"],
+    names:  ["Latitude", "Longitude", "Heading"],
+    colors: ["#5b8def", "#4ec88c", "#e8b84a"],
+  },
 };
 
 const TS_MAX_POINTS = 4000;
