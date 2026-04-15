@@ -2,12 +2,14 @@ pub mod diagnostics;
 pub mod episodes;
 pub mod events;
 pub mod fft;
+pub mod step_response;
 pub mod summary;
 pub mod unified_events;
 
 use diagnostics::Diagnostic;
 use events::{EventKind, FlightEvent};
 use fft::VibrationAnalysis;
+use step_response::StepResponseAnalysis;
 use summary::FlightSummary;
 
 use crate::format::ap::types::ApSession;
@@ -22,6 +24,7 @@ pub struct FlightAnalysis {
     pub summary: FlightSummary,
     pub events: Vec<FlightEvent>,
     pub vibration: Option<VibrationAnalysis>,
+    pub step_response: Option<StepResponseAnalysis>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -53,10 +56,13 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
         summary.motor_count,
         summary.duration_seconds,
     );
+    let step_resp = step_response::analyze_step_response(session);
+
     FlightAnalysis {
         summary,
         events: detected,
         vibration,
+        step_response: step_resp,
         diagnostics: diags,
     }
 }

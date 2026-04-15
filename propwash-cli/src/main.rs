@@ -364,12 +364,15 @@ fn cmd_analyze(path: &str, output: &str) {
                     summary: &'a propwash_core::analysis::summary::FlightSummary,
                     episodes: &'a [episodes::Episode],
                     vibration: Option<&'a propwash_core::analysis::fft::VibrationAnalysis>,
+                    step_response:
+                        Option<&'a propwash_core::analysis::step_response::StepResponseAnalysis>,
                     diagnostics: &'a [propwash_core::analysis::diagnostics::Diagnostic],
                 }
                 let out = JsonOutput {
                     summary: &analysis.summary,
                     episodes: &episodes,
                     vibration: analysis.vibration.as_ref(),
+                    step_response: analysis.step_response.as_ref(),
                     diagnostics: &analysis.diagnostics,
                 };
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -379,6 +382,7 @@ fn cmd_analyze(path: &str, output: &str) {
                     &analysis.summary,
                     &episodes,
                     analysis.vibration.as_ref(),
+                    analysis.step_response.as_ref(),
                     &analysis.diagnostics,
                 );
             }
@@ -395,6 +399,7 @@ fn print_summary(
     s: &propwash_core::analysis::summary::FlightSummary,
     episodes: &[episodes::Episode],
     vibration: Option<&propwash_core::analysis::fft::VibrationAnalysis>,
+    step_response: Option<&propwash_core::analysis::step_response::StepResponseAnalysis>,
     diagnostics: &[propwash_core::analysis::diagnostics::Diagnostic],
 ) {
     println!("── Session {} ──", s.session_index);
@@ -521,6 +526,21 @@ fn print_summary(
             } else {
                 println!("    No dominant propwash frequency detected (20-100 Hz range)");
             }
+        }
+    }
+
+    if let Some(sr) = step_response {
+        println!();
+        println!("  Step Response:");
+        for axis in &sr.axes {
+            println!(
+                "    {}: rise {:.1}ms, overshoot {:.0}%, settling {:.1}ms ({} steps)",
+                axis.axis,
+                axis.rise_time_ms,
+                axis.overshoot_percent,
+                axis.settling_time_ms,
+                axis.step_count
+            );
         }
     }
 
