@@ -1,6 +1,6 @@
 [package]
 name = "propwash-cli"
-version = "0.7.0"
+version = "0.7.1"
 edition.workspace = true
 description = "Flight log vibration analyzer CLI"
 repository = "https://github.com/Iteratrix/propwash"
