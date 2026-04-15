@@ -52,6 +52,14 @@ fn detect_gyro_spikes(
     }
 }
 
+/// Lookback window for throttle event detection (microseconds).
+/// Compares throttle now vs 100ms ago to detect sustained chops/punches.
+const THROTTLE_LOOKBACK_US: f64 = 100_000.0;
+/// Minimum throttle change (percentage of range) to qualify as a chop/punch.
+const THROTTLE_MIN_CHANGE_PCT: f64 = 30.0;
+/// Minimum cooldown between events (microseconds) to avoid duplicates.
+const THROTTLE_COOLDOWN_US: f64 = 500_000.0;
+
 #[allow(clippy::cast_precision_loss)]
 fn detect_throttle_events(
     unified: &Session,
@@ -64,26 +72,34 @@ fn detect_throttle_events(
         return;
     }
 
-    // Compute range from data for percentage conversion
     let t_min = throttle.iter().copied().fold(f64::MAX, f64::min);
     let t_max = throttle.iter().copied().fold(f64::MIN, f64::max);
     let t_range = (t_max - t_min).max(1.0);
+    let to_pct = |v: f64| (v - t_min) / t_range * 100.0;
 
-    for i in 1..throttle.len().min(timestamps.len()) {
-        let prev_t = timestamps.get(i - 1).copied().unwrap_or(0.0);
-        let curr_t = timestamps.get(i).copied().unwrap_or(0.0);
-        let dt_ms = (curr_t - prev_t) / 1000.0;
-        if dt_ms <= 0.0 {
+    let len = throttle.len().min(timestamps.len());
+    let mut lookback_idx = 0;
+    let mut last_chop_t = f64::MIN;
+    let mut last_punch_t = f64::MIN;
+
+    for i in 1..len {
+        let curr_t = timestamps[i];
+
+        // Advance lookback pointer to maintain ~100ms window
+        while lookback_idx < i && timestamps[lookback_idx] < curr_t - THROTTLE_LOOKBACK_US {
+            lookback_idx += 1;
+        }
+        if lookback_idx >= i {
             continue;
         }
 
-        let delta = throttle[i] - throttle[i - 1];
-        let rate = delta / dt_ms;
+        let from_pct = to_pct(throttle[lookback_idx]);
+        let now_pct = to_pct(throttle[i]);
+        let change = now_pct - from_pct;
+        let dt_ms = (curr_t - timestamps[lookback_idx]) / 1000.0;
 
-        let from_pct = (throttle[i - 1] - t_min) / t_range * 100.0;
-        let to_pct = (throttle[i] - t_min) / t_range * 100.0;
-
-        if rate < -200.0 {
+        if change < -THROTTLE_MIN_CHANGE_PCT && curr_t - last_chop_t > THROTTLE_COOLDOWN_US {
+            last_chop_t = curr_t;
             events.push(FlightEvent {
                 frame_index: i,
                 #[allow(clippy::cast_possible_truncation)]
@@ -91,11 +107,12 @@ fn detect_throttle_events(
                 time_seconds: (curr_t - first_t) / 1_000_000.0,
                 kind: EventKind::ThrottleChop {
                     from_percent: from_pct,
-                    to_percent: to_pct,
+                    to_percent: now_pct,
                     duration_ms: dt_ms,
                 },
             });
-        } else if rate > 200.0 {
+        } else if change > THROTTLE_MIN_CHANGE_PCT && curr_t - last_punch_t > THROTTLE_COOLDOWN_US {
+            last_punch_t = curr_t;
             events.push(FlightEvent {
                 frame_index: i,
                 #[allow(clippy::cast_possible_truncation)]
@@ -103,7 +120,7 @@ fn detect_throttle_events(
                 time_seconds: (curr_t - first_t) / 1_000_000.0,
                 kind: EventKind::ThrottlePunch {
                     from_percent: from_pct,
-                    to_percent: to_pct,
+                    to_percent: now_pct,
                     duration_ms: dt_ms,
                 },
             });

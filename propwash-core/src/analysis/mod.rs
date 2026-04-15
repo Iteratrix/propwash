@@ -27,27 +27,23 @@ pub struct FlightAnalysis {
 
 /// Analyzes a parsed session, detecting events and producing a summary.
 pub fn analyze(session: &Session) -> FlightAnalysis {
-    let (detected, vibration) = {
-        let mut events = unified_events::detect_all(session);
-        let vib = fft::analyze_vibration_unified(session);
-
-        // Format-specific event sources
-        match session {
-            Session::Betaflight(_) => {}
-            Session::ArduPilot(ap) => {
-                events.extend(detect_ardupilot_events(ap));
-                events.extend(detect_ardupilot_firmware_messages(ap));
-            }
-            Session::Px4(px4) => {
-                events.extend(detect_px4_log_events(px4));
-            }
-            Session::Mavlink(mav) => {
-                events.extend(detect_mavlink_status_messages(mav));
-            }
+    // Detect events first — propwash analysis needs throttle chop timestamps
+    let mut detected = unified_events::detect_all(session);
+    match session {
+        Session::Betaflight(_) => {}
+        Session::ArduPilot(ap) => {
+            detected.extend(detect_ardupilot_events(ap));
+            detected.extend(detect_ardupilot_firmware_messages(ap));
         }
+        Session::Px4(px4) => {
+            detected.extend(detect_px4_log_events(px4));
+        }
+        Session::Mavlink(mav) => {
+            detected.extend(detect_mavlink_status_messages(mav));
+        }
+    }
 
-        (events, vib)
-    };
+    let vibration = fft::analyze_vibration_unified(session, &detected);
     let summary = summary::summarize(session, &detected);
     let diags = diagnostics::diagnose(
         &detected,
