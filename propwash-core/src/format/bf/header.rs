@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use super::types::{BfFieldDef, BfFieldSign, BfFrameDefs, BfHeaderValue, Encoding, Predictor};
-use crate::types::SensorField;
-use crate::types::Warning;
+use crate::types::{
+    parse_axis_field, parse_index, parse_rc_channel, MotorIndex, SensorField, Warning,
+};
 
 /// The exact marker string that begins every Betaflight-family blackbox log session.
 const LOG_START_MARKER: &[u8] = b"H Product:Blackbox flight data recorder by Nicholas Sherlock";
@@ -229,6 +230,60 @@ fn get_u8_list(
     result
 }
 
+/// Parses a Betaflight-native header field name into a `SensorField`.
+///
+/// Handles BF-specific names like `gyroADC[0]`, `rcCommand[3]`, `accSmooth[1]`,
+/// `axisP[0]`, `vbatLatest`, etc., plus aliases like `gyroData` (Cleanflight).
+pub(crate) fn parse_bf_field_name(name: &str) -> SensorField {
+    match name {
+        "time" => SensorField::Time,
+        "loopIteration" => SensorField::LoopIteration,
+        "vbatLatest" | "vbat" => SensorField::Vbat,
+        "altitude" | "BarAlt" | "Alt" => SensorField::Altitude,
+        "gpsSpeed" | "Spd" => SensorField::GpsSpeed,
+        "heading" | "Yaw" => SensorField::Heading,
+
+        _ if name.starts_with("gyroADC[") || name.starts_with("gyroData[") => {
+            parse_axis_field(name)
+                .map_or_else(|| SensorField::Unknown(name.to_string()), SensorField::Gyro)
+        }
+        _ if name.starts_with("gyroUnfilt[") => parse_axis_field(name).map_or_else(
+            || SensorField::Unknown(name.to_string()),
+            SensorField::GyroUnfilt,
+        ),
+        _ if name.starts_with("motor[") => parse_index(name).map_or_else(
+            || SensorField::Unknown(name.to_string()),
+            |i| SensorField::Motor(MotorIndex(i)),
+        ),
+        _ if name.starts_with("rcCommand[") => parse_rc_channel(name)
+            .map_or_else(|| SensorField::Unknown(name.to_string()), SensorField::Rc),
+        _ if name.starts_with("setpoint[") => parse_axis_field(name).map_or_else(
+            || SensorField::Unknown(name.to_string()),
+            SensorField::Setpoint,
+        ),
+        _ if name.starts_with("accSmooth[") => parse_axis_field(name).map_or_else(
+            || SensorField::Unknown(name.to_string()),
+            SensorField::Accel,
+        ),
+        _ if name.starts_with("axisP[") => parse_axis_field(name)
+            .map_or_else(|| SensorField::Unknown(name.to_string()), SensorField::PidP),
+        _ if name.starts_with("axisI[") => parse_axis_field(name)
+            .map_or_else(|| SensorField::Unknown(name.to_string()), SensorField::PidI),
+        _ if name.starts_with("axisD[") => parse_axis_field(name)
+            .map_or_else(|| SensorField::Unknown(name.to_string()), SensorField::PidD),
+        _ if name.starts_with("eRPM[") => parse_index(name).map_or_else(
+            || SensorField::Unknown(name.to_string()),
+            |i| SensorField::ERpm(MotorIndex(i)),
+        ),
+        "GPS_coord[0]" => SensorField::GpsLat,
+        "GPS_coord[1]" => SensorField::GpsLng,
+        "GPS_altitude" => SensorField::Altitude,
+        "GPS_speed" => SensorField::GpsSpeed,
+        "GPS_ground_course" => SensorField::Heading,
+        other => SensorField::Unknown(other.to_string()),
+    }
+}
+
 /// Build `BfFrameDefs` from parallel name/signed/predictor/encoding arrays.
 fn build_field_defs(
     names: &[String],
@@ -240,7 +295,7 @@ fn build_field_defs(
         .iter()
         .enumerate()
         .map(|(i, name)| {
-            let field = SensorField::from_header(name);
+            let field = parse_bf_field_name(name);
             let value_sign = match field {
                 SensorField::Time | SensorField::LoopIteration => BfFieldSign::Unsigned,
                 _ => BfFieldSign::Signed,
@@ -330,9 +385,9 @@ mod tests {
 
         // Check expected fields
         let names = h.main_field_defs.names();
-        assert!(names.iter().any(|n| n == "loopIteration"));
+        assert!(names.iter().any(|n| n == "loop_iteration"));
         assert!(names.iter().any(|n| n == "time"));
-        assert!(names.iter().any(|n| n == "gyroADC[0]"));
+        assert!(names.iter().any(|n| n == "gyro[roll]"));
         assert!(names.iter().any(|n| n == "motor[0]"));
     }
 
@@ -387,8 +442,9 @@ mod tests {
         let names = h.main_field_defs.names();
         assert!(names.iter().any(|n| n == "time"));
         // Old Cleanflight uses "gyroData" instead of "gyroADC"
+        // Both gyroADC and gyroData map to canonical gyro[roll]
         assert!(
-            names.iter().any(|n| n == "gyroADC[0]") || names.iter().any(|n| n == "gyroData[0]"),
+            names.iter().any(|n| n == "gyro[roll]"),
             "expected gyro field, got: {names:?}"
         );
     }

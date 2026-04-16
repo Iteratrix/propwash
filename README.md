@@ -1,6 +1,12 @@
 # propwash
 
-Flight log analyzer for drones. Parses Betaflight and ArduPilot blackbox logs and tells you what's wrong.
+Drone flight log analyzer. Parses Betaflight blackbox (`.bbl`), ArduPilot DataFlash (`.bin`), and PX4 ULog (`.ulg`) logs to detect vibration issues, PID tuning problems, motor saturation, gyro spikes, and mechanical faults - with frequency spectrum analysis and actionable diagnostics.
+
+**Try it now: [propwash.deltave.org](https://propwash.deltave.org)** - drop a log file in your browser. No install, no uploads. Runs locally via WebAssembly.
+
+![Overview - summary, diagnostics, and events](docs/img/overview.png)
+
+![Multi-flight diagnostics and spectrum comparison](docs/img/diagnostics.png)
 
 ```
 $ propwash analyze flight.bbl
@@ -38,8 +44,6 @@ $ propwash analyze flight.bbl
 
 ## Web UI
 
-**[propwash.deltave.org](https://propwash.deltave.org)** — drop a `.bbl` or `.bin` file in your browser and get instant analysis. No install, no uploads. Everything runs locally via WebAssembly.
-
 Features: tabbed interface (Overview, Timeline, Spectrum, Raw Data), interactive ECharts plots with zoom/pan, spectrogram heatmaps, filter overlay, throttle-band analysis, side-by-side flight comparison.
 
 ## Install (CLI)
@@ -63,7 +67,7 @@ propwash analyze flight.bbl --output json
 propwash info flight.bbl
 
 # Batch triage of multiple files
-propwash scan *.bbl *.bin
+propwash scan *.bbl *.bin *.ulg
 
 # Side-by-side comparison of two flights
 propwash compare before.bbl after.bbl
@@ -80,6 +84,7 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 - Gyro spikes (extreme rotation rates)
 - Setpoint overshoot (PID tracking errors)
 - ESC desync (single motor spike)
+- Firmware messages (PX4 log messages, ArduPilot error codes)
 
 **Vibration:**
 - Frequency spectrum per axis (FFT with Hann windowing)
@@ -106,6 +111,7 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 | INAV | `.bbl` blackbox | Full support |
 | Cleanflight | `.bbl` blackbox | Full support |
 | ArduPilot (Copter/Plane/Rover) | `.bin` DataFlash | Full support |
+| PX4 | `.ulg` ULog | Full support |
 
 ## Architecture
 
@@ -113,6 +119,7 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 propwash-core/          Parser library (can be used independently)
   format/bf/            Betaflight-family blackbox decoder
   format/ap/            ArduPilot DataFlash decoder
+  format/px4/           PX4 ULog decoder
   analysis/             Event detection, FFT, diagnostics
 propwash/               CLI binary
 propwash-web/           WASM bridge (powers the web UI)

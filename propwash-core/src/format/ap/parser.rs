@@ -2,26 +2,91 @@ use std::collections::HashMap;
 
 use crate::types::Warning;
 
-use super::types::{ApMessage, ApMsgDef, ApParseStats, ApRawSession, ApValue, FieldType};
+use super::types::{ApMsgDef, ApParseStats, ApSession, FieldType, MsgColumns};
 
 const HEAD1: u8 = 0xA3;
 const HEAD2: u8 = 0x95;
 const FMT_TYPE: u8 = 128;
 const FMT_LEN: usize = 89;
 
+// ---------------------------------------------------------------------------
+// Pre-computed field layout
+// ---------------------------------------------------------------------------
+
+struct FieldSlot {
+    byte_offset: usize,
+    field_type: FieldType,
+}
+
+struct MsgLayout {
+    /// Slots for column storage (excludes timestamp field).
+    slots: Vec<FieldSlot>,
+    /// Field names parallel to `slots`.
+    field_names: Vec<String>,
+    /// Byte offset of the timestamp field.
+    timestamp_byte_offset: usize,
+    /// True if timestamp is `TimeMS` (needs ×1000 conversion to microseconds).
+    timestamp_is_ms: bool,
+    /// Byte offsets of ALL fields (including timestamp, strings) for metadata extraction.
+    all_offsets: Vec<usize>,
+}
+
+impl MsgLayout {
+    fn from_def(def: &ApMsgDef) -> Self {
+        let mut all_offsets = Vec::with_capacity(def.field_types.len());
+        let mut offset = 0;
+        for &ft in &def.field_types {
+            all_offsets.push(offset);
+            offset += ft.wire_size();
+        }
+
+        let first_name = def.field_names.first().map_or("", String::as_str);
+        let timestamp_is_ms = first_name == "TimeMS";
+        let timestamp_byte_offset = 0; // timestamp is always first field
+
+        // Build slots for all non-timestamp fields
+        let mut slots = Vec::new();
+        let mut field_names = Vec::new();
+        for (i, (name, &ft)) in def.field_names.iter().zip(&def.field_types).enumerate() {
+            if i == 0 && (name == "TimeUS" || name == "TimeMS") {
+                continue; // timestamp stored separately
+            }
+            slots.push(FieldSlot {
+                byte_offset: all_offsets[i],
+                field_type: ft,
+            });
+            field_names.push(name.clone());
+        }
+
+        Self {
+            slots,
+            field_names,
+            timestamp_byte_offset,
+            timestamp_is_ms,
+            all_offsets,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main parse entry point
+// ---------------------------------------------------------------------------
+
 /// Parse an `ArduPilot` `DataFlash` binary log.
-pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
+#[allow(clippy::too_many_lines)]
+pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
     let mut msg_defs: HashMap<u8, ApMsgDef> = HashMap::new();
-    let mut messages: Vec<ApMessage> = Vec::new();
+    let mut topics: HashMap<u8, MsgColumns> = HashMap::new();
+    let mut layouts: HashMap<u8, MsgLayout> = HashMap::new();
     let mut params: HashMap<String, f64> = HashMap::new();
     let mut firmware_version = String::new();
     let mut vehicle_name = String::new();
     let mut stats = ApParseStats::default();
 
+    let mut row_buf: Vec<f64> = Vec::new();
     let mut pos = 0;
 
     while pos + 3 <= data.len() {
-        // Scan for message header
         if data[pos] != HEAD1 || data[pos + 1] != HEAD2 {
             stats.corrupt_bytes += 1;
             pos += 1;
@@ -31,8 +96,8 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
         let msg_type = data[pos + 2];
 
         if msg_type == FMT_TYPE {
-            // FMT message — fixed 89-byte layout
             if pos + FMT_LEN > data.len() {
+                stats.truncated = true;
                 break;
             }
             if let Some(def) = parse_fmt(&data[pos..pos + FMT_LEN]) {
@@ -44,7 +109,6 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
             continue;
         }
 
-        // Look up message definition
         let Some(def) = msg_defs.get(&msg_type) else {
             stats.unknown_types += 1;
             stats.corrupt_bytes += 1;
@@ -54,47 +118,65 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
 
         let msg_len = def.msg_len;
         if pos + msg_len > data.len() {
+            stats.truncated = true;
             break;
         }
 
         let payload = &data[pos + 3..pos + msg_len];
-        let values = decode_payload(payload, &def.field_types);
 
-        // Extract timestamp — first field is typically TimeUS (u64) or TimeMS (u32)
-        let first_field_name = def.field_names.first().map_or("", String::as_str);
-        let raw_time = values.first().map_or(0u64, |v| match v {
-            ApValue::UInt(t) => *t,
-            ApValue::Int(t) => {
-                #[allow(clippy::cast_sign_loss)]
-                {
-                    *t as u64
+        // Lazy layout initialization
+        if let std::collections::hash_map::Entry::Vacant(e) = topics.entry(msg_type) {
+            let layout = MsgLayout::from_def(def);
+            e.insert(MsgColumns::new(layout.field_names.clone()));
+            layouts.insert(msg_type, layout);
+        }
+
+        if let Some(layout) = layouts.get(&msg_type) {
+            // Decode timestamp
+            let raw_time = decode_u64(payload, layout.timestamp_byte_offset, def.field_types[0]);
+            let time_us = if layout.timestamp_is_ms {
+                raw_time * 1000
+            } else {
+                raw_time
+            };
+
+            // Decode all fields into scratch buffer
+            row_buf.clear();
+            for slot in &layout.slots {
+                if slot.byte_offset + slot.field_type.wire_size() <= payload.len() {
+                    row_buf.push(decode_f64(slot.field_type, &payload[slot.byte_offset..]));
+                } else {
+                    row_buf.push(0.0);
                 }
             }
-            _ => 0,
-        });
-        let time_us = if first_field_name == "TimeMS" {
-            raw_time * 1000 // Convert ms to us
-        } else {
-            raw_time
-        };
 
-        let msg = ApMessage {
-            msg_type,
-            time_us,
-            values,
-        };
+            if let Some(mc) = topics.get_mut(&msg_type) {
+                mc.push_row(time_us, &row_buf);
+                stats.total_messages += 1;
+            }
+        }
 
         // Extract metadata from special message types
         if def.name == "PARM" {
-            extract_param(&msg, def, &mut params);
+            if let Some(layout) = layouts.get(&msg_type) {
+                extract_param(payload, def, layout, &mut params);
+            }
         } else if def.name == "MSG" {
-            extract_msg_info(&msg, def, &mut firmware_version, &mut vehicle_name);
+            if let Some(layout) = layouts.get(&msg_type) {
+                extract_msg_info(
+                    payload,
+                    def,
+                    layout,
+                    &mut firmware_version,
+                    &mut vehicle_name,
+                );
+            }
         } else if def.name == "VER" {
-            extract_version(&msg, def, &mut firmware_version);
+            if let Some(layout) = layouts.get(&msg_type) {
+                extract_version(payload, def, layout, &mut firmware_version);
+            }
         }
 
-        messages.push(msg);
-        stats.total_messages += 1;
         pos += msg_len;
     }
 
@@ -105,17 +187,60 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApRawSession {
         });
     }
 
-    ApRawSession {
+    ApSession {
         msg_defs,
-        messages,
+        topics,
         firmware_version,
         vehicle_name,
         params,
         stats,
+        warnings: Vec::new(),
+        session_index: 0,
     }
 }
 
-/// Parse a FMT message (89 bytes) into a message definition.
+// ---------------------------------------------------------------------------
+// Primitive decoders
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::cast_precision_loss)]
+#[inline]
+fn decode_f64(ft: FieldType, data: &[u8]) -> f64 {
+    match ft {
+        FieldType::I8 => f64::from(data[0].cast_signed()),
+        FieldType::U8 | FieldType::FlightMode => f64::from(data[0]),
+        FieldType::I16 | FieldType::I16Array32 => f64::from(i16::from_le_bytes([data[0], data[1]])),
+        FieldType::U16 => f64::from(u16::from_le_bytes([data[0], data[1]])),
+        FieldType::I32 => f64::from(i32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
+        FieldType::U32 => f64::from(u32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
+        FieldType::I64 => i64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])) as f64,
+        FieldType::U64 => u64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])) as f64,
+        FieldType::Float => f64::from(f32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
+        FieldType::Double => f64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])),
+        FieldType::Float16 => {
+            let bits = u16::from_le_bytes([data[0], data[1]]);
+            f64::from(decode_f16(bits))
+        }
+        FieldType::Char4 | FieldType::Char16 | FieldType::Char64 | FieldType::Unknown(_) => 0.0,
+    }
+}
+
+#[allow(clippy::cast_sign_loss)]
+fn decode_u64(data: &[u8], offset: usize, ft: FieldType) -> u64 {
+    let d = &data[offset..];
+    match ft {
+        FieldType::U64 | FieldType::I64 => u64::from_le_bytes(d[..8].try_into().unwrap_or([0; 8])),
+        FieldType::U32 | FieldType::I32 => {
+            u64::from(u32::from_le_bytes(d[..4].try_into().unwrap_or([0; 4])))
+        }
+        _ => 0,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Format / metadata extraction
+// ---------------------------------------------------------------------------
+
 fn parse_fmt(data: &[u8]) -> Option<ApMsgDef> {
     if data.len() < FMT_LEN {
         return None;
@@ -148,73 +273,97 @@ fn parse_fmt(data: &[u8]) -> Option<ApMsgDef> {
     })
 }
 
-/// Decode a message payload according to its field types.
-#[allow(clippy::cast_possible_wrap)]
-fn decode_payload(payload: &[u8], field_types: &[FieldType]) -> Vec<ApValue> {
-    let mut values = Vec::with_capacity(field_types.len());
-    let mut offset = 0;
-
-    for &ft in field_types {
-        let size = ft.wire_size();
-        if offset + size > payload.len() {
-            values.push(ApValue::Int(0));
-            continue;
-        }
-        let bytes = &payload[offset..offset + size];
-
-        let value = match ft {
-            FieldType::I8 => ApValue::Int(i64::from(bytes[0] as i8)),
-            FieldType::U8 | FieldType::FlightMode => ApValue::UInt(u64::from(bytes[0])),
-            FieldType::I16 => ApValue::Int(i64::from(i16::from_le_bytes([bytes[0], bytes[1]]))),
-            FieldType::U16 => ApValue::UInt(u64::from(u16::from_le_bytes([bytes[0], bytes[1]]))),
-            FieldType::I32 => ApValue::Int(i64::from(i32::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3],
-            ]))),
-            FieldType::U32 => ApValue::UInt(u64::from(u32::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3],
-            ]))),
-            FieldType::I64 => ApValue::Int(i64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ])),
-            FieldType::U64 => ApValue::UInt(u64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ])),
-            FieldType::Float => ApValue::Float(f64::from(f32::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3],
-            ]))),
-            FieldType::Double => ApValue::Float(f64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ])),
-            FieldType::Float16 => {
-                let bits = u16::from_le_bytes([bytes[0], bytes[1]]);
-                ApValue::Float(f64::from(decode_f16(bits)))
-            }
-            FieldType::Char4 | FieldType::Char16 | FieldType::Char64 => {
-                ApValue::Str(read_fixed_str(bytes))
-            }
-            FieldType::I16Array32 => {
-                // Store as the first element for now — arrays are rarely needed
-                let v = i16::from_le_bytes([bytes[0], bytes[1]]);
-                ApValue::Int(i64::from(v))
-            }
-            FieldType::Unknown(_) => ApValue::Int(0),
-        };
-
-        values.push(value);
-        offset += size;
-    }
-
-    values
+fn read_fixed_str(data: &[u8]) -> String {
+    let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
+    String::from_utf8_lossy(&data[..end]).to_string()
 }
 
-/// Decode IEEE 754 half-precision float to f32.
+fn read_str_at(payload: &[u8], layout: &MsgLayout, field_idx: usize, ft: FieldType) -> String {
+    let offset = layout.all_offsets[field_idx];
+    let size = ft.wire_size();
+    if offset + size <= payload.len() {
+        read_fixed_str(&payload[offset..offset + size])
+    } else {
+        String::new()
+    }
+}
+
+fn extract_param(
+    payload: &[u8],
+    def: &ApMsgDef,
+    layout: &MsgLayout,
+    params: &mut HashMap<String, f64>,
+) {
+    let name_idx = def.field_names.iter().position(|n| n == "Name");
+    let val_idx = def.field_names.iter().position(|n| n == "Value");
+    if let (Some(ni), Some(vi)) = (name_idx, val_idx) {
+        let name = read_str_at(payload, layout, ni, def.field_types[ni]);
+        if !name.is_empty() {
+            let offset = layout.all_offsets[vi];
+            let val = decode_f64(def.field_types[vi], &payload[offset..]);
+            params.insert(name, val);
+        }
+    }
+}
+
+fn extract_msg_info(
+    payload: &[u8],
+    def: &ApMsgDef,
+    layout: &MsgLayout,
+    firmware_version: &mut String,
+    vehicle_name: &mut String,
+) {
+    let msg_idx = def.field_names.iter().position(|n| n == "Message");
+    if let Some(idx) = msg_idx {
+        let text = read_str_at(payload, layout, idx, def.field_types[idx]);
+        if text.contains("ArduCopter")
+            || text.contains("ArduPlane")
+            || text.contains("ArduRover")
+            || text.contains("ArduSub")
+            || text.contains("Rover")
+            || text.contains("Copter")
+            || text.contains("Plane")
+            || text.contains("AntennaTracker")
+        {
+            if firmware_version.is_empty() {
+                *firmware_version = text;
+            }
+        } else if vehicle_name.is_empty()
+            && !text.is_empty()
+            && !text.contains("ChibiOS")
+            && !text.contains("NuttX")
+            && !text.contains("SITL")
+            && !text.starts_with("Param ")
+            && !text.starts_with("RC Protocol")
+            && !text.starts_with("Throttle ")
+            && !text.starts_with("Frame")
+        {
+            *vehicle_name = text;
+        }
+    }
+}
+
+fn extract_version(
+    payload: &[u8],
+    def: &ApMsgDef,
+    layout: &MsgLayout,
+    firmware_version: &mut String,
+) {
+    let fws_idx = def.field_names.iter().position(|n| n == "FWS");
+    if let Some(idx) = fws_idx {
+        let text = read_str_at(payload, layout, idx, def.field_types[idx]);
+        if !text.is_empty() {
+            *firmware_version = text;
+        }
+    }
+}
+
 fn decode_f16(bits: u16) -> f32 {
     let sign = (bits >> 15) & 1;
     let exponent = (bits >> 10) & 0x1F;
     let mantissa = bits & 0x3FF;
 
     let val = if exponent == 0 {
-        // Subnormal
         let m = f32::from(mantissa) / 1024.0;
         m * 2.0f32.powi(-14)
     } else if exponent == 31 {
@@ -232,70 +381,5 @@ fn decode_f16(bits: u16) -> f32 {
         -val
     } else {
         val
-    }
-}
-
-/// Read a null-padded fixed-length string.
-fn read_fixed_str(data: &[u8]) -> String {
-    let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-    String::from_utf8_lossy(&data[..end]).to_string()
-}
-
-fn extract_param(msg: &ApMessage, def: &ApMsgDef, params: &mut HashMap<String, f64>) {
-    let name_idx = def.field_names.iter().position(|n| n == "Name");
-    let val_idx = def.field_names.iter().position(|n| n == "Value");
-    if let (Some(ni), Some(vi)) = (name_idx, val_idx) {
-        if let (Some(ApValue::Str(name)), Some(val)) = (msg.values.get(ni), msg.values.get(vi)) {
-            params.insert(name.clone(), val.as_f64());
-        }
-    }
-}
-
-fn extract_msg_info(
-    msg: &ApMessage,
-    def: &ApMsgDef,
-    firmware_version: &mut String,
-    vehicle_name: &mut String,
-) {
-    let msg_idx = def.field_names.iter().position(|n| n == "Message");
-    if let Some(idx) = msg_idx {
-        if let Some(ApValue::Str(text)) = msg.values.get(idx) {
-            if text.contains("ArduCopter")
-                || text.contains("ArduPlane")
-                || text.contains("ArduRover")
-                || text.contains("ArduSub")
-                || text.contains("Rover")
-                || text.contains("Copter")
-                || text.contains("Plane")
-                || text.contains("AntennaTracker")
-            {
-                if firmware_version.is_empty() {
-                    firmware_version.clone_from(text);
-                }
-            } else if vehicle_name.is_empty()
-                && !text.is_empty()
-                && !text.contains("ChibiOS")
-                && !text.contains("NuttX")
-                && !text.contains("SITL")
-                && !text.starts_with("Param ")
-                && !text.starts_with("RC Protocol")
-                && !text.starts_with("Throttle ")
-                && !text.starts_with("Frame")
-            {
-                vehicle_name.clone_from(text);
-            }
-        }
-    }
-}
-
-fn extract_version(msg: &ApMessage, def: &ApMsgDef, firmware_version: &mut String) {
-    // VER message has FWS (firmware string) field
-    let fws_idx = def.field_names.iter().position(|n| n == "FWS");
-    if let Some(idx) = fws_idx {
-        if let Some(ApValue::Str(text)) = msg.values.get(idx) {
-            if !text.is_empty() {
-                firmware_version.clone_from(text);
-            }
-        }
     }
 }
