@@ -7,16 +7,18 @@ use proptest::prelude::*;
 proptest! {
     #[test]
     fn decode_never_panics(data in proptest::collection::vec(any::<u8>(), 0..4096)) {
-        // This is the single most important property: no input can crash the parser
-        let log = propwash_core::decode(&data);
-        // We don't assert anything about the result — just that we got one
-        let _ = log.session_count();
+        // This is the single most important property: no input can crash the parser.
+        // UnrecognizedFormat is fine for random data.
+        if let Ok(log) = propwash_core::decode(&data) {
+            let _ = log.session_count();
+        }
     }
 
     #[test]
     fn decode_never_panics_large(data in proptest::collection::vec(any::<u8>(), 0..65536)) {
-        let log = propwash_core::decode(&data);
-        let _ = log.session_count();
+        if let Ok(log) = propwash_core::decode(&data) {
+            let _ = log.session_count();
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -38,7 +40,7 @@ proptest! {
         data.extend_from_slice(b"H Field P encoding:9,0,0\n");
         data.extend_from_slice(&body);
 
-        let log = propwash_core::decode(&data);
+        let log = propwash_core::decode(&data).expect("valid BF header should be recognized");
         // Should find at least 1 session (we gave it a valid header)
         assert!(log.session_count() >= 1);
     }
@@ -68,7 +70,7 @@ proptest! {
         data.push(b'I');
         data.extend_from_slice(&body);
 
-        let log = propwash_core::decode(&data);
+        let log = propwash_core::decode(&data).expect("valid BF header should be recognized");
         let _ = log.session_count();
     }
 }

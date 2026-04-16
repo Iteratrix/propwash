@@ -11,6 +11,7 @@ pub(crate) enum InternalError {
 /// Zero-copy byte reader over a borrowed slice with bit-level positioning.
 /// Supports sub-byte reads for `TAG8_4S16` nibble-aligned encoding,
 /// and `byte_align()` to match the firmware's `streamByteAlign()`.
+#[allow(dead_code)]
 pub(crate) struct Reader<'a> {
     data: &'a [u8],
     pos: usize,
@@ -48,6 +49,7 @@ impl<'a> Reader<'a> {
     }
 
     /// Absolute byte offset in the original file.
+    #[allow(dead_code)]
     pub fn abs_pos(&self) -> usize {
         self.base_offset + self.pos
     }
@@ -72,8 +74,12 @@ impl<'a> Reader<'a> {
     }
 
     /// Read one byte, advancing position. Auto-aligns to byte boundary first.
+    #[inline]
     pub fn read_byte(&mut self) -> Result<u8, InternalError> {
-        self.byte_align();
+        if self.bit_pos > 0 {
+            self.bit_pos = 0;
+            self.pos += 1;
+        }
         if self.pos >= self.data.len() {
             return Err(InternalError::Eof);
         }

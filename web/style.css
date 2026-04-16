@@ -446,6 +446,40 @@ footer a {
 .event-type.Desync { color: var(--red); }
 .event-type.FirmwareMessage { color: var(--yellow); }
 
+/* Event filter pills */
+.event-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.event-pill {
+  padding: 0.3rem 0.6rem;
+  border-radius: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 0.7rem;
+  transition: all 0.15s;
+  opacity: 0.5;
+}
+
+.event-pill.active { opacity: 1; }
+.event-pill.active.ThrottleChop,
+.event-pill.active.Desync { border-color: var(--red); color: var(--red); }
+.event-pill.active.ThrottlePunch { border-color: var(--green); color: var(--green); }
+.event-pill.active.MotorSaturation { border-color: var(--yellow); color: var(--yellow); }
+.event-pill.active.GyroSpike { border-color: var(--orange); color: var(--orange); }
+.event-pill.active.Overshoot { border-color: var(--accent); color: var(--accent); }
+.event-pill.active.FirmwareMessage { border-color: var(--yellow); color: var(--yellow); }
+
+/* Clickable event rows */
+.event-row { cursor: pointer; transition: background 0.1s; }
+.event-row:hover td { background: rgba(91, 141, 239, 0.1); }
+
 .events-truncated {
   color: var(--text-dim);
   font-size: 0.8rem;
@@ -570,26 +604,66 @@ footer a {
 .diag-diff-section h3.new-issue { color: var(--red); }
 .diag-diff-section h3.unchanged { color: var(--text-dim); }
 
-/* Responsive */
+/* Responsive — tablet */
+@media (max-width: 768px) {
+  .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .summary-card .value { font-size: 1.1rem; }
+
+  .results-header { flex-direction: column; align-items: stretch; }
+  .session-tabs { justify-content: center; }
+  .results-actions { justify-content: center; }
+}
+
+/* Responsive — phone */
 @media (max-width: 640px) {
   header { padding: 1.5rem 0.5rem 0.75rem; }
   header h1 { font-size: 1.4rem; }
   main { padding: 0 0.5rem 3rem; }
 
-  .drop-zone { padding: 3rem 1rem; }
+  .drop-zone { padding: 2.5rem 1rem; }
   .drop-icon { font-size: 2rem; }
 
   .summary-grid { grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
-  .summary-card .value { font-size: 1.1rem; }
 
-  .panel { padding: 1rem; }
+  .panel { padding: 0.75rem; }
 
-  .results-header { flex-direction: column; align-items: stretch; }
-  .session-tabs { justify-content: center; }
-  .reset-btn { text-align: center; }
+  /* Larger tap targets on touch */
+  .view-tab { padding: 0.7rem 1rem; font-size: 0.8rem; }
+  .ts-tab, .ts-reset-zoom { padding: 0.5rem 0.75rem; min-height: 36px; }
+  .session-tab { padding: 0.6rem 1rem; }
+  .reset-btn { padding: 0.6rem 1rem; text-align: center; }
 
   .accel-rms { flex-direction: column; }
 
-  .event-table { font-size: 0.7rem; }
-  .event-table th, .event-table td { padding: 0.3rem; }
+  /* Tables: horizontal scroll wrapper + readable fonts */
+  .event-table { font-size: 0.8rem; }
+  .event-table th { font-size: 0.7rem; }
+  .event-table th, .event-table td { padding: 0.4rem 0.5rem; }
+
+  .compare-table { font-size: 0.8rem; }
+  .compare-table th, .compare-table td { padding: 0.4rem; }
+
+  .raw-select { min-width: 0; width: 100%; }
+  .raw-table { font-size: 0.7rem; }
+
+  /* Diagnostic cards */
+  .diagnostic .message { font-size: 0.8rem; }
+  .diagnostic .detail { font-size: 0.75rem; }
+
+  /* Peaks wrap tighter */
+  .peaks-list { gap: 0.4rem; }
+  .peak-badge { font-size: 0.7rem; padding: 0.25rem 0.4rem; }
+}
+
+/* Ensure tables scroll horizontally on narrow screens */
+.event-table, .compare-table {
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.event-table thead, .event-table tbody,
+.compare-table thead, .compare-table tbody {
+  display: table;
+  width: 100%;
 }

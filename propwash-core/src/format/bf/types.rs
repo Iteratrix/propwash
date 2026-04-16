@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use crate::types::{SensorField, Unified};
+use super::header::parse_bf_field_name;
+use crate::types::{FilterConfig, SensorField, Warning};
 
 /// Whether a field's predicted value wraps as unsigned or signed 32-bit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,8 @@ pub enum Predictor {
     Motor0,
     /// Incrementing counter (loop iteration).
     Increment,
+    /// Offset from GPS home coordinate.
+    HomeCoord,
     /// Offset from 1500.
     FifteenHundred,
     /// Offset from `vbatref` header value.
@@ -77,6 +80,7 @@ impl From<u8> for Predictor {
             4 => Self::MinThrottle,
             5 => Self::Motor0,
             6 => Self::Increment,
+            7 => Self::HomeCoord,
             8 => Self::FifteenHundred,
             9 => Self::VbatRef,
             10 => Self::LastMainFrameTime,
@@ -134,10 +138,10 @@ impl BfFrameDefs {
         self.field_index.get(field).copied()
     }
 
-    /// Looks up the index of a field by header string name.
-    /// Converts to `SensorField` internally.
+    /// Looks up the index of a field by BF-native header string name.
+    /// Converts to `SensorField` via the BF field name parser.
     pub fn index_of_str(&self, name: &str) -> Option<usize> {
-        self.index_of(&SensorField::from_header(name))
+        self.index_of(&parse_bf_field_name(name))
     }
 }
 
@@ -150,19 +154,14 @@ pub enum BfFrameKind {
     Inter,
 }
 
-/// A single decoded Betaflight frame with provenance.
-/// Values are indexed by field position (matching `BfFrameDefs`).
-/// Use `BfRawSession::get_field()` for name-based access.
+/// A single decoded Betaflight frame (transient — used during parsing,
+/// then transposed into columnar storage).
 #[derive(Debug, Clone)]
-pub struct BfFrame {
+pub(crate) struct BfFrame {
     /// Field values indexed by position in the session's `main_field_defs`.
     pub values: Vec<i64>,
     /// Whether this was an I-frame or P-frame.
     pub kind: BfFrameKind,
-    /// Byte offset in the original file.
-    pub byte_offset: usize,
-    /// Sequential index within the session (0-based).
-    pub frame_index: usize,
 }
 
 /// Discrete events recorded during a Betaflight flight.
@@ -180,7 +179,7 @@ pub enum BfEvent {
     },
     InflightAdjustment {
         function: u8,
-        value: i32,
+        value: f64,
     },
     LoggingResume {
         log_iteration: u32,
@@ -221,7 +220,7 @@ pub enum BfHeaderValue {
 
 /// Complete raw data for one Betaflight session.
 #[derive(Debug)]
-pub struct BfRawSession {
+pub struct BfSession {
     /// Raw header key-value pairs.
     pub headers: HashMap<String, BfHeaderValue>,
     /// Firmware type string (e.g., "Cleanflight").
@@ -242,23 +241,32 @@ pub struct BfRawSession {
     pub gps_field_defs: Option<BfFrameDefs>,
     /// GPS home field definitions.
     pub gps_home_field_defs: Option<BfFrameDefs>,
-    /// Decoded main frames (I + P interleaved in order).
-    pub frames: Vec<BfFrame>,
-    /// Decoded slow frames.
-    pub slow_frames: Vec<BfFrame>,
-    /// Decoded GPS frames.
-    pub gps_frames: Vec<BfFrame>,
+    /// Columnar main frame data — one `Vec<f64>` per field, parallel to `main_field_defs`.
+    pub main_columns: Vec<Vec<f64>>,
+    /// Frame kind (Intra/Inter) for each main frame.
+    pub frame_kinds: Vec<BfFrameKind>,
+    /// Columnar slow-frame data, parallel to `slow_field_defs`.
+    pub slow_columns: Vec<Vec<f64>>,
+    /// Columnar GPS-frame data, parallel to `gps_field_defs`.
+    pub gps_columns: Vec<Vec<f64>>,
+    /// GPS Home reference position (field values matching `gps_home_field_defs`).
+    /// Used as the base for delta-compressed GPS coordinate reconstruction.
+    pub gps_home: Option<Vec<i64>>,
     /// Discrete events.
     pub events: Vec<BfEvent>,
     /// Parse statistics.
     pub stats: BfParseStats,
+    /// Non-fatal diagnostics from parsing.
+    pub warnings: Vec<Warning>,
+    /// 1-based session index within the file.
+    pub session_index: usize,
     min_throttle: i32,
     min_motor: i32,
     vbat_ref: i32,
 }
 
-impl BfRawSession {
-    /// Creates a new `BfRawSession` with parsed headers but no frames yet.
+impl BfSession {
+    /// Creates a new `BfSession` with parsed headers but no frames yet.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         headers: HashMap<String, BfHeaderValue>,
@@ -294,11 +302,15 @@ impl BfRawSession {
             slow_field_defs,
             gps_field_defs,
             gps_home_field_defs,
-            frames: Vec::new(),
-            slow_frames: Vec::new(),
-            gps_frames: Vec::new(),
+            main_columns: Vec::new(),
+            frame_kinds: Vec::new(),
+            slow_columns: Vec::new(),
+            gps_columns: Vec::new(),
+            gps_home: None,
             events: Vec::new(),
             stats: BfParseStats::default(),
+            warnings: Vec::new(),
+            session_index: 0,
             min_throttle,
             min_motor: min_motor_override,
             vbat_ref,
@@ -343,22 +355,20 @@ impl BfRawSession {
         self.vbat_ref
     }
 
-    /// Gets a field value from a frame by name string.
-    pub fn get_field(&self, frame: &BfFrame, name: &str) -> Option<i64> {
-        let idx = self.main_field_defs.index_of_str(name)?;
-        frame.values.get(idx).copied()
-    }
-
-    /// Gets a field value from a frame by name, with a default.
-    pub fn get_field_or(&self, frame: &BfFrame, name: &str, default: i64) -> i64 {
-        self.get_field(frame, name).unwrap_or(default)
+    /// Gets a main-frame field value by field index and frame index.
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn main_value(&self, frame_idx: usize, field_idx: usize) -> i64 {
+        self.main_columns
+            .get(field_idx)
+            .and_then(|col| col.get(frame_idx))
+            .map_or(0, |&v| v as i64)
     }
 
     // ── Methods absorbed from BfAnalyzedView ────────────────────────
 
     /// Returns the number of main frames.
     pub fn frame_count(&self) -> usize {
-        self.frames.len()
+        self.main_columns.first().map_or(0, Vec::len)
     }
 
     /// Returns field names from header definitions.
@@ -376,68 +386,76 @@ impl BfRawSession {
         &self.craft_name
     }
 
+    /// Returns the time column for main frames, if present.
+    fn time_column(&self) -> Option<&[f64]> {
+        let idx = self.main_field_defs.index_of(&SensorField::Time)?;
+        self.main_columns.get(idx).map(Vec::as_slice)
+    }
+
     /// Computes sample rate from first/last frame timestamps.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
     pub fn sample_rate_hz(&self) -> f64 {
-        if self.frames.len() < 2 {
-            return 0.0;
-        }
-        let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
+        let Some(time) = self.time_column() else {
             return 0.0;
         };
-        let t0 = self
-            .frames
-            .first()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let tn = self
-            .frames
-            .last()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let dt_us = tn - t0;
-        if dt_us <= 0 {
+        if time.len() < 2 {
             return 0.0;
         }
-        (self.frames.len() - 1) as f64 / (dt_us as f64 / 1_000_000.0)
+        let dt_us = time.last().unwrap() - time.first().unwrap();
+        if dt_us <= 0.0 {
+            return 0.0;
+        }
+        (time.len() - 1) as f64 / (dt_us / 1_000_000.0)
     }
 
     /// Returns flight duration in seconds.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
     pub fn duration_seconds(&self) -> f64 {
-        if self.frames.len() < 2 {
-            return 0.0;
-        }
-        let Some(time_idx) = self.main_field_defs.index_of(&SensorField::Time) else {
+        let Some(time) = self.time_column() else {
             return 0.0;
         };
-        let t0 = self
-            .frames
-            .first()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let tn = self
-            .frames
-            .last()
-            .and_then(|f| f.values.get(time_idx).copied())
-            .unwrap_or(0);
-        let dt_us = tn - t0;
-        if dt_us <= 0 {
+        if time.len() < 2 {
             return 0.0;
         }
-        dt_us as f64 / 1_000_000.0
+        let dt_us = time.last().unwrap() - time.first().unwrap();
+        if dt_us <= 0.0 {
+            return 0.0;
+        }
+        dt_us / 1_000_000.0
     }
 
-    /// Extracts one field as a `Vec<f64>` across all main frames.
+    /// Extracts one field as a `Vec<f64>` across all frames.
+    ///
+    /// BF fields are indexed by position, so lookup is via the field-definition
+    /// hashmap. Falls back to slow frames (battery voltage, RSSI, etc.) when
+    /// a field isn't found in main frames. `SensorField::Unknown` values
+    /// resolve only if the parser previously mapped that exact string to a
+    /// field index. Unresolvable fields return an empty `Vec`.
     #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
-        let Some(idx) = self.main_field_defs.index_of(sensor_field) else {
-            return vec![0.0; self.frames.len()];
-        };
-        self.frames
-            .iter()
-            .map(|f| f.values.get(idx).copied().unwrap_or(0) as f64)
-            .collect()
+        // Check main columns first
+        if let Some(idx) = self.main_field_defs.index_of(sensor_field) {
+            if let Some(col) = self.main_columns.get(idx) {
+                return col.clone();
+            }
+        }
+        // Fall back to slow columns
+        if let Some(ref slow_defs) = self.slow_field_defs {
+            if let Some(idx) = slow_defs.index_of(sensor_field) {
+                if let Some(col) = self.slow_columns.get(idx) {
+                    return col.clone();
+                }
+            }
+        }
+        // Fall back to GPS columns (coordinates already reconstructed with home offset)
+        if let Some(ref gps_defs) = self.gps_field_defs {
+            if let Some(idx) = gps_defs.index_of(sensor_field) {
+                if let Some(col) = self.gps_columns.get(idx) {
+                    return col.clone();
+                }
+            }
+        }
+        Vec::new()
     }
 
     /// Returns the number of motors detected from field definitions.
@@ -445,21 +463,8 @@ impl BfRawSession {
         self.main_field_defs
             .fields
             .iter()
-            .filter(|f| f.name.is_motor())
+            .filter(|f| matches!(f.name, SensorField::Motor(_)))
             .count()
-    }
-
-    /// Returns whether bidirectional `DShot` RPM telemetry is present.
-    pub fn has_rpm_telemetry(&self) -> bool {
-        self.main_field_defs.fields.iter().any(|f| f.name.is_erpm())
-    }
-
-    /// Returns whether unfiltered gyro data is logged.
-    pub fn has_gyro_unfiltered(&self) -> bool {
-        self.main_field_defs
-            .fields
-            .iter()
-            .any(|f| matches!(f.name, SensorField::GyroUnfilt(_)))
     }
 
     /// Returns the debug mode from headers.
@@ -471,34 +476,35 @@ impl BfRawSession {
     pub fn is_truncated(&self) -> bool {
         !self.stats.clean_end
     }
-}
 
-impl Unified for BfRawSession {
-    fn frame_count(&self) -> usize {
-        self.frame_count()
+    /// Returns the number of corrupt bytes encountered during parsing.
+    pub fn corrupt_bytes(&self) -> usize {
+        self.stats.corrupt_bytes
     }
-    fn field_names(&self) -> Vec<String> {
-        self.field_names()
+
+    /// Returns the filter configuration extracted from headers.
+    pub fn filter_config(&self) -> FilterConfig {
+        let non_zero = |v: i32| -> Option<f64> {
+            if v > 0 {
+                Some(f64::from(v))
+            } else {
+                None
+            }
+        };
+        FilterConfig {
+            gyro_lpf_hz: non_zero(self.get_header_int("gyro_lowpass_hz", 0)),
+            gyro_lpf2_hz: non_zero(self.get_header_int("gyro_lowpass2_hz", 0)),
+            dterm_lpf_hz: non_zero(self.get_header_int("dterm_lpf_hz", 0))
+                .or_else(|| non_zero(self.get_header_int("dterm_lowpass_hz", 0))),
+            dyn_notch_min_hz: non_zero(self.get_header_int("dyn_notch_min_hz", 0)),
+            dyn_notch_max_hz: non_zero(self.get_header_int("dyn_notch_max_hz", 0)),
+            gyro_notch1_hz: non_zero(self.get_header_int("gyro_notch_hz", 0)),
+            gyro_notch2_hz: non_zero(self.get_header_int("gyro_notch2_hz", 0)),
+        }
     }
-    fn firmware_version(&self) -> &str {
-        self.firmware_version()
-    }
-    fn craft_name(&self) -> &str {
-        self.craft_name()
-    }
-    fn sample_rate_hz(&self) -> f64 {
-        self.sample_rate_hz()
-    }
-    fn duration_seconds(&self) -> f64 {
-        self.duration_seconds()
-    }
-    fn field(&self, field: &SensorField) -> Vec<f64> {
-        self.field(field)
-    }
-    fn motor_count(&self) -> usize {
-        self.motor_count()
-    }
-    fn motor_range(&self) -> (f64, f64) {
+
+    /// Returns the motor output range `(min, max)` from header metadata.
+    pub fn motor_range(&self) -> (f64, f64) {
         let motor_output = self.get_header_int_list("motorOutput");
         let max = match motor_output.len() {
             0 => 2047,
@@ -506,5 +512,15 @@ impl Unified for BfRawSession {
             _ => motor_output[1],
         };
         (0.0, f64::from(max))
+    }
+
+    /// Returns parse warnings.
+    pub fn warnings(&self) -> &[Warning] {
+        &self.warnings
+    }
+
+    /// Returns the 1-based session index within the file.
+    pub fn index(&self) -> usize {
+        self.session_index
     }
 }

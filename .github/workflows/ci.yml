@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags-ignore:
+      - '**'
+  schedule:
+    - cron: "0 6 * * 1" # Weekly Monday 6am UTC
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -37,9 +41,21 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  web-test:
+    name: Web Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd web && npm install && npx vitest run
+
   wasm:
     name: WASM Build
     runs-on: ubuntu-latest
+    # PRs and weekly — catches WASM target regressions from toolchain updates
+    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -47,3 +63,13 @@ jobs:
           targets: wasm32-unknown-unknown
       - run: cargo install wasm-pack
       - run: wasm-pack build propwash-web --target web --out-dir ../web/pkg
+
+  perf:
+    name: Performance
+    runs-on: ubuntu-latest
+    # Run on main pushes and weekly, not on every PR
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --release -p propwash-core --test perf -- --ignored

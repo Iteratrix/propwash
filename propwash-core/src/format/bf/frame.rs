@@ -4,19 +4,47 @@ use super::encoding::{
 };
 use super::predictor::{apply_i_predictor, apply_p_predictor, DecodeContext};
 use super::types::{
-    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfRawSession, Encoding, Predictor,
+    BfEvent, BfFieldDef, BfFrame, BfFrameKind, BfParseStats, BfSession, Encoding, Predictor,
 };
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
+
+pub(crate) struct ParsedFrames {
+    pub main: Vec<BfFrame>,
+    pub slow: Vec<BfFrame>,
+    pub gps: Vec<BfFrame>,
+    pub gps_home: Option<Vec<i64>>,
+    pub events: Vec<BfEvent>,
+    pub stats: BfParseStats,
+}
 use crate::types::{MotorIndex, SensorField};
 
-// Frame marker bytes
-const MARKER_I: u8 = b'I';
-const MARKER_P: u8 = b'P';
-const MARKER_S: u8 = b'S';
-const MARKER_G: u8 = b'G';
-const MARKER_H: u8 = b'H';
-const MARKER_E: u8 = b'E';
+/// Frame marker bytes in Betaflight blackbox logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameMarker {
+    Intra,
+    Inter,
+    Slow,
+    Gps,
+    GpsHome,
+    Event,
+}
+
+impl TryFrom<u8> for FrameMarker {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            b'I' => Ok(Self::Intra),
+            b'P' => Ok(Self::Inter),
+            b'S' => Ok(Self::Slow),
+            b'G' => Ok(Self::Gps),
+            b'H' => Ok(Self::GpsHome),
+            b'E' => Ok(Self::Event),
+            other => Err(other),
+        }
+    }
+}
 
 // Event type IDs
 const EVENT_SYNC_BEEP: u8 = 0;
@@ -26,37 +54,41 @@ const EVENT_DISARM: u8 = 15;
 const EVENT_FLIGHT_MODE: u8 = 30;
 const EVENT_LOG_END: u8 = 255;
 
-fn is_valid_marker(b: u8) -> bool {
-    matches!(
-        b,
-        MARKER_I | MARKER_P | MARKER_S | MARKER_G | MARKER_H | MARKER_E
-    )
-}
-
 /// Parse all frames from binary data for one session.
 /// Never panics — collects warnings on corruption and continues.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn parse_session_frames(
     data: &[u8],
     base_offset: usize,
-    session: &BfRawSession,
+    session: &BfSession,
     warnings: &mut Vec<Warning>,
-) -> (
-    Vec<BfFrame>,
-    Vec<BfFrame>,
-    Vec<BfFrame>,
-    Vec<BfEvent>,
-    BfParseStats,
-) {
+) -> ParsedFrames {
     let mut reader = Reader::with_offset(data, base_offset);
     let mut main_frames: Vec<BfFrame> = Vec::new();
     let mut slow_frames: Vec<BfFrame> = Vec::new();
     let mut gps_frames: Vec<BfFrame> = Vec::new();
+    let mut gps_home: Option<Vec<i64>> = None;
     let mut events: Vec<BfEvent> = Vec::new();
 
     let fields = &session.main_field_defs.fields;
     let p_encodings = &session.p_encodings;
     let p_predictors = &session.p_predictors;
+
+    // Pre-cache I-frame encodings (was .collect() per frame)
+    let i_encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
+    // Pre-cache simple frame encodings
+    let slow_encodings: Vec<Encoding> = session
+        .slow_field_defs
+        .as_ref()
+        .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+    let gps_encodings: Vec<Encoding> = session
+        .gps_field_defs
+        .as_ref()
+        .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+    let gps_home_encodings: Vec<Encoding> = session
+        .gps_home_field_defs
+        .as_ref()
+        .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
 
     let motor0_idx = session
         .main_field_defs
@@ -67,36 +99,31 @@ pub(crate) fn parse_session_frames(
         .index_of(&SensorField::LoopIteration);
 
     let mut ctx = DecodeContext::new(session);
-    let mut frame_index: usize = 0;
     let mut stats = BfParseStats::default();
+    // Reusable scratch buffer for raw decoded values
+    let mut raw_buf: Vec<i32> = Vec::with_capacity(fields.len());
 
     while !reader.is_exhausted() {
         let frame_start = reader.save_point();
-        let frame_abs_offset = reader.abs_pos();
 
-        let marker = match reader.read_byte() {
-            Ok(b) => b,
+        let marker = match reader.read_byte().map(FrameMarker::try_from) {
+            Ok(Ok(m)) => m,
             Err(InternalError::Eof) => break,
-            Err(_) => {
+            Ok(Err(_)) | Err(_) => {
                 stats.corrupt_bytes += 1;
                 continue;
             }
         };
 
-        if !is_valid_marker(marker) {
-            stats.corrupt_bytes += 1;
-            continue;
-        }
-
         match marker {
-            MARKER_I => {
+            FrameMarker::Intra => {
                 let result = decode_i_frame(
                     &mut reader,
                     fields,
+                    &i_encodings,
                     session,
                     motor0_idx,
-                    frame_abs_offset,
-                    frame_index,
+                    &mut raw_buf,
                 );
                 match result {
                     Ok(frame) => {
@@ -107,7 +134,6 @@ pub(crate) fn parse_session_frames(
                                 .unwrap_or(0) as u32;
                             ctx.reset_from_i_frame(&frame.values, iteration);
                             main_frames.push(frame);
-                            frame_index += 1;
                             stats.i_frame_count += 1;
                         } else {
                             stats.corrupt_bytes += 1;
@@ -125,7 +151,7 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_P => {
+            FrameMarker::Inter => {
                 if !ctx.is_ready() {
                     stats.corrupt_bytes += 1;
                     continue;
@@ -142,15 +168,13 @@ pub(crate) fn parse_session_frames(
                     session,
                     time_idx,
                     skipped,
-                    frame_abs_offset,
-                    frame_index,
+                    &mut raw_buf,
                 );
                 match result {
                     Ok(frame) => {
                         if validate_next_marker(&reader) {
                             ctx.advance_from_p_frame(&frame.values);
                             main_frames.push(frame);
-                            frame_index += 1;
                             stats.p_frame_count += 1;
                         } else {
                             stats.corrupt_bytes += 1;
@@ -168,15 +192,18 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_S => {
+            FrameMarker::Slow => {
                 if let Some(slow_defs) = &session.slow_field_defs {
-                    match decode_simple_frame(&mut reader, &slow_defs.fields) {
+                    match decode_simple_frame(
+                        &mut reader,
+                        &slow_encodings,
+                        &mut raw_buf,
+                        slow_defs.len(),
+                    ) {
                         Ok(values) => {
                             slow_frames.push(BfFrame {
                                 values,
                                 kind: BfFrameKind::Intra,
-                                byte_offset: frame_abs_offset,
-                                frame_index: slow_frames.len(),
                             });
                             stats.slow_frame_count += 1;
                         }
@@ -189,15 +216,18 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_G => {
+            FrameMarker::Gps => {
                 if let Some(gps_defs) = &session.gps_field_defs {
-                    match decode_simple_frame(&mut reader, &gps_defs.fields) {
+                    match decode_simple_frame(
+                        &mut reader,
+                        &gps_encodings,
+                        &mut raw_buf,
+                        gps_defs.len(),
+                    ) {
                         Ok(values) => {
                             gps_frames.push(BfFrame {
                                 values,
                                 kind: BfFrameKind::Intra,
-                                byte_offset: frame_abs_offset,
-                                frame_index: gps_frames.len(),
                             });
                             stats.gps_frame_count += 1;
                         }
@@ -210,16 +240,27 @@ pub(crate) fn parse_session_frames(
                 }
             }
 
-            MARKER_H => {
+            FrameMarker::GpsHome => {
                 if let Some(home_defs) = &session.gps_home_field_defs {
-                    if decode_simple_frame(&mut reader, &home_defs.fields).is_err() {
-                        reader.restore(frame_start);
-                        reader.skip(1);
+                    match decode_simple_frame(
+                        &mut reader,
+                        &gps_home_encodings,
+                        &mut raw_buf,
+                        home_defs.len(),
+                    ) {
+                        Ok(values) => {
+                            gps_home = Some(values);
+                        }
+                        Err(InternalError::Eof) => break,
+                        Err(_) => {
+                            reader.restore(frame_start);
+                            reader.skip(1);
+                        }
                     }
                 }
             }
 
-            MARKER_E => match parse_event(&mut reader) {
+            FrameMarker::Event => match parse_event(&mut reader) {
                 Ok(Some(event)) => {
                     let is_end = match event {
                         BfEvent::LogEnd => true,
@@ -244,8 +285,6 @@ pub(crate) fn parse_session_frames(
                     reader.skip(1);
                 }
             },
-
-            _ => {}
         }
     }
 
@@ -259,25 +298,50 @@ pub(crate) fn parse_session_frames(
         });
     }
 
-    (main_frames, slow_frames, gps_frames, events, stats)
+    // Apply GPS home offset to reconstruct absolute coordinates
+    if let (Some(ref home), Some(gps_defs)) = (&gps_home, &session.gps_field_defs) {
+        let coord0_idx = gps_defs.index_of_str("GPS_coord[0]");
+        let coord1_idx = gps_defs.index_of_str("GPS_coord[1]");
+        for frame in &mut gps_frames {
+            if let Some(idx) = coord0_idx {
+                if let Some(val) = frame.values.get_mut(idx) {
+                    *val = val.wrapping_add(home[0]);
+                }
+            }
+            if let Some(idx) = coord1_idx {
+                if let Some(val) = frame.values.get_mut(idx) {
+                    *val = val.wrapping_add(home[1]);
+                }
+            }
+        }
+    }
+
+    ParsedFrames {
+        main: main_frames,
+        slow: slow_frames,
+        gps: gps_frames,
+        gps_home,
+        events,
+        stats,
+    }
 }
 
 /// Decode raw field values from the stream, handling grouped encodings.
-/// Returns a Vec of i32 values in field-definition order.
+/// Writes directly into the caller-provided `values` buffer (must be `fields.len()` long).
 fn decode_fields(
     reader: &mut Reader<'_>,
-    fields: &[BfFieldDef],
     encodings: &[Encoding],
-) -> Result<Vec<i32>, InternalError> {
-    let n = fields.len();
-    let mut values = vec![0i32; n];
+    values: &mut [i32],
+) -> Result<(), InternalError> {
+    let n = values.len();
     let mut i = 0;
 
     while i < n {
-        let enc = encodings.get(i).copied().unwrap_or(Encoding::SignedVb);
+        let enc = encodings[i];
 
         match enc {
             Encoding::Null => {
+                values[i] = 0;
                 i += 1;
             }
             Encoding::UnsignedVb => {
@@ -306,8 +370,7 @@ fn decode_fields(
             }
             Encoding::Tag8_8Svb => {
                 let count = count_consecutive(encodings, i, enc, 8);
-                let raw = read_tag8_8svb(reader, count)?;
-                values[i..i + count].copy_from_slice(&raw[..count]);
+                read_tag8_8svb(reader, count, &mut values[i..i + count])?;
                 i += count;
             }
             Encoding::Tag2_3SVariable => {
@@ -322,7 +385,7 @@ fn decode_fields(
             }
         }
     }
-    Ok(values)
+    Ok(())
 }
 
 fn count_consecutive(
@@ -343,23 +406,23 @@ fn count_consecutive(
 }
 
 /// Decode an I-frame (keyframe).
+#[allow(clippy::too_many_arguments)]
 fn decode_i_frame(
     reader: &mut Reader<'_>,
     fields: &[BfFieldDef],
-    session: &BfRawSession,
+    i_encodings: &[Encoding],
+    session: &BfSession,
     motor0_idx: Option<usize>,
-    byte_offset: usize,
-    frame_index: usize,
+    raw_buf: &mut Vec<i32>,
 ) -> Result<BfFrame, InternalError> {
-    let encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
-    let raw = decode_fields(reader, fields, &encodings)?;
+    raw_buf.resize(fields.len(), 0);
+    decode_fields(reader, i_encodings, raw_buf)?;
 
-    // Apply I-frame predictors in order (MOTOR_0 depends on motor[0])
     let mut values: Vec<i64> = Vec::with_capacity(fields.len());
     for (i, field) in fields.iter().enumerate() {
         let predicted = apply_i_predictor(
             field.predictor,
-            raw[i],
+            raw_buf[i],
             field.value_sign,
             &values,
             motor0_idx,
@@ -371,8 +434,6 @@ fn decode_i_frame(
     Ok(BfFrame {
         values,
         kind: BfFrameKind::Intra,
-        byte_offset,
-        frame_index,
     })
 }
 
@@ -385,20 +446,20 @@ fn decode_p_frame(
     p_predictors: &[Predictor],
     prev1: &[i64],
     prev2: &[i64],
-    session: &BfRawSession,
+    session: &BfSession,
     time_idx: Option<usize>,
     skipped_frames: u32,
-    byte_offset: usize,
-    frame_index: usize,
+    raw_buf: &mut Vec<i32>,
 ) -> Result<BfFrame, InternalError> {
-    let raw = decode_fields(reader, fields, p_encodings)?;
+    raw_buf.resize(fields.len(), 0);
+    decode_fields(reader, p_encodings, raw_buf)?;
 
     let mut values: Vec<i64> = Vec::with_capacity(fields.len());
     for (j, field) in fields.iter().enumerate() {
         let predictor = p_predictors.get(j).copied().unwrap_or(Predictor::Zero);
         let predicted = apply_p_predictor(
             predictor,
-            raw[j],
+            raw_buf[j],
             j,
             field.value_sign,
             prev1,
@@ -413,19 +474,19 @@ fn decode_p_frame(
     Ok(BfFrame {
         values,
         kind: BfFrameKind::Inter,
-        byte_offset,
-        frame_index,
     })
 }
 
 /// Decode a simple frame (S, G, H) — no predictors, just raw decode.
 fn decode_simple_frame(
     reader: &mut Reader<'_>,
-    fields: &[BfFieldDef],
+    encodings: &[Encoding],
+    raw_buf: &mut Vec<i32>,
+    n_fields: usize,
 ) -> Result<Vec<i64>, InternalError> {
-    let encodings: Vec<Encoding> = fields.iter().map(|f| f.encoding).collect();
-    let raw = decode_fields(reader, fields, &encodings)?;
-    Ok(raw.into_iter().map(i64::from).collect())
+    raw_buf.resize(n_fields, 0);
+    decode_fields(reader, encodings, raw_buf)?;
+    Ok(raw_buf.iter().map(|&v| i64::from(v)).collect())
 }
 
 /// Parse an event frame.
@@ -447,16 +508,17 @@ fn parse_event(reader: &mut Reader<'_>) -> Result<Option<BfEvent>, InternalError
         EVENT_INFLIGHT_ADJUSTMENT => {
             let func = reader.read_byte()?;
             if func & 0x80 != 0 {
-                reader.read_bytes(4)?;
+                let bytes = reader.read_bytes(4)?;
+                let float_val = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                 Ok(Some(BfEvent::InflightAdjustment {
                     function: func & 0x7F,
-                    value: 0,
+                    value: f64::from(float_val),
                 }))
             } else {
                 let value = read_signed_vb(reader)?;
                 Ok(Some(BfEvent::InflightAdjustment {
                     function: func,
-                    value,
+                    value: f64::from(value),
                 }))
             }
         }
@@ -491,6 +553,6 @@ fn parse_event(reader: &mut Reader<'_>) -> Result<Option<BfEvent>, InternalError
 fn validate_next_marker(reader: &Reader<'_>) -> bool {
     match reader.peek() {
         None => true,
-        Some(b) => is_valid_marker(b),
+        Some(b) => FrameMarker::try_from(b).is_ok(),
     }
 }

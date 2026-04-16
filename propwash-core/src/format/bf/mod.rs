@@ -4,9 +4,9 @@ mod header;
 mod predictor;
 pub mod types;
 
-use crate::types::{Log, RawSession, Session, Warning};
+use crate::types::{Log, Session, Warning};
 use header::{find_sessions, parse_headers};
-use types::{BfHeaderValue, BfRawSession};
+use types::{BfFrame, BfHeaderValue, BfSession};
 
 /// Decodes a Betaflight-family blackbox log.
 pub(crate) fn decode(data: &[u8]) -> Log {
@@ -44,7 +44,7 @@ pub(crate) fn decode(data: &[u8]) -> Log {
             _ => 0,
         };
 
-        let mut raw_session = BfRawSession::new(
+        let mut raw_session = BfSession::new(
             parsed.raw,
             parsed.firmware_type,
             parsed.firmware_version,
@@ -60,28 +60,51 @@ pub(crate) fn decode(data: &[u8]) -> Log {
 
         if !raw_session.main_field_defs.is_empty() {
             let binary_data = &data[parsed.binary_start..session_end];
-            let (main, slow, gps, events, stats) = frame::parse_session_frames(
+            let parsed_frames = frame::parse_session_frames(
                 binary_data,
                 parsed.binary_start,
                 &raw_session,
                 &mut warnings,
             );
-            raw_session.frames = main;
-            raw_session.slow_frames = slow;
-            raw_session.gps_frames = gps;
-            raw_session.events = events;
-            raw_session.stats = stats;
+
+            // Transpose row-oriented frames into columnar storage
+            raw_session.main_columns =
+                transpose(&parsed_frames.main, raw_session.main_field_defs.len());
+            raw_session.frame_kinds = parsed_frames.main.iter().map(|f| f.kind).collect();
+            if let Some(ref defs) = raw_session.slow_field_defs {
+                raw_session.slow_columns = transpose(&parsed_frames.slow, defs.len());
+            }
+            if let Some(ref defs) = raw_session.gps_field_defs {
+                raw_session.gps_columns = transpose(&parsed_frames.gps, defs.len());
+            }
+
+            raw_session.gps_home = parsed_frames.gps_home;
+            raw_session.events = parsed_frames.events;
+            raw_session.stats = parsed_frames.stats;
         }
 
-        sessions.push(Session {
-            raw: RawSession::Betaflight(raw_session),
-            warnings,
-            index: i + 1,
-        });
+        raw_session.warnings = warnings;
+        raw_session.session_index = i + 1;
+        sessions.push(Session::Betaflight(raw_session));
     }
 
     Log {
         sessions,
         warnings: global_warnings,
     }
+}
+
+/// Transpose row-oriented `BfFrame` vectors into column-oriented `Vec<Vec<f64>>`.
+#[allow(clippy::cast_precision_loss)]
+fn transpose(frames: &[BfFrame], n_fields: usize) -> Vec<Vec<f64>> {
+    let mut columns = Vec::with_capacity(n_fields);
+    for _ in 0..n_fields {
+        columns.push(Vec::with_capacity(frames.len()));
+    }
+    for frame in frames {
+        for (i, col) in columns.iter_mut().enumerate() {
+            col.push(frame.values.get(i).copied().unwrap_or(0) as f64);
+        }
+    }
+    columns
 }
