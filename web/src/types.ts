@@ -19,7 +19,22 @@ export interface FlightAnalysis {
   summary: FlightSummary;
   events: FlightEvent[];
   vibration: VibrationAnalysis | null;
+  pid: PidAnalysis;
   diagnostics: Diagnostic[];
+}
+
+export interface PidAnalysis {
+  axes: AxisStepResponse[];
+}
+
+export interface AxisStepResponse {
+  axis: string;
+  step_count: number;
+  median_overshoot_pct: number;
+  median_rise_time_ms: number;
+  median_settling_time_ms: number;
+  rating: string;
+  suggestion: string;
 }
 
 export interface FlightSummary {
