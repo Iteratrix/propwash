@@ -487,6 +487,86 @@ footer a {
   font-style: italic;
 }
 
+/* PID Tuning */
+.pid-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.pid-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  border-left: 4px solid var(--border);
+}
+
+.pid-card.pid-rating-tight { border-left-color: #4ec88c; }
+.pid-card.pid-rating-good { border-left-color: #5b8def; }
+.pid-card.pid-rating-sluggish { border-left-color: #e8b84a; }
+.pid-card.pid-rating-oscillating { border-left-color: #e85454; }
+.pid-card.pid-rating-nodata { border-left-color: var(--text-dim); }
+
+.pid-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.pid-axis-name {
+  font-weight: 600;
+  text-transform: capitalize;
+  font-size: 1rem;
+}
+
+.pid-rating {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.05);
+}
+
+.pid-rating-tight .pid-rating { color: #4ec88c; }
+.pid-rating-good .pid-rating { color: #5b8def; }
+.pid-rating-sluggish .pid-rating { color: #e8b84a; }
+.pid-rating-oscillating .pid-rating { color: #e85454; }
+
+.pid-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.pid-metric {
+  text-align: center;
+}
+
+.pid-metric-value {
+  display: block;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pid-metric-label {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.pid-suggestion {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin: 0;
+  line-height: 1.4;
+}
+
 /* Buttons */
 .reset-btn {
   padding: 0.5rem 1rem;
@@ -606,6 +686,7 @@ footer a {
 
 /* Responsive — tablet */
 @media (max-width: 768px) {
+  .pid-cards { grid-template-columns: 1fr; }
   .summary-grid { grid-template-columns: repeat(2, 1fr); }
   .summary-card .value { font-size: 1.1rem; }
 

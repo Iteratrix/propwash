@@ -59,6 +59,48 @@ const FIELD_GROUPS = {
   },
 };
 
+const PID_OVERLAY_GROUPS: Record<string, { label: string; fields: string[]; names: string[]; colors: string[] }> = {
+  roll: {
+    label: "Roll — Setpoint vs Gyro (deg/s)",
+    fields: ["setpoint[roll]", "gyro[roll]"],
+    names:  ["Setpoint", "Gyro"],
+    colors: ["#8888a0", "#5b8def"],
+  },
+  pitch: {
+    label: "Pitch — Setpoint vs Gyro (deg/s)",
+    fields: ["setpoint[pitch]", "gyro[pitch]"],
+    names:  ["Setpoint", "Gyro"],
+    colors: ["#8888a0", "#4ec88c"],
+  },
+  yaw: {
+    label: "Yaw — Setpoint vs Gyro (deg/s)",
+    fields: ["setpoint[yaw]", "gyro[yaw]"],
+    names:  ["Setpoint", "Gyro"],
+    colors: ["#8888a0", "#e8b84a"],
+  },
+};
+
+const PID_BREAKDOWN_GROUPS: Record<string, { label: string; fields: string[]; names: string[]; colors: string[] }> = {
+  roll: {
+    label: "Roll — P / I / D",
+    fields: ["pid_p[roll]", "pid_i[roll]", "pid_d[roll]"],
+    names:  ["P", "I", "D"],
+    colors: ["#5b8def", "#e8b84a", "#e85454"],
+  },
+  pitch: {
+    label: "Pitch — P / I / D",
+    fields: ["pid_p[pitch]", "pid_i[pitch]", "pid_d[pitch]"],
+    names:  ["P", "I", "D"],
+    colors: ["#4ec88c", "#e8b84a", "#e85454"],
+  },
+  yaw: {
+    label: "Yaw — P / I / D",
+    fields: ["pid_p[yaw]", "pid_i[yaw]", "pid_d[yaw]"],
+    names:  ["P", "I", "D"],
+    colors: ["#e8b84a", "#e8944a", "#e85454"],
+  },
+};
+
 const TS_MAX_POINTS = 4000;
 let tsPlots: any[] = [];
 let tsSync: any = null;
@@ -98,6 +140,8 @@ function reset() {
   result = null;
   compareResult = null;
   disposeEcharts();
+  pidOverlayPlots = [];
+  pidBreakdownPlots = [];
   renderedViews.clear();
   $("#results").classList.add("hidden");
   $("#compare-drop").classList.add("hidden");
@@ -387,6 +431,12 @@ function renderViewIfNeeded(view: string): void {
       renderDiagnostics(s.analysis.diagnostics);
       renderEvents(s.analysis.events);
       break;
+    case "pid-tuning":
+      renderPidStepCards(s);
+      renderPidOverlayCharts(activeSessionIdx);
+      renderPidBreakdown(activeSessionIdx, $(".ts-tab.active[data-pid-axis]")?.dataset.pidAxis || "roll");
+      setupPidAxisTabs();
+      break;
     case "timeline":
       renderTimeseries(activeSessionIdx, $(".ts-tab.active")?.dataset.group || "gyro");
       break;
@@ -568,6 +618,240 @@ function eventMarkersPlugin(events: FlightEvent[]): any {
       ],
     },
   };
+}
+
+// ── PID Tuning View ─────────────────────────────────────────────────
+
+function renderPidStepCards(session: SessionResult): void {
+  const container = $("#pid-step-cards");
+  const pid = session.analysis.pid;
+
+  if (!pid || !pid.axes || pid.axes.length === 0) {
+    container.innerHTML = '<p class="hint">No PID data available in this log.</p>';
+    return;
+  }
+
+  const ratingClass = (r: string) => {
+    switch (r) {
+      case "tight": return "pid-rating-tight";
+      case "good": return "pid-rating-good";
+      case "sluggish": return "pid-rating-sluggish";
+      case "oscillating": return "pid-rating-oscillating";
+      default: return "pid-rating-nodata";
+    }
+  };
+
+  container.innerHTML = pid.axes.map(a => `
+    <div class="pid-card ${ratingClass(a.rating)}">
+      <div class="pid-card-header">
+        <span class="pid-axis-name">${a.axis}</span>
+        <span class="pid-rating">${a.rating}</span>
+      </div>
+      <div class="pid-metrics">
+        <div class="pid-metric">
+          <span class="pid-metric-value">${a.step_count > 0 ? a.median_overshoot_pct.toFixed(1) + "%" : "—"}</span>
+          <span class="pid-metric-label">Overshoot</span>
+        </div>
+        <div class="pid-metric">
+          <span class="pid-metric-value">${a.step_count > 0 ? a.median_rise_time_ms.toFixed(1) + "ms" : "—"}</span>
+          <span class="pid-metric-label">Rise time</span>
+        </div>
+        <div class="pid-metric">
+          <span class="pid-metric-value">${a.step_count > 0 ? a.median_settling_time_ms.toFixed(0) + "ms" : "—"}</span>
+          <span class="pid-metric-label">Settling</span>
+        </div>
+        <div class="pid-metric">
+          <span class="pid-metric-value">${a.step_count}</span>
+          <span class="pid-metric-label">Steps</span>
+        </div>
+      </div>
+      <p class="pid-suggestion">${a.suggestion}</p>
+    </div>
+  `).join("");
+}
+
+function renderPidOverlayCharts(sessionIdx: number): void {
+  const container = $("#pid-overlay-charts");
+  container.innerHTML = "";
+
+  const events = result!.sessions[sessionIdx]?.analysis?.events || [];
+  const width = chartWidth();
+  const syncKey = "pid-overlay-sync";
+  const sync = uPlot.sync(syncKey);
+
+  for (const axis of ["roll", "pitch", "yaw"]) {
+    const g = PID_OVERLAY_GROUPS[axis];
+    const allFields = g.fields.join(",");
+    const json = get_timeseries(sessionIdx, TS_MAX_POINTS, allFields);
+    const ts: TimeseriesResponse = JSON.parse(json);
+    if (ts.error || !ts.time_s || ts.time_s.length === 0) continue;
+
+    const datasets: number[][] = [ts.time_s];
+    const series: any[] = [{}];
+    let hasData = false;
+
+    for (let i = 0; i < g.fields.length; i++) {
+      const vals = ts.fields[g.fields[i]];
+      if (vals && vals.length > 0) {
+        datasets.push(vals);
+        series.push({
+          label: g.names[i],
+          stroke: g.colors[i],
+          width: i === 0 ? 1 : 1.5,
+          dash: i === 0 ? [4, 4] : undefined,
+        });
+        hasData = true;
+      }
+    }
+
+    if (!hasData) continue;
+
+    const opts = {
+      width,
+      height: 200,
+      cursor: { lock: true, sync: { key: syncKey, setSeries: true } },
+      scales: { x: { time: false } },
+      axes: [
+        {
+          label: "Time (s)",
+          stroke: "#8888a0",
+          grid: { stroke: "rgba(42,45,58,0.6)" },
+          ticks: { stroke: "rgba(42,45,58,0.6)" },
+          font: "11px JetBrains Mono, monospace",
+          labelFont: "11px JetBrains Mono, monospace",
+        },
+        {
+          label: g.label,
+          stroke: "#8888a0",
+          grid: { stroke: "rgba(42,45,58,0.6)" },
+          ticks: { stroke: "rgba(42,45,58,0.6)" },
+          font: "11px JetBrains Mono, monospace",
+          labelFont: "11px JetBrains Mono, monospace",
+        },
+      ],
+      series,
+      plugins: [eventMarkersPlugin(events.filter(e => e.kind.type === "Overshoot" && (e.kind as any).axis === axis))],
+      select: { show: true },
+      hooks: {
+        setSelect: [
+          (u: any) => {
+            const min = u.posToVal(u.select.left, "x");
+            const max = u.posToVal(u.select.left + u.select.width, "x");
+            if (max - min > 0.01) {
+              pidOverlayPlots.forEach(p => p.setScale("x", { min, max }));
+            }
+          },
+        ],
+      },
+    };
+
+    const row = document.createElement("div");
+    row.className = "ts-chart-row";
+    container.appendChild(row);
+    pidOverlayPlots.push(new uPlot(opts, datasets, row));
+  }
+
+  if (container.children.length === 0) {
+    container.innerHTML = '<p class="hint">No setpoint/gyro data available.</p>';
+  }
+}
+
+let pidOverlayPlots: any[] = [];
+let pidBreakdownPlots: any[] = [];
+
+function renderPidBreakdown(sessionIdx: number, axis: string): void {
+  const container = $("#pid-breakdown-charts");
+  container.innerHTML = "";
+  pidBreakdownPlots = [];
+
+  const g = PID_BREAKDOWN_GROUPS[axis];
+  if (!g) return;
+
+  const allFields = g.fields.join(",");
+  const json = get_timeseries(sessionIdx, TS_MAX_POINTS, allFields);
+  const ts: TimeseriesResponse = JSON.parse(json);
+  if (ts.error || !ts.time_s || ts.time_s.length === 0) {
+    container.innerHTML = '<p class="hint">No PID term data available.</p>';
+    return;
+  }
+
+  const width = chartWidth();
+
+  const datasets: number[][] = [ts.time_s];
+  const series: any[] = [{}];
+  let hasData = false;
+
+  for (let i = 0; i < g.fields.length; i++) {
+    const vals = ts.fields[g.fields[i]];
+    if (vals && vals.length > 0) {
+      datasets.push(vals);
+      series.push({
+        label: g.names[i],
+        stroke: g.colors[i],
+        width: 1,
+      });
+      hasData = true;
+    }
+  }
+
+  if (!hasData) {
+    container.innerHTML = '<p class="hint">No PID term data available for this axis.</p>';
+    return;
+  }
+
+  const opts = {
+    width,
+    height: 300,
+    cursor: { lock: true },
+    scales: { x: { time: false } },
+    axes: [
+      {
+        label: "Time (s)",
+        stroke: "#8888a0",
+        grid: { stroke: "rgba(42,45,58,0.6)" },
+        ticks: { stroke: "rgba(42,45,58,0.6)" },
+        font: "11px JetBrains Mono, monospace",
+        labelFont: "11px JetBrains Mono, monospace",
+      },
+      {
+        label: g.label,
+        stroke: "#8888a0",
+        grid: { stroke: "rgba(42,45,58,0.6)" },
+        ticks: { stroke: "rgba(42,45,58,0.6)" },
+        font: "11px JetBrains Mono, monospace",
+        labelFont: "11px JetBrains Mono, monospace",
+      },
+    ],
+    series,
+    select: { show: true },
+    hooks: {
+      setSelect: [
+        (u: any) => {
+          const min = u.posToVal(u.select.left, "x");
+          const max = u.posToVal(u.select.left + u.select.width, "x");
+          if (max - min > 0.01) {
+            pidBreakdownPlots.forEach(p => p.setScale("x", { min, max }));
+          }
+        },
+      ],
+    },
+  };
+
+  const row = document.createElement("div");
+  row.className = "ts-chart-row";
+  container.appendChild(row);
+  pidBreakdownPlots.push(new uPlot(opts, datasets, row));
+}
+
+function setupPidAxisTabs(): void {
+  const tabs = $$("#pid-axis-tabs .ts-tab");
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      tabs.forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      renderPidBreakdown(activeSessionIdx, tab.dataset.pidAxis!);
+    });
+  });
 }
 
 
@@ -1380,6 +1664,10 @@ window.addEventListener("resize", () => {
       if (view === "timeline") {
         renderedViews.delete(`timeline-${activeSessionIdx}`);
         renderViewIfNeeded("timeline");
+      }
+      if (view === "pid-tuning") {
+        renderedViews.delete(`pid-tuning-${activeSessionIdx}`);
+        renderViewIfNeeded("pid-tuning");
       }
     }
   }, 250);

@@ -39,6 +39,7 @@
 
       <nav class="view-tabs" id="view-tabs">
         <button class="view-tab active" data-view="overview">Overview</button>
+        <button class="view-tab" data-view="pid-tuning">PID Tuning</button>
         <button class="view-tab" data-view="timeline">Timeline</button>
         <button class="view-tab" data-view="spectrum">Spectrum</button>
         <button class="view-tab" data-view="raw">Raw Data</button>
@@ -59,6 +60,31 @@
         <section id="events-panel" class="panel">
           <h2>Events</h2>
           <div id="events-list"></div>
+        </section>
+      </div>
+
+      <!-- PID Tuning tab -->
+      <div class="view-content" data-view="pid-tuning">
+        <section id="pid-step-response" class="panel">
+          <h2>Step Response</h2>
+          <div id="pid-step-cards" class="pid-cards"></div>
+        </section>
+
+        <section id="pid-setpoint-gyro" class="panel">
+          <h2>Setpoint vs Gyro</h2>
+          <div id="pid-overlay-charts"></div>
+        </section>
+
+        <section id="pid-breakdown" class="panel">
+          <h2>PID Term Breakdown</h2>
+          <div class="ts-controls">
+            <div class="ts-tabs" id="pid-axis-tabs">
+              <button class="ts-tab active" data-pid-axis="roll">Roll</button>
+              <button class="ts-tab" data-pid-axis="pitch">Pitch</button>
+              <button class="ts-tab" data-pid-axis="yaw">Yaw</button>
+            </div>
+          </div>
+          <div id="pid-breakdown-charts"></div>
         </section>
       </div>
 
