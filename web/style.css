@@ -565,6 +565,42 @@ footer a {
 
 .raw-table tr:hover td { background: rgba(91, 141, 239, 0.05); }
 
+/* Tuning suggestions */
+.tuning-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.tuning-table th {
+  text-align: left;
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tuning-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid rgba(42, 45, 58, 0.5);
+}
+
+.tuning-table .gain-cell {
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+.tuning-table .gain-arrow {
+  color: var(--text-dim);
+  margin: 0 0.15rem;
+}
+
+.tuning-table strong {
+  color: var(--green);
+}
+
 /* Comparison */
 .compare-table {
   width: 100%;
@@ -591,6 +627,32 @@ footer a {
 .delta.better { color: var(--green); }
 .delta.worse { color: var(--red); }
 .delta.neutral { color: var(--text-dim); }
+
+.compare-pickers {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.compare-pickers label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex: 1;
+  min-width: 200px;
+}
+
+.compare-vs {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  padding-top: 1.2rem;
+}
 
 .diag-diff-section { margin-bottom: 1rem; }
 

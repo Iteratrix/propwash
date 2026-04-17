@@ -8,7 +8,7 @@ use crate::format::mavlink::types::MavlinkSession;
 use crate::format::px4::types::Px4Session;
 
 /// Rotational axis: roll, pitch, or yaw.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum Axis {
     Roll,
     Pitch,
@@ -18,6 +18,14 @@ pub enum Axis {
 impl Axis {
     /// All three axes in standard order.
     pub const ALL: [Self; 3] = [Self::Roll, Self::Pitch, Self::Yaw];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Roll => "roll",
+            Self::Pitch => "pitch",
+            Self::Yaw => "yaw",
+        }
+    }
 
     /// Index used in indexed field names (e.g., `gyroADC[0]` = Roll).
     pub fn index(self) -> usize {
@@ -139,6 +147,7 @@ pub enum SensorField {
     PidP(Axis),
     PidI(Axis),
     PidD(Axis),
+    Feedforward(Axis),
     ERpm(MotorIndex),
     GyroUnfilt(Axis),
     Vbat,
@@ -178,7 +187,11 @@ impl SensorField {
             Self::Altitude => Unit::Meters,
             Self::GpsSpeed => Unit::MetersPerSecond,
             Self::GpsLat | Self::GpsLng | Self::Heading => Unit::Degrees,
-            Self::PidP(_) | Self::PidI(_) | Self::PidD(_) | Self::Unknown(_) => Unit::Dimensionless,
+            Self::PidP(_)
+            | Self::PidI(_)
+            | Self::PidD(_)
+            | Self::Feedforward(_)
+            | Self::Unknown(_) => Unit::Dimensionless,
         }
     }
 
@@ -224,6 +237,9 @@ impl SensorField {
             _ if name.starts_with("pid_d[") => parse_axis_by_name(name)
                 .map(Self::PidD)
                 .ok_or_else(|| format!("invalid axis in {name}")),
+            _ if name.starts_with("feedforward[") => parse_axis_by_name(name)
+                .map(Self::Feedforward)
+                .ok_or_else(|| format!("invalid axis in {name}")),
             _ if name.starts_with("erpm[") => parse_index(name)
                 .map(|i| Self::ERpm(MotorIndex(i)))
                 .ok_or_else(|| format!("invalid index in {name}")),
@@ -244,6 +260,7 @@ impl fmt::Display for SensorField {
             Self::PidP(a) => write!(f, "pid_p[{a}]"),
             Self::PidI(a) => write!(f, "pid_i[{a}]"),
             Self::PidD(a) => write!(f, "pid_d[{a}]"),
+            Self::Feedforward(a) => write!(f, "feedforward[{a}]"),
             Self::ERpm(m) => write!(f, "erpm[{m}]"),
             Self::GyroUnfilt(a) => write!(f, "gyro_unfilt[{a}]"),
             Self::Vbat => write!(f, "vbat"),
@@ -357,6 +374,40 @@ impl From<std::io::Error> for ParseError {
     }
 }
 
+/// PID gains for a single axis.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+pub struct AxisGains {
+    pub p: Option<u32>,
+    pub i: Option<u32>,
+    pub d: Option<u32>,
+}
+
+/// PID gains extracted from flight controller configuration.
+///
+/// Values are firmware-native units (e.g., Betaflight uses integer gains,
+/// ArduPilot/PX4 use floats scaled to milli-units).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PidGains {
+    axes: [AxisGains; 3],
+}
+
+impl PidGains {
+    pub fn new(roll: AxisGains, pitch: AxisGains, yaw: AxisGains) -> Self {
+        Self {
+            axes: [roll, pitch, yaw],
+        }
+    }
+
+    pub fn get(&self, axis: Axis) -> &AxisGains {
+        &self.axes[axis.index()]
+    }
+
+    /// Returns true if any gains are available.
+    pub fn has_data(&self) -> bool {
+        self.axes.iter().any(|a| a.p.is_some())
+    }
+}
+
 /// Filter configuration extracted from flight controller parameters.
 #[derive(Debug, Clone, Serialize)]
 #[allow(clippy::struct_field_names)]
@@ -434,6 +485,9 @@ impl Session {
 
     pub fn filter_config(&self) -> FilterConfig {
         dispatch!(self, filter_config)
+    }
+    pub fn pid_gains(&self) -> PidGains {
+        dispatch!(self, pid_gains)
     }
     pub fn is_truncated(&self) -> bool {
         dispatch!(self, is_truncated)

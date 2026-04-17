@@ -494,6 +494,26 @@ impl BfSession {
     }
 
     /// Returns the filter configuration extracted from headers.
+    #[allow(clippy::cast_sign_loss)]
+    pub fn pid_gains(&self) -> crate::types::PidGains {
+        let parse = |key: &str| -> crate::types::AxisGains {
+            let vals = self.get_header_int_list(key);
+            let to_u32 = |v: i32| -> Option<u32> {
+                if v > 0 {
+                    Some(v as u32)
+                } else {
+                    None
+                }
+            };
+            crate::types::AxisGains {
+                p: vals.first().copied().and_then(to_u32),
+                i: vals.get(1).copied().and_then(to_u32),
+                d: vals.get(2).copied().and_then(to_u32),
+            }
+        };
+        crate::types::PidGains::new(parse("rollPID"), parse("pitchPID"), parse("yawPID"))
+    }
+
     pub fn filter_config(&self) -> FilterConfig {
         let non_zero = |v: i32| -> Option<f64> {
             if v > 0 {

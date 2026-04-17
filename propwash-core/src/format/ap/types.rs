@@ -398,6 +398,7 @@ impl ApSession {
                 self.msg_column(msg_name, "D")
                     .map_or_else(Vec::new, <[f64]>::to_vec)
             }
+            SensorField::Feedforward(_) => Vec::new(),
             SensorField::Unknown(name) => {
                 if let Some((msg, fld)) = name.split_once('.') {
                     self.msg_column(msg, fld)
@@ -447,6 +448,29 @@ impl ApSession {
 
     pub fn corrupt_bytes(&self) -> usize {
         self.stats.corrupt_bytes
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn pid_gains(&self) -> crate::types::PidGains {
+        let parse = |p_key: &str, i_key: &str, d_key: &str| -> crate::types::AxisGains {
+            let get = |k: &str| -> Option<u32> {
+                self.params
+                    .get(k)
+                    .copied()
+                    .filter(|&v| v > 0.0)
+                    .map(|v| (v * 1000.0) as u32)
+            };
+            crate::types::AxisGains {
+                p: get(p_key),
+                i: get(i_key),
+                d: get(d_key),
+            }
+        };
+        crate::types::PidGains::new(
+            parse("ATC_RAT_RLL_P", "ATC_RAT_RLL_I", "ATC_RAT_RLL_D"),
+            parse("ATC_RAT_PIT_P", "ATC_RAT_PIT_I", "ATC_RAT_PIT_D"),
+            parse("ATC_RAT_YAW_P", "ATC_RAT_YAW_I", "ATC_RAT_YAW_D"),
+        )
     }
 
     pub fn filter_config(&self) -> FilterConfig {

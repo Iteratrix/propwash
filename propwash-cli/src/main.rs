@@ -476,6 +476,7 @@ fn cmd_analyze(path: &str, output: &str) {
                     vibration: Option<&'a propwash_core::analysis::fft::VibrationAnalysis>,
                     step_response:
                         Option<&'a propwash_core::analysis::step_response::StepResponseAnalysis>,
+                    pid: Option<&'a propwash_core::analysis::pid::PidAnalysis>,
                     diagnostics: &'a [propwash_core::analysis::diagnostics::Diagnostic],
                 }
                 let out = JsonOutput {
@@ -483,6 +484,7 @@ fn cmd_analyze(path: &str, output: &str) {
                     episodes: &episodes,
                     vibration: analysis.vibration.as_ref(),
                     step_response: analysis.step_response.as_ref(),
+                    pid: analysis.pid.as_ref(),
                     diagnostics: &analysis.diagnostics,
                 };
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
@@ -709,7 +711,8 @@ fn cmd_dump(
 
         let field_names = session.field_names();
 
-        let selected_fields: Vec<&str> = field_names
+        // Pair field names with their parsed SensorField, dropping unparseable ones
+        let resolved: Vec<(&str, SensorField)> = field_names
             .iter()
             .filter(|name| {
                 if field_prefixes.is_empty() {
@@ -717,14 +720,13 @@ fn cmd_dump(
                 }
                 field_prefixes.iter().any(|prefix| name.starts_with(prefix))
             })
-            .map(String::as_str)
+            .filter_map(|name| SensorField::parse(name).ok().map(|f| (name.as_str(), f)))
             .collect();
 
-        // Fetch all selected field data as columns
-        let columns: Vec<Vec<f64>> = selected_fields
+        let selected_fields: Vec<&str> = resolved.iter().map(|(name, _)| *name).collect();
+        let columns: Vec<Vec<f64>> = resolved
             .iter()
-            .filter_map(|name| SensorField::parse(name).ok())
-            .map(|field| session.field(&field))
+            .map(|(_, field)| session.field(field))
             .collect();
 
         let n_frames = session.frame_count();

@@ -40,6 +40,8 @@ fixture_test!(fc_crashing, "fc-blackbox/crashing-LOG00002.BFL");
 fixture_test!(fc_log00002, "fc-blackbox/LOG00002.BFL");
 fixture_test!(fc_log00004, "fc-blackbox/LOG00004.TXT");
 fixture_test!(fc_log00007, "fc-blackbox/LOG00007.BFL");
+fixture_test!(fc_btfl_027, "fc-blackbox/btfl_027.bbl");
+fixture_test!(fc_btfl_035, "fc-blackbox/btfl_035.bbl");
 
 // Gimbal-ghost
 fixture_test!(gg_btfl_001, "gimbal-ghost/btfl_001.bbl");
@@ -1885,4 +1887,146 @@ fn unit_contract_gyro_is_degrees_per_second() {
             "{fixture}: gyro max {max_abs:.0} deg/s seems too high — wrong units?"
         );
     }
+}
+
+// ── PID analysis golden tests ─────────────────────────────────────
+// These fixtures are from real FPV freestyle flights (BF 2025.12.2, 1kHz).
+// They exercise windowed step detection needed for modern RC-smoothed setpoints.
+
+use propwash_core::analysis;
+use propwash_core::analysis::pid::TuningRating;
+
+#[test]
+fn pid_step_response_overshooting_flight() {
+    // btfl_035: aggressive flying, all axes overshooting 40-47%
+    let log = parse_fixture("fc-blackbox/btfl_035.bbl");
+    let session = &log.sessions[0];
+    let a = analysis::analyze(session);
+
+    let sr = a.step_response.expect("should detect step response");
+    assert!(sr.axes.len() >= 2, "should detect steps on at least 2 axes");
+
+    // Roll: ~13 steps, ~41% overshoot
+    let roll = sr.axes.iter().find(|a| a.axis == "roll").expect("roll");
+    assert!(
+        roll.step_count >= 5,
+        "roll should have ≥5 steps, got {}",
+        roll.step_count
+    );
+    assert!(
+        roll.overshoot_percent > 20.0,
+        "roll overshoot should be >20%, got {:.0}%",
+        roll.overshoot_percent
+    );
+
+    // Pitch: ~15 steps, ~47% overshoot
+    let pitch = sr.axes.iter().find(|a| a.axis == "pitch").expect("pitch");
+    assert!(pitch.step_count >= 3, "pitch should have ≥3 steps");
+    assert!(
+        pitch.overshoot_percent > 20.0,
+        "pitch overshoot should be >20%"
+    );
+}
+
+#[test]
+fn pid_tuning_suggests_lower_p_for_overshooting() {
+    let log = parse_fixture("fc-blackbox/btfl_035.bbl");
+    let session = &log.sessions[0];
+    let a = analysis::analyze(session);
+
+    let pid = a.pid.expect("should have PID analysis");
+    assert!(!pid.tuning.is_empty(), "should have tuning suggestions");
+
+    for t in &pid.tuning {
+        assert_eq!(
+            t.rating,
+            TuningRating::Overshooting,
+            "{:?} axis should be Overshooting, got {:?}",
+            t.axis,
+            t.rating
+        );
+
+        // Suggested P should be lower than current P
+        if let (Some(cur_p), Some(sug_p)) = (t.current.p, t.suggested.p) {
+            assert!(
+                sug_p < cur_p,
+                "{:?} suggested P ({sug_p}) should be less than current ({cur_p})",
+                t.axis
+            );
+        }
+    }
+}
+
+#[test]
+fn pid_gains_extracted_from_bf_headers() {
+    let log = parse_fixture("fc-blackbox/btfl_035.bbl");
+    let session = &log.sessions[0];
+    let gains = session.pid_gains();
+
+    assert!(gains.has_data(), "should extract PID gains from BF headers");
+    let roll = gains.get(Axis::Roll);
+    assert_eq!(roll.p, Some(45));
+    assert_eq!(roll.i, Some(80));
+    assert_eq!(roll.d, Some(30));
+
+    let pitch = gains.get(Axis::Pitch);
+    assert_eq!(pitch.p, Some(47));
+    assert_eq!(pitch.i, Some(84));
+    assert_eq!(pitch.d, Some(34));
+}
+
+#[test]
+fn pid_good_tuning_flight() {
+    // btfl_027: moderate flying, roll/pitch rated "good"
+    let log = parse_fixture("fc-blackbox/btfl_027.bbl");
+    let session = &log.sessions[0];
+    let a = analysis::analyze(session);
+
+    let sr = a.step_response.expect("should detect step response");
+    let roll = sr.axes.iter().find(|a| a.axis == "roll").expect("roll");
+    assert!(roll.step_count >= 5, "should have enough roll steps");
+    assert!(
+        roll.overshoot_percent < 25.0,
+        "roll overshoot should be <25% for 'good', got {:.0}%",
+        roll.overshoot_percent
+    );
+
+    let pid = a.pid.expect("should have PID analysis");
+    let roll_tuning = pid.tuning.iter().find(|t| t.axis == Axis::Roll);
+    if let Some(t) = roll_tuning {
+        assert_eq!(t.rating, TuningRating::Good, "roll should be rated Good");
+    }
+}
+
+#[test]
+fn pid_windup_detected_on_real_flight() {
+    let log = parse_fixture("fc-blackbox/btfl_035.bbl");
+    let session = &log.sessions[0];
+    let a = analysis::analyze(session);
+
+    let pid = a.pid.expect("should have PID analysis");
+    assert!(!pid.windup.is_empty(), "should detect I-term windup");
+
+    // Yaw typically has highest I-dominance
+    let yaw = pid.windup.iter().find(|w| w.axis == Axis::Yaw);
+    if let Some(w) = yaw {
+        assert!(
+            w.i_dominant_fraction > 0.3,
+            "yaw I-dominant fraction should be >30%, got {:.0}%",
+            w.i_dominant_fraction * 100.0
+        );
+    }
+}
+
+#[test]
+fn pid_feedforward_field_present() {
+    let log = parse_fixture("fc-blackbox/btfl_035.bbl");
+    let session = &log.sessions[0];
+    let ff = session.field(&SensorField::Feedforward(Axis::Roll));
+    assert!(!ff.is_empty(), "feedforward[roll] should have data");
+    assert_eq!(
+        ff.len(),
+        session.frame_count(),
+        "feedforward should have one value per frame"
+    );
 }

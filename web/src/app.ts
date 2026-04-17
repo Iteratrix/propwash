@@ -1,5 +1,5 @@
 import init, { add_file, clear_workspace, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames, get_trend } from "../pkg/propwash_web.js";
-import type { WorkspaceFile, SessionRef, SessionResult, TrendPoint, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, TimeseriesResponse, SpectrogramResponse, RawFramesResponse, EventKind } from "./types.js";
+import type { WorkspaceFile, SessionRef, SessionResult, TrendPoint, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, PidAnalysis } from "./types.js";
 import { formatEventType, formatEventDetails, eventColor, heatColor, bucketDiagnostics, classifyDelta } from "./format.js";
 
 declare const echarts: any;
@@ -70,23 +70,30 @@ const FIELD_GROUPS = {
     names:  ["Battery (V)", "Throttle"],
     colors: ["#e85454", "#e8944a"],
   },
+  pidError: {
+    label: "PID Error — Setpoint minus Gyro (deg/s)",
+    fields: ["setpoint[roll]", "gyro[roll]", "setpoint[pitch]", "gyro[pitch]", "setpoint[yaw]", "gyro[yaw]"],
+    names:  ["Roll", "Pitch", "Yaw"],
+    colors: ["#5b8def", "#4ec88c", "#e8b84a"],
+    computed: "error",
+  },
   pids: {
     label: "PIDs (Roll)",
-    fields: ["pid_p[roll]", "pid_i[roll]", "pid_d[roll]"],
-    names:  ["P", "I", "D"],
-    colors: ["#5b8def", "#4ec88c", "#e85454"],
+    fields: ["pid_p[roll]", "pid_i[roll]", "pid_d[roll]", "feedforward[roll]"],
+    names:  ["P", "I", "D", "FF"],
+    colors: ["#5b8def", "#4ec88c", "#e85454", "#9b59b6"],
   },
   pidsPitch: {
     label: "PIDs (Pitch)",
-    fields: ["pid_p[pitch]", "pid_i[pitch]", "pid_d[pitch]"],
-    names:  ["P", "I", "D"],
-    colors: ["#5b8def", "#4ec88c", "#e85454"],
+    fields: ["pid_p[pitch]", "pid_i[pitch]", "pid_d[pitch]", "feedforward[pitch]"],
+    names:  ["P", "I", "D", "FF"],
+    colors: ["#5b8def", "#4ec88c", "#e85454", "#9b59b6"],
   },
   pidsYaw: {
     label: "PIDs (Yaw)",
-    fields: ["pid_p[yaw]", "pid_i[yaw]", "pid_d[yaw]"],
-    names:  ["P", "I", "D"],
-    colors: ["#5b8def", "#4ec88c", "#e85454"],
+    fields: ["pid_p[yaw]", "pid_i[yaw]", "pid_d[yaw]", "feedforward[yaw]"],
+    names:  ["P", "I", "D", "FF"],
+    colors: ["#5b8def", "#4ec88c", "#e85454", "#9b59b6"],
   },
   erpm: {
     label: "Motor RPM",
@@ -176,6 +183,69 @@ function reset() {
 }
 
 
+function populateComparePickers(): void {
+  const selectA = $("#compare-a") as HTMLSelectElement;
+  const selectB = $("#compare-b") as HTMLSelectElement;
+  const prevA = selectA.value;
+  const prevB = selectB.value;
+
+  for (const sel of [selectA, selectB]) {
+    sel.innerHTML = "";
+    for (const file of workspace) {
+      const name = file.filename || `File ${file.file_id}`;
+      const group = document.createElement("optgroup");
+      group.label = name;
+      for (let i = 0; i < file.sessions.length; i++) {
+        const s = file.sessions[i];
+        const opt = document.createElement("option");
+        opt.value = `${file.file_id}:${i}`;
+        opt.textContent = file.sessions.length === 1
+          ? `${name} (${s.duration_seconds.toFixed(1)}s)`
+          : `Session ${s.index} (${s.duration_seconds.toFixed(1)}s)`;
+        group.appendChild(opt);
+      }
+      sel.appendChild(group);
+    }
+  }
+
+  // Restore previous selections or default A=first, B=second
+  const allOpts = Array.from(selectA.options);
+  if (prevA && allOpts.some(o => o.value === prevA)) {
+    selectA.value = prevA;
+  }
+  if (prevB && allOpts.some(o => o.value === prevB)) {
+    selectB.value = prevB;
+  } else if (allOpts.length >= 2) {
+    selectB.selectedIndex = 1;
+  }
+
+  selectA.onchange = renderCompare;
+  selectB.onchange = renderCompare;
+}
+
+function lookupSession(val: string): SessionResult | null {
+  const [fileId, sessionIdx] = val.split(":").map(Number);
+  const file = workspace.find(f => f.file_id === fileId);
+  return file?.sessions[sessionIdx] ?? null;
+}
+
+function renderCompare(): void {
+  const a = lookupSession(($("#compare-a") as HTMLSelectElement).value);
+  const b = lookupSession(($("#compare-b") as HTMLSelectElement).value);
+
+  if (!a || !b) {
+    $("#compare-summary-table").innerHTML = '<p class="hint">Select two sessions to compare.</p>';
+    $("#compare-diag-content").innerHTML = "";
+    $("#compare-spectrum-plots").innerHTML = "";
+    return;
+  }
+
+  renderComparisonSummary(a, b);
+  renderComparisonTuning(a, b);
+  renderComparisonDiagnostics(a, b);
+  renderComparisonSpectra(a, b);
+}
+
 function renderComparisonSummary(a: SessionResult, b: SessionResult): void {
   const rows = [
     ["Firmware", a.firmware, b.firmware],
@@ -185,7 +255,7 @@ function renderComparisonSummary(a: SessionResult, b: SessionResult): void {
     ["Frames", a.frame_count.toLocaleString(), b.frame_count.toLocaleString()],
   ];
 
-  const eventRows = [
+  const eventRows: [string, number, number, "lower" | "higher"][] = [
     ["Events", a.analysis.summary.total_events, b.analysis.summary.total_events, "lower"],
     ["Desyncs", a.analysis.summary.desyncs, b.analysis.summary.desyncs, "lower"],
     ["Gyro Spikes", a.analysis.summary.gyro_spikes, b.analysis.summary.gyro_spikes, "lower"],
@@ -194,21 +264,91 @@ function renderComparisonSummary(a: SessionResult, b: SessionResult): void {
   ];
 
   let html = `<table class="compare-table">
-    <thead><tr><th>Metric</th><th>Flight A</th><th>Flight B</th><th>Delta</th></tr></thead><tbody>`;
+    <thead><tr><th>Metric</th><th>Session A</th><th>Session B</th><th>Delta</th></tr></thead><tbody>`;
 
   for (const [label, va, vb] of rows) {
     html += `<tr><td>${label}</td><td>${va}</td><td>${vb}</td><td></td></tr>`;
   }
 
   for (const [label, va, vb, better] of eventRows) {
-    const diff = (vb as number) - (va as number);
-    const cls = classifyDelta(diff, better as "lower" | "higher");
+    const diff = vb - va;
+    const cls = classifyDelta(diff, better);
     const sign = diff > 0 ? "+" : "";
     html += `<tr><td>${label}</td><td>${va}</td><td>${vb}</td><td class="delta ${cls}">${sign}${diff}</td></tr>`;
   }
 
   html += "</tbody></table>";
   $("#compare-summary-table").innerHTML = html;
+}
+
+function renderComparisonTuning(a: SessionResult, b: SessionResult): void {
+  const panel = $("#compare-tuning-panel");
+  const content = $("#compare-tuning-content");
+
+  const pidA = a.analysis.pid;
+  const pidB = b.analysis.pid;
+
+  if ((!pidA || pidA.tuning.length === 0) && (!pidB || pidB.tuning.length === 0)) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  panel.classList.remove("hidden");
+
+  // Collect all axes present in either session
+  const axisSet = new Set<string>();
+  for (const t of pidA?.tuning ?? []) axisSet.add(t.axis);
+  for (const t of pidB?.tuning ?? []) axisSet.add(t.axis);
+
+  const ratingColor: Record<string, string> = {
+    Tight: "var(--green)", Good: "var(--green)",
+    Sluggish: "var(--yellow, #e8b84a)",
+    Overshooting: "var(--red)", Oscillating: "var(--red)",
+  };
+
+  let html = `<table class="compare-table"><thead><tr>
+    <th>Axis</th><th>Rating A</th><th>Rating B</th>
+    <th>Overshoot A</th><th>Overshoot B</th>
+    <th>P</th><th>D</th>
+  </tr></thead><tbody>`;
+
+  for (const axis of axisSet) {
+    const ta = pidA?.tuning.find(t => t.axis === axis);
+    const tb = pidB?.tuning.find(t => t.axis === axis);
+
+    const rA = ta?.rating ?? "\u2014";
+    const rB = tb?.rating ?? "\u2014";
+    const cA = ratingColor[rA] || "var(--text-dim)";
+    const cB = ratingColor[rB] || "var(--text-dim)";
+
+    const osA = ta ? `${ta.overshoot_percent.toFixed(0)}%` : "\u2014";
+    const osB = tb ? `${tb.overshoot_percent.toFixed(0)}%` : "\u2014";
+
+    const pA = ta?.current.p;
+    const pB = tb?.current.p;
+    const dA = ta?.current.d;
+    const dB = tb?.current.d;
+
+    const fmtGainPair = (a: number | null | undefined, b: number | null | undefined) => {
+      if (a == null && b == null) return "\u2014";
+      const sa = a != null ? `${a}` : "\u2014";
+      const sb = b != null ? `${b}` : "\u2014";
+      if (a === b) return sa;
+      return `${sa} / ${sb}`;
+    };
+
+    html += `<tr>
+      <td>${axis}</td>
+      <td style="color:${cA};font-weight:600">${rA}</td>
+      <td style="color:${cB};font-weight:600">${rB}</td>
+      <td>${osA}</td><td>${osB}</td>
+      <td>${fmtGainPair(pA, pB)}</td>
+      <td>${fmtGainPair(dA, dB)}</td>
+    </tr>`;
+  }
+
+  html += "</tbody></table>";
+  content.innerHTML = html;
 }
 
 function renderComparisonDiagnostics(a: SessionResult, b: SessionResult): void {
@@ -260,8 +400,8 @@ function renderComparisonSpectra(a: SessionResult, b: SessionResult): void {
 
   const axes = ["roll", "pitch", "yaw"];
   for (const axisName of axes) {
-    const specA = vibA.spectra.find((s: any) => s.axis === axisName);
-    const specB = vibB.spectra.find((s: any) => s.axis === axisName);
+    const specA = vibA.spectra.find((s: Spectrum) => s.axis === axisName);
+    const specB = vibB.spectra.find((s: Spectrum) => s.axis === axisName);
     if (!specA || !specB) continue;
 
     const row = document.createElement("div");
@@ -293,8 +433,8 @@ function renderComparisonSpectra(a: SessionResult, b: SessionResult): void {
       ],
       series: [
         {},
-        { label: "Flight A", stroke: color, width: 1.5 },
-        { label: "Flight B", stroke: color, width: 1.5, dash: [4, 4] },
+        { label: "Session A", stroke: color, width: 1.5 },
+        { label: "Session B", stroke: color, width: 1.5, dash: [4, 4] },
       ],
     };
 
@@ -423,6 +563,7 @@ function renderViewIfNeeded(view: string): void {
   switch (view) {
     case "overview":
       renderSummary(s);
+      renderTuning(s.analysis.pid);
       renderDiagnostics(s.analysis.diagnostics);
       renderEvents(s.analysis.events);
       break;
@@ -435,6 +576,10 @@ function renderViewIfNeeded(view: string): void {
       renderThrottleBandsEcharts(s.analysis.vibration);
       renderAccel(s.analysis.vibration);
       renderPropwash(s.analysis.vibration);
+      break;
+    case "compare":
+      populateComparePickers();
+      renderCompare();
       break;
     case "trend":
       renderTrend();
@@ -519,16 +664,34 @@ function renderTimeseries(ref: SessionRef, group: string): void {
   const series = [{}];
   let hasData = false;
 
-  for (let i = 0; i < g.fields.length; i++) {
-    const vals = ts.fields[g.fields[i]];
-    if (vals && vals.length > 0) {
-      datasets.push(vals);
-      series.push({
-        label: g.names[i],
-        stroke: g.colors[i],
-        width: 1,
-      });
-      hasData = true;
+  if ("computed" in g && (g as any).computed === "error") {
+    // Compute setpoint - gyro per axis (fields are [sp_r, g_r, sp_p, g_p, sp_y, g_y])
+    for (let i = 0; i < g.fields.length; i += 2) {
+      const sp = ts.fields[g.fields[i]];
+      const gy = ts.fields[g.fields[i + 1]];
+      if (sp && gy && sp.length > 0 && gy.length > 0) {
+        const err = sp.map((v: number, j: number) => v - (gy[j] ?? 0));
+        datasets.push(err);
+        series.push({
+          label: g.names[i / 2],
+          stroke: g.colors[i / 2],
+          width: 1,
+        });
+        hasData = true;
+      }
+    }
+  } else {
+    for (let i = 0; i < g.fields.length; i++) {
+      const vals = ts.fields[g.fields[i]];
+      if (vals && vals.length > 0) {
+        datasets.push(vals);
+        series.push({
+          label: g.names[i],
+          stroke: g.colors[i],
+          width: 1,
+        });
+        hasData = true;
+      }
     }
   }
 
@@ -676,20 +839,76 @@ function renderSummary(session: SessionResult): void {
 
 const echartsInstances: any[] = [];
 
+function renderTuning(pid: PidAnalysis | null): void {
+  const panel = $("#tuning-panel");
+  const content = $("#tuning-content");
+
+  if (!pid || pid.tuning.length === 0) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  panel.classList.remove("hidden");
+
+  const ratingColor: Record<string, string> = {
+    Tight: "var(--green)",
+    Good: "var(--green)",
+    Sluggish: "var(--yellow, #e8b84a)",
+    Overshooting: "var(--red, #e85454)",
+    Oscillating: "var(--red, #e85454)",
+  };
+
+  const ratingLabel: Record<string, string> = {
+    Tight: "Tight",
+    Good: "Good",
+    Sluggish: "Sluggish",
+    Overshooting: "Overshooting",
+    Oscillating: "Oscillating",
+  };
+
+  let html = `<table class="tuning-table">
+    <thead><tr>
+      <th>Axis</th><th>Rating</th>
+      <th>P</th><th>I</th><th>D</th>
+      <th>Overshoot</th><th>Rise</th><th>Steps</th>
+    </tr></thead><tbody>`;
+
+  for (const t of pid.tuning) {
+    const color = ratingColor[t.rating] || "var(--text-dim)";
+    const changed = t.current.p !== t.suggested.p || t.current.d !== t.suggested.d || t.current.i !== t.suggested.i;
+
+    const fmtGain = (cur: number | null, sug: number | null) => {
+      if (cur == null) return "\u2014";
+      if (sug == null || cur === sug) return `${cur}`;
+      return `${cur} <span class="gain-arrow">\u2192</span> <strong>${sug}</strong>`;
+    };
+
+    html += `<tr>
+      <td>${t.axis}</td>
+      <td style="color:${color};font-weight:600">${ratingLabel[t.rating] || t.rating}</td>
+      <td class="gain-cell">${fmtGain(t.current.p, changed ? t.suggested.p : t.current.p)}</td>
+      <td class="gain-cell">${fmtGain(t.current.i, changed ? t.suggested.i : t.current.i)}</td>
+      <td class="gain-cell">${fmtGain(t.current.d, changed ? t.suggested.d : t.current.d)}</td>
+      <td>${t.overshoot_percent.toFixed(0)}%</td>
+      <td>${t.rise_time_ms.toFixed(1)}ms</td>
+      <td>${t.step_count}</td>
+    </tr>`;
+  }
+
+  html += "</tbody></table>";
+
+  if (pid.tuning.some(t => t.rating === "Overshooting" || t.rating === "Oscillating")) {
+    html += `<p class="hint" style="margin-top:0.5rem">Suggested values are conservative estimates based on step response analysis. Test changes one axis at a time.</p>`;
+  }
+
+  content.innerHTML = html;
+}
+
 function disposeEcharts() {
   for (const inst of echartsInstances) {
     inst.dispose();
   }
   echartsInstances.length = 0;
-}
-
-function echartsTheme() {
-  return {
-    backgroundColor: "transparent",
-    textStyle: { fontFamily: "JetBrains Mono, Fira Code, monospace", color: "#8888a0" },
-    axisLine: { lineStyle: { color: "#2a2d3a" } },
-    splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } },
-  };
 }
 
 function renderSpectraEcharts(vibration: VibrationAnalysis | null): void {
@@ -902,201 +1121,6 @@ function renderDiagnostics(diagnostics: Diagnostic[]): void {
     .join("");
 }
 
-function renderSpectra(vibration: VibrationAnalysis | null): void {
-  const container = $("#spectrum-plots");
-  container.innerHTML = "";
-
-  if (!vibration || !vibration.spectra || vibration.spectra.length === 0) {
-    container.innerHTML = '<p class="hint">No spectrum data available.</p>';
-    return;
-  }
-
-  for (const spectrum of vibration.spectra) {
-    const row = document.createElement("div");
-    row.className = "spectrum-row";
-
-    const title = document.createElement("h3");
-    title.textContent = spectrum.axis.charAt(0).toUpperCase() + spectrum.axis.slice(1);
-    row.appendChild(title);
-
-    const plotDiv = document.createElement("div");
-    row.appendChild(plotDiv);
-    container.appendChild(row);
-
-    createSpectrumPlot(plotDiv, spectrum);
-
-    if (spectrum.peaks && spectrum.peaks.length > 0) {
-      const peaks = document.createElement("div");
-      peaks.className = "peaks-list";
-      for (const p of spectrum.peaks) {
-        const badge = document.createElement("span");
-        badge.className = "peak-badge";
-        let inner = `<span class="freq">${p.frequency_hz.toFixed(0)} Hz</span> (${p.magnitude_db.toFixed(1)} dB)`;
-        if (p.classification) {
-          const cls = p.classification === "MotorNoise" ? "Motor" :
-                      p.classification === "FrameResonance" ? "Frame" : "";
-          if (cls) inner += `<span class="class">${cls}</span>`;
-        }
-        badge.innerHTML = inner;
-        peaks.appendChild(badge);
-      }
-      row.appendChild(peaks);
-    }
-  }
-}
-
-function peakMarkersPlugin(peaks: any[], maxFreq: number): any {
-  const filtered = (peaks || [])
-    .filter((p) => p.frequency_hz <= maxFreq)
-    .slice(0, 3);
-  return {
-    hooks: {
-      draw: [
-        (u: any) => {
-          const ctx = u.ctx;
-          const placed: number[] = [];
-          const MIN_GAP = 40;
-
-          for (const peak of filtered) {
-            const x = u.valToPos(peak.frequency_hz, "x", true);
-            const yTop = u.bbox.top;
-            const yBot = u.bbox.top + u.bbox.height;
-
-            const color = peak.classification === "MotorNoise" ? "#e8944a" :
-                          peak.classification === "FrameResonance" ? "#e85454" : "#ffffff44";
-
-            ctx.save();
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 1;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-            ctx.moveTo(x, yTop);
-            ctx.lineTo(x, yBot);
-            ctx.stroke();
-            ctx.restore();
-
-            const tooClose = placed.some((px) => Math.abs(px - x) < MIN_GAP);
-            if (!tooClose) {
-              ctx.save();
-              ctx.fillStyle = "#e0e0e6";
-              ctx.font = "10px JetBrains Mono, monospace";
-              ctx.textAlign = "center";
-              ctx.fillText(`${peak.frequency_hz.toFixed(0)} Hz`, x, yTop - 4);
-              ctx.restore();
-              placed.push(x);
-            }
-          }
-        },
-      ],
-    },
-  };
-}
-
-function createSpectrumPlot(container: HTMLElement, spectrum: Spectrum): void {
-  const freqs = spectrum.frequencies_hz;
-  const mags = spectrum.magnitudes_db;
-
-  const maxFreq = Math.min(spectrum.sample_rate_hz / 2, 1000);
-  const endIdx = freqs.findIndex((f: number) => f > maxFreq);
-  const n = endIdx > 0 ? endIdx : freqs.length;
-
-  const xData = freqs.slice(0, n);
-  const yData = mags.slice(0, n);
-
-  const color = AXIS_COLORS[spectrum.axis] || "#5b8def";
-  const width = chartWidth();
-
-  const plugins = [peakMarkersPlugin(spectrum.peaks, maxFreq)];
-  if (filterConfig && !filterConfig.error) {
-    plugins.push(filterOverlayPlugin(maxFreq));
-  }
-
-  const opts = {
-    width,
-    height: 200,
-    cursor: { show: true },
-    scales: {
-      x: { time: false },
-      y: {},
-    },
-    axes: [
-      { label: "Frequency (Hz)", stroke: "#8888a0", grid: { stroke: "rgba(42,45,58,0.6)" }, ticks: { stroke: "rgba(42,45,58,0.6)" }, font: "11px JetBrains Mono, monospace", labelFont: "11px JetBrains Mono, monospace" },
-      { label: "dB", stroke: "#8888a0", grid: { stroke: "rgba(42,45,58,0.6)" }, ticks: { stroke: "rgba(42,45,58,0.6)" }, font: "11px JetBrains Mono, monospace", labelFont: "11px JetBrains Mono, monospace" },
-    ],
-    series: [
-      {},
-      { stroke: color, width: 1.5, fill: color + "18" },
-    ],
-    plugins,
-  };
-
-  new uPlot(opts, [xData, yData], container);
-}
-
-function filterOverlayPlugin(maxFreq: number): any {
-  return {
-    hooks: {
-      draw: [
-        (u: any) => {
-          try {
-          if (!filterConfig || filterConfig.error) return;
-          const ctx = u.ctx;
-
-          const lines = [
-            { freq: filterConfig.gyro_lpf_hz, label: "LPF1", color: "#e8944a" },
-            { freq: filterConfig.gyro_lpf2_hz, label: "LPF2", color: "#e8944a" },
-            { freq: filterConfig.dterm_lpf_hz, label: "D-LPF", color: "#9b59b6" },
-            { freq: filterConfig.gyro_notch1_hz, label: "Notch1", color: "#e85454" },
-            { freq: filterConfig.gyro_notch2_hz, label: "Notch2", color: "#e85454" },
-          ];
-
-          for (const line of lines) {
-            if (!line.freq || line.freq <= 0 || line.freq > maxFreq) continue;
-            const x = u.valToPos(line.freq, "x", true);
-            ctx.save();
-            ctx.strokeStyle = line.color;
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([2, 3]);
-            ctx.globalAlpha = 0.6;
-            ctx.beginPath();
-            ctx.moveTo(x, u.bbox.top);
-            ctx.lineTo(x, u.bbox.top + u.bbox.height);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 0.8;
-            ctx.fillStyle = line.color;
-            ctx.font = "9px JetBrains Mono, monospace";
-            ctx.textAlign = "center";
-            ctx.fillText(line.label, x, u.bbox.top + u.bbox.height + 12);
-            ctx.restore();
-          }
-
-          if (filterConfig.dyn_notch_min_hz && filterConfig.dyn_notch_max_hz) {
-            const xMin = u.valToPos(filterConfig.dyn_notch_min_hz, "x", true);
-            const xMax = u.valToPos(filterConfig.dyn_notch_max_hz, "x", true);
-            ctx.save();
-            ctx.fillStyle = "rgba(232, 84, 84, 0.06)";
-            ctx.fillRect(xMin, u.bbox.top, xMax - xMin, u.bbox.height);
-            ctx.strokeStyle = "#e85454";
-            ctx.lineWidth = 1;
-            ctx.setLineDash([2, 3]);
-            ctx.globalAlpha = 0.4;
-            ctx.strokeRect(xMin, u.bbox.top, xMax - xMin, u.bbox.height);
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 0.7;
-            ctx.fillStyle = "#e85454";
-            ctx.font = "9px JetBrains Mono, monospace";
-            ctx.textAlign = "center";
-            ctx.fillText("Dyn Notch", (xMin + xMax) / 2, u.bbox.top + 12);
-            ctx.restore();
-          }
-          } catch (e) { /* filter overlay failed, chart still renders */ }
-        },
-      ],
-    },
-  };
-}
-
 function renderSpectrogram(ref: SessionRef): void {
   const container = $("#spectrogram-plots");
   container.innerHTML = "";
@@ -1188,38 +1212,6 @@ function drawSpectrogram(canvas: HTMLCanvasElement, axis: any): void {
   ctx.fillText("0 Hz", width - 4, height - 4);
 }
 
-
-function renderThrottleBands(vibration: VibrationAnalysis | null): void {
-  const container = $("#throttle-plots");
-  container.innerHTML = "";
-
-  if (!vibration || !vibration.throttle_bands || vibration.throttle_bands.length === 0) {
-    container.innerHTML = '<p class="hint">No throttle band data.</p>';
-    return;
-  }
-
-  for (const band of vibration.throttle_bands) {
-    const section = document.createElement("div");
-    section.className = "throttle-band";
-
-    const title = document.createElement("h3");
-    title.textContent = `Throttle ${band.label}`;
-    section.appendChild(title);
-
-    const meta = document.createElement("div");
-    meta.className = "band-meta";
-    meta.textContent = `${band.frame_count.toLocaleString()} frames`;
-    section.appendChild(meta);
-
-    if (band.spectra && band.spectra.length > 0) {
-      const plotDiv = document.createElement("div");
-      section.appendChild(plotDiv);
-      createMultiAxisPlot(plotDiv, band.spectra);
-    }
-
-    container.appendChild(section);
-  }
-}
 
 function createMultiAxisPlot(container: HTMLElement, spectra: Spectrum[]): void {
   if (spectra.length === 0) return;
@@ -1355,13 +1347,17 @@ function renderTrend(): void {
   for (const pt of points) {
     const mbColor = pt.motor_balance_max_deviation != null && pt.motor_balance_max_deviation > 5
       ? ' style="color:var(--red)"' : "";
+    const osColor = pt.step_response_overshoot != null && pt.step_response_overshoot > 25
+      ? ' style="color:var(--red)"'
+      : pt.step_response_overshoot != null && pt.step_response_overshoot > 15
+      ? ' style="color:var(--yellow, #e8b84a)"' : "";
     html += `<tr>
       <td>${escHtml(pt.label)}</td>
       <td>${pt.duration_seconds.toFixed(1)}s</td>
       <td>${fmtNf(pt.noise_floor_db)} dB</td>
       <td${mbColor}>${fmt(pt.motor_balance_max_deviation)}%</td>
       <td>${fmt(pt.step_response_rise_ms)} ms</td>
-      <td>${fmt(pt.step_response_overshoot, 0)}%</td>
+      <td${osColor}>${fmt(pt.step_response_overshoot, 0)}%</td>
       <td>${pt.total_events}</td>
       <td>${pt.diagnostic_count}</td>
     </tr>`;
