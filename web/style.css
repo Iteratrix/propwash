@@ -686,6 +686,30 @@ footer a {
   .results-header { flex-direction: column; align-items: stretch; }
   .session-tabs { justify-content: center; }
   .results-actions { justify-content: center; }
+
+  /* View tabs: horizontal scroll */
+  .view-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .view-tabs::-webkit-scrollbar { display: none; }
+  .view-tab { white-space: nowrap; flex-shrink: 0; }
+
+  /* Timeline controls: stack on tablet */
+  .ts-controls { flex-direction: column; align-items: stretch; }
+  .ts-tabs { flex-wrap: wrap; }
+  .ts-reset-zoom { align-self: flex-end; }
+
+  /* Tables: horizontal scroll */
+  .tuning-table, .compare-table, .event-table, .raw-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Compare pickers: stack vertically */
+  .compare-pickers { flex-direction: column; }
+  .compare-vs { display: none; }
+
+  /* Session selector: full width */
+  .session-select { min-width: 0; width: 100%; }
 }
 
 /* Responsive — phone */
@@ -702,8 +726,8 @@ footer a {
   .panel { padding: 0.75rem; }
 
   /* Larger tap targets on touch */
-  .view-tab { padding: 0.7rem 1rem; font-size: 0.8rem; }
-  .ts-tab, .ts-reset-zoom { padding: 0.5rem 0.75rem; min-height: 36px; }
+  .view-tab { padding: 0.7rem 0.8rem; font-size: 0.75rem; }
+  .ts-tab, .ts-reset-zoom { padding: 0.5rem 0.6rem; min-height: 36px; font-size: 0.75rem; }
   .session-tab { padding: 0.6rem 1rem; }
   .reset-btn { padding: 0.6rem 1rem; text-align: center; }
 
@@ -712,10 +736,13 @@ footer a {
   /* Tables: horizontal scroll wrapper + readable fonts */
   .event-table { font-size: 0.8rem; }
   .event-table th { font-size: 0.7rem; }
-  .event-table th, .event-table td { padding: 0.4rem 0.5rem; }
+  .event-table th, .event-table td { padding: 0.4rem 0.5rem; white-space: nowrap; }
 
   .compare-table { font-size: 0.8rem; }
   .compare-table th, .compare-table td { padding: 0.4rem; }
+
+  .tuning-table { font-size: 0.8rem; }
+  .tuning-table th, .tuning-table td { padding: 0.4rem; }
 
   .raw-select { min-width: 0; width: 100%; }
   .raw-table { font-size: 0.7rem; }
@@ -727,6 +754,19 @@ footer a {
   /* Peaks wrap tighter */
   .peaks-list { gap: 0.4rem; }
   .peak-badge { font-size: 0.7rem; padding: 0.25rem 0.4rem; }
+
+  /* Step overlay */
+  .step-overlay-row h3 { font-size: 0.8rem; }
+
+  /* Motor balance */
+  .motor-balance-section h3 { font-size: 0.85rem; }
+  .motor-bar-label { font-size: 0.75rem; }
+
+  /* Propwash */
+  .propwash-summary { font-size: 0.8rem; }
+
+  /* Spectrogram legend */
+  .spectrogram-legend { font-size: 0.7rem; }
 }
 
 /* Session selector dropdown */
