@@ -55,7 +55,7 @@ pub fn diagnose(
         diagnostics.extend(diagnose_oscillation_frequency(pid));
     }
 
-    diagnostics.sort_by(|a, b| b.severity.cmp(&a.severity));
+    diagnostics.sort_by_key(|d| std::cmp::Reverse(d.severity));
     diagnostics
 }
 
@@ -770,6 +770,7 @@ mod tests {
             spectra: Vec::new(),
             noise_floor_db: noise_floor,
             throttle_bands: Vec::new(),
+            avg_motor_hz: None,
             accel: None,
             propwash: None,
         }

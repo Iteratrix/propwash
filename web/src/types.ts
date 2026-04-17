@@ -145,6 +145,7 @@ export interface Diagnostic {
 export interface VibrationAnalysis {
   spectra: Spectrum[];
   throttle_bands: ThrottleBand[];
+  avg_motor_hz: number | null;
   accel: AccelData | null;
   propwash: PropwashAnalysis | null;
 }
@@ -174,6 +175,7 @@ export interface ThrottleBand {
   label: string;
   frame_count: number;
   spectra: Spectrum[];
+  avg_motor_hz: number | null;
 }
 
 export interface AccelData {

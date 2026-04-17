@@ -3,7 +3,7 @@ use rustfft::FftPlanner;
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
-use crate::types::{Axis, RcChannel, SensorField, Session};
+use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
@@ -36,6 +36,8 @@ pub struct ThrottleBand {
     pub throttle_max: f64,
     pub frame_count: usize,
     pub spectra: Vec<FrequencySpectrum>,
+    /// Average motor RPM frequency (Hz = RPM/60) in this throttle band, if eRPM data is available.
+    pub avg_motor_hz: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -61,6 +63,8 @@ pub struct VibrationAnalysis {
     pub spectra: Vec<FrequencySpectrum>,
     pub noise_floor_db: [f64; 3],
     pub throttle_bands: Vec<ThrottleBand>,
+    /// Average motor RPM frequency (Hz) across the full flight, if eRPM data is available.
+    pub avg_motor_hz: Option<f64>,
     pub accel: Option<AccelVibration>,
     pub propwash: Option<PropwashAnalysis>,
 }
@@ -250,6 +254,20 @@ pub fn analyze_vibration_unified(
         return None;
     }
 
+    // Get motor pole count for eRPM → frequency conversion
+    #[allow(clippy::cast_sign_loss)]
+    let motor_poles: u32 = match unified {
+        Session::Betaflight(bf) => {
+            let v = bf.get_header_int("motor_poles", 14);
+            if v > 0 {
+                v as u32
+            } else {
+                14
+            }
+        }
+        _ => 14,
+    };
+
     let axis_names = ["roll", "pitch", "yaw"];
     let mut spectra = Vec::new();
 
@@ -274,24 +292,40 @@ pub fn analyze_vibration_unified(
             .map_or(-120.0, |s| compute_noise_floor(&s.magnitudes_db))
     });
 
-    let throttle_bands = compute_throttle_bands_unified(unified, sample_rate);
+    let throttle_bands = compute_throttle_bands_unified(unified, sample_rate, motor_poles);
     let accel = analyze_accel_unified(unified, sample_rate);
 
     classify_peaks(&mut spectra, &throttle_bands);
 
     let propwash = analyze_propwash(unified, events, sample_rate);
 
+    // Compute overall average motor RPM from all eRPM data
+    let all_indices: Vec<usize> = (0..unified.frame_count()).collect();
+    let erpm_data: Vec<Vec<f64>> = (0..4)
+        .map(|i| unified.field(&SensorField::ERpm(MotorIndex(i))))
+        .collect();
+    let avg_motor_hz = if erpm_data.iter().any(|e| !e.is_empty()) {
+        compute_avg_motor_hz(&erpm_data, &all_indices, motor_poles)
+    } else {
+        None
+    };
+
     Some(VibrationAnalysis {
         spectra,
         noise_floor_db,
         throttle_bands,
+        avg_motor_hz,
         accel,
         propwash,
     })
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn compute_throttle_bands_unified(unified: &Session, sample_rate: f64) -> Vec<ThrottleBand> {
+fn compute_throttle_bands_unified(
+    unified: &Session,
+    sample_rate: f64,
+    motor_poles: u32,
+) -> Vec<ThrottleBand> {
     let throttle = unified.field(&SensorField::Rc(RcChannel::Throttle));
     if throttle.is_empty() {
         return Vec::new();
@@ -311,6 +345,12 @@ fn compute_throttle_bands_unified(unified: &Session, sample_rate: f64) -> Vec<Th
         .iter()
         .map(|a| unified.field(&SensorField::Gyro(*a)))
         .collect();
+
+    // Collect eRPM data for all motors (average across motors for RPM frequency)
+    let erpm_data: Vec<Vec<f64>> = (0..4)
+        .map(|i| unified.field(&SensorField::ERpm(MotorIndex(i))))
+        .collect();
+    let has_erpm = erpm_data.iter().any(|e| !e.is_empty());
 
     let mut bands = Vec::new();
 
@@ -345,16 +385,61 @@ fn compute_throttle_bands_unified(unified: &Session, sample_rate: f64) -> Vec<Th
             }
         }
 
+        // Compute average motor RPM in this throttle band
+        let avg_motor_hz = if has_erpm {
+            compute_avg_motor_hz(&erpm_data, &band_indices, motor_poles)
+        } else {
+            None
+        };
+
         bands.push(ThrottleBand {
             label: label.to_string(),
             throttle_min: band_min,
             throttle_max: band_max,
             frame_count: band_indices.len(),
             spectra: band_spectra,
+            avg_motor_hz,
         });
     }
 
     bands
+}
+
+/// Compute average motor vibration frequency (Hz) from eRPM data at the given frame indices.
+///
+/// BF logs `eRPM`/100. Vibration frequency = `eRPM_raw` * 100 / 60 / (poles/2).
+/// Default pole count is 14 (7 pole pairs) if not specified.
+#[allow(clippy::cast_precision_loss)]
+fn compute_avg_motor_hz(
+    erpm_data: &[Vec<f64>],
+    indices: &[usize],
+    motor_poles: u32,
+) -> Option<f64> {
+    let mut sum = 0.0f64;
+    let mut count = 0usize;
+
+    for motor in erpm_data {
+        if motor.is_empty() {
+            continue;
+        }
+        for &i in indices {
+            if let Some(&raw) = motor.get(i) {
+                if raw > 0.0 {
+                    sum += raw;
+                    count += 1;
+                }
+            }
+        }
+    }
+
+    if count > 0 {
+        let pole_pairs = f64::from(motor_poles.max(2)) / 2.0;
+        // raw eRPM values are eRPM/100 in BF, actual eRPM for other formats
+        // Convert: raw * 100 / 60 / pole_pairs = Hz
+        Some(sum / count as f64 * 100.0 / 60.0 / pole_pairs)
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::cast_precision_loss)]

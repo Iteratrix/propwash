@@ -1113,6 +1113,17 @@ function renderSpectraEcharts(vibration: VibrationAnalysis | null): void {
       }
     }
 
+    // RPM harmonic lines (1x, 2x, 3x of average motor frequency)
+    if (vibration.avg_motor_hz) {
+      const rpm = vibration.avg_motor_hz;
+      for (let h = 1; h <= 3; h++) {
+        const freq = rpm * h;
+        if (freq > 0 && freq <= maxFreq) {
+          markLines.push({ xAxis: freq, label: { formatter: `${h}x RPM`, position: "start", fontSize: 9, color: "#4ec88c" }, lineStyle: { color: "#4ec88c", type: "dotted", width: 1 } });
+        }
+      }
+    }
+
     const peakPoints = (spectrum.peaks || []).slice(0, 3).map((p: any) => ({
       coord: [p.frequency_hz, p.magnitude_db],
       label: { formatter: `${p.frequency_hz.toFixed(0)} Hz`, fontSize: 10, color: "#e0e0e6", position: "top" },
@@ -1191,7 +1202,8 @@ function renderThrottleBandsEcharts(vibration: VibrationAnalysis | null): void {
 
     const meta = document.createElement("div");
     meta.className = "band-meta";
-    meta.textContent = `${band.frame_count.toLocaleString()} frames`;
+    const rpmInfo = band.avg_motor_hz ? ` — avg ${(band.avg_motor_hz * 60).toFixed(0)} RPM (${band.avg_motor_hz.toFixed(0)} Hz)` : "";
+    meta.textContent = `${band.frame_count.toLocaleString()} frames${rpmInfo}`;
     section.appendChild(meta);
 
     if (band.spectra && band.spectra.length > 0) {
@@ -1208,17 +1220,34 @@ function renderThrottleBandsEcharts(vibration: VibrationAnalysis | null): void {
       const chart = echarts.init(chartDiv, null, { renderer: "canvas" });
       echartsInstances.push(chart);
 
+      // RPM harmonic markLines for this throttle band
+      const rpmMarkLines: any[] = [];
+      if (band.avg_motor_hz) {
+        for (let h = 1; h <= 3; h++) {
+          const freq = band.avg_motor_hz * h;
+          if (freq > 0 && freq <= maxFreq) {
+            rpmMarkLines.push({ xAxis: freq, label: { formatter: `${h}x`, position: "start", fontSize: 8, color: "#4ec88c" }, lineStyle: { color: "#4ec88c", type: "dotted", width: 1 } });
+          }
+        }
+      }
+
       const series = [];
-      for (const s of band.spectra) {
+      for (let si = 0; si < band.spectra.length; si++) {
+        const s = band.spectra[si];
         const color = AXIS_COLORS[s.axis] || "#5b8def";
-        series.push({
+        const entry: any = {
           type: "line",
           name: s.axis,
           data: s.frequencies_hz.slice(0, n).map((f: number, i: number) => [f, s.magnitudes_db[i]]),
           smooth: false,
           symbol: "none",
           lineStyle: { color, width: 1.5 },
-        });
+        };
+        // Attach RPM lines to the first series
+        if (si === 0 && rpmMarkLines.length > 0) {
+          entry.markLine = { data: rpmMarkLines, symbol: "none", silent: true };
+        }
+        series.push(entry);
       }
 
       chart.setOption({
