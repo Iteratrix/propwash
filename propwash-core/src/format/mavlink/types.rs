@@ -406,7 +406,8 @@ impl MavlinkSession {
             | SensorField::Setpoint(_)
             | SensorField::PidP(_)
             | SensorField::PidI(_)
-            | SensorField::PidD(_) => Vec::new(),
+            | SensorField::PidD(_)
+            | SensorField::Feedforward(_) => Vec::new(),
             SensorField::Unknown(name) => {
                 // Try "MSG_NAME.field_name" format
                 if let Some((msg, fld)) = name.split_once('.') {
@@ -457,6 +458,29 @@ impl MavlinkSession {
 
     pub fn corrupt_bytes(&self) -> usize {
         self.stats.corrupt_bytes
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn pid_gains(&self) -> crate::types::PidGains {
+        let parse = |p_key: &str, i_key: &str, d_key: &str| -> crate::types::AxisGains {
+            let get = |k: &str| -> Option<u32> {
+                self.params
+                    .get(k)
+                    .copied()
+                    .filter(|&v| v > 0.0)
+                    .map(|v| (v * 1000.0) as u32)
+            };
+            crate::types::AxisGains {
+                p: get(p_key),
+                i: get(i_key),
+                d: get(d_key),
+            }
+        };
+        crate::types::PidGains::new(
+            parse("ATC_RAT_RLL_P", "ATC_RAT_RLL_I", "ATC_RAT_RLL_D"),
+            parse("ATC_RAT_PIT_P", "ATC_RAT_PIT_I", "ATC_RAT_PIT_D"),
+            parse("ATC_RAT_YAW_P", "ATC_RAT_YAW_I", "ATC_RAT_YAW_D"),
+        )
     }
 
     pub fn filter_config(&self) -> FilterConfig {

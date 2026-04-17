@@ -40,7 +40,57 @@ export interface FlightAnalysis {
   summary: FlightSummary;
   events: FlightEvent[];
   vibration: VibrationAnalysis | null;
+  step_response: StepResponseAnalysis | null;
+  pid: PidAnalysis | null;
   diagnostics: Diagnostic[];
+}
+
+export interface StepResponseAnalysis {
+  axes: AxisStepResponse[];
+}
+
+export interface AxisStepResponse {
+  axis: string;
+  step_count: number;
+  rise_time_ms: number;
+  overshoot_percent: number;
+  settling_time_ms: number;
+}
+
+export interface PidAnalysis {
+  windup: AxisWindup[];
+  oscillation: AxisOscillation[];
+  tuning: TuningSuggestion[];
+}
+
+export interface AxisWindup {
+  axis: string;
+  i_dominant_fraction: number;
+  peak_ratio: number;
+}
+
+export interface AxisOscillation {
+  axis: string;
+  frequency_hz: number | null;
+  magnitude_db: number | null;
+  overshoot_percent: number;
+}
+
+export interface TuningSuggestion {
+  axis: string;
+  rating: string;
+  current: AxisGains;
+  suggested: AxisGains;
+  overshoot_percent: number;
+  rise_time_ms: number;
+  settling_time_ms: number;
+  step_count: number;
+}
+
+export interface AxisGains {
+  p: number | null;
+  i: number | null;
+  d: number | null;
 }
 
 export interface FlightSummary {

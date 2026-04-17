@@ -24,12 +24,15 @@ pub struct StepResponseAnalysis {
 
 /// Minimum setpoint change (deg/s) to qualify as a "step."
 const MIN_STEP_SIZE: f64 = 50.0;
+/// Lookback window for step detection (samples).
+/// At 1kHz with RC smoothing, a stick input ramps over ~50ms.
+const STEP_LOOKBACK: usize = 50;
 /// Window before the step to establish the baseline (samples).
 const PRE_SAMPLES: usize = 5;
 /// Window after the step to measure the response (samples).
 const POST_SAMPLES: usize = 200;
 /// Minimum gap between detected steps (samples) to avoid duplicates.
-const STEP_COOLDOWN: usize = 50;
+const STEP_COOLDOWN: usize = 100;
 
 /// Analyze step response quality from setpoint and gyro data.
 #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
@@ -67,10 +70,18 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
                 continue;
             }
 
-            // Baseline: average setpoint/gyro before the step
-            let pre_start = step_idx.saturating_sub(PRE_SAMPLES);
-            let sp_before = mean(&setpoint[pre_start..step_idx]);
-            let sp_after = mean(&setpoint[step_idx + 1..step_idx + 10.min(POST_SAMPLES)]);
+            // Baseline: setpoint before the lookback window (stable before ramp)
+            let pre_start = step_idx.saturating_sub(STEP_LOOKBACK + PRE_SAMPLES);
+            let pre_end = step_idx.saturating_sub(STEP_LOOKBACK);
+            let sp_before = if pre_end > pre_start {
+                mean(&setpoint[pre_start..pre_end])
+            } else {
+                setpoint[step_idx.saturating_sub(1)]
+            };
+            // Target: setpoint well after the ramp settles (50-100 samples after detection)
+            let settle_start = (step_idx + STEP_LOOKBACK).min(step_idx + POST_SAMPLES - 10);
+            let settle_end = (settle_start + 20).min(step_idx + POST_SAMPLES);
+            let sp_after = mean(&setpoint[settle_start..settle_end]);
             let step_size = sp_after - sp_before;
 
             if step_size.abs() < MIN_STEP_SIZE {
@@ -147,6 +158,10 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
             } else {
                 0.0
             };
+            // Skip unreliable measurements (corrupt data or bad baseline)
+            if overshoot > 200.0 {
+                continue;
+            }
             overshoots.push(overshoot);
 
             // Settling time: first sample after which gyro stays within 5% of target
@@ -196,15 +211,21 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
 }
 
 /// Detect indices where the setpoint makes a significant step change.
+///
+/// Uses a lookback window to catch RC-smoothed ramps at high sample rates
+/// (e.g., 1kHz with BF rate limiting produces ~1 deg/s per sample deltas).
 fn detect_steps(setpoint: &[f64]) -> Vec<usize> {
     let mut steps = Vec::new();
+    // Allow detection from the start by setting last_step far in the past
     let mut last_step = 0usize;
+    let start = STEP_LOOKBACK;
 
-    for i in 1..setpoint.len() {
-        if i - last_step < STEP_COOLDOWN {
+    for i in start..setpoint.len() {
+        if i > last_step && i - last_step < STEP_COOLDOWN && last_step >= start {
             continue;
         }
-        let delta = (setpoint[i] - setpoint[i - 1]).abs();
+        // Compare current value vs value LOOKBACK samples ago
+        let delta = (setpoint[i] - setpoint[i - STEP_LOOKBACK]).abs();
         if delta >= MIN_STEP_SIZE {
             steps.push(i);
             last_step = i;

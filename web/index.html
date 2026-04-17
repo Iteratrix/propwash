@@ -41,6 +41,7 @@
         <button class="view-tab active" data-view="overview">Overview</button>
         <button class="view-tab" data-view="timeline">Timeline</button>
         <button class="view-tab" data-view="spectrum">Spectrum</button>
+        <button class="view-tab" data-view="compare">Compare</button>
         <button class="view-tab" data-view="trend">Trend</button>
         <button class="view-tab" data-view="raw">Raw Data</button>
       </nav>
@@ -50,6 +51,11 @@
         <section id="summary" class="panel">
           <h2>Summary</h2>
           <div id="summary-grid" class="summary-grid"></div>
+        </section>
+
+        <section id="tuning-panel" class="panel hidden">
+          <h2>Tuning Suggestions</h2>
+          <div id="tuning-content"></div>
         </section>
 
         <section id="diagnostics-panel" class="panel">
@@ -75,6 +81,7 @@
               <button class="ts-tab" data-group="rc">RC</button>
               <button class="ts-tab" data-group="erpm">RPM</button>
               <button class="ts-tab" data-group="voltage">Voltage</button>
+              <button class="ts-tab" data-group="pidError">PID Error</button>
               <button class="ts-tab" data-group="pids">PIDs Roll</button>
               <button class="ts-tab" data-group="pidsPitch">PIDs Pitch</button>
               <button class="ts-tab" data-group="pidsYaw">PIDs Yaw</button>
@@ -114,6 +121,34 @@
           <h2>Propwash Analysis</h2>
           <div id="propwash-info"></div>
           <div id="propwash-plots"></div>
+        </section>
+      </div>
+
+      <!-- Compare tab -->
+      <div class="view-content" data-view="compare">
+        <section class="panel">
+          <h2>Compare Sessions</h2>
+          <div class="compare-pickers">
+            <label>Session A <select id="compare-a" class="session-select"></select></label>
+            <span class="compare-vs">vs</span>
+            <label>Session B <select id="compare-b" class="session-select"></select></label>
+          </div>
+          <div id="compare-summary-table"></div>
+        </section>
+
+        <section id="compare-tuning-panel" class="panel hidden">
+          <h2>Tuning Comparison</h2>
+          <div id="compare-tuning-content"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Diagnostic Diff</h2>
+          <div id="compare-diag-content"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Spectrum Overlay</h2>
+          <div id="compare-spectrum-plots"></div>
         </section>
       </div>
 

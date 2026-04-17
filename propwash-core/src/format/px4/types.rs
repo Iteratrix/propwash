@@ -441,7 +441,10 @@ impl Px4Session {
                         col.iter().map(|&v| v * 57.295_779_513_082_32).collect()
                     })
             }
-            SensorField::PidP(_) | SensorField::PidI(_) | SensorField::PidD(_) => Vec::new(),
+            SensorField::PidP(_)
+            | SensorField::PidI(_)
+            | SensorField::PidD(_)
+            | SensorField::Feedforward(_) => Vec::new(),
         }
     }
 
@@ -498,6 +501,29 @@ impl Px4Session {
     /// Returns the number of corrupt bytes encountered during parsing.
     pub fn corrupt_bytes(&self) -> usize {
         self.stats.corrupt_bytes
+    }
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn pid_gains(&self) -> crate::types::PidGains {
+        let parse = |p_key: &str, i_key: &str, d_key: &str| -> crate::types::AxisGains {
+            let get = |k: &str| -> Option<u32> {
+                self.params
+                    .get(k)
+                    .copied()
+                    .filter(|&v| v > 0.0)
+                    .map(|v| (v * 1000.0) as u32)
+            };
+            crate::types::AxisGains {
+                p: get(p_key),
+                i: get(i_key),
+                d: get(d_key),
+            }
+        };
+        crate::types::PidGains::new(
+            parse("MC_ROLLRATE_P", "MC_ROLLRATE_I", "MC_ROLLRATE_D"),
+            parse("MC_PITCHRATE_P", "MC_PITCHRATE_I", "MC_PITCHRATE_D"),
+            parse("MC_YAWRATE_P", "MC_YAWRATE_I", "MC_YAWRATE_D"),
+        )
     }
 
     /// Returns the filter configuration extracted from parameters.

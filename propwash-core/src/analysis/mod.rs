@@ -2,6 +2,7 @@ pub mod diagnostics;
 pub mod episodes;
 pub mod events;
 pub mod fft;
+pub mod pid;
 pub mod step_response;
 pub mod summary;
 pub mod trend;
@@ -10,6 +11,7 @@ pub mod unified_events;
 use diagnostics::Diagnostic;
 use events::{EventKind, FlightEvent};
 use fft::VibrationAnalysis;
+use pid::PidAnalysis;
 use step_response::StepResponseAnalysis;
 use summary::FlightSummary;
 
@@ -26,6 +28,7 @@ pub struct FlightAnalysis {
     pub events: Vec<FlightEvent>,
     pub vibration: Option<VibrationAnalysis>,
     pub step_response: Option<StepResponseAnalysis>,
+    pub pid: Option<PidAnalysis>,
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -50,20 +53,25 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
     let vibration = fft::analyze_vibration_unified(session, &detected);
     let summary = summary::summarize(session, &detected);
     let filter_config = session.filter_config();
+    let step_resp = step_response::analyze_step_response(session);
+    let pid_gains = session.pid_gains();
+    let pid_analysis = pid::analyze_pid(session, step_resp.as_ref(), &pid_gains);
     let diags = diagnostics::diagnose(
         &detected,
         vibration.as_ref(),
+        step_resp.as_ref(),
+        pid_analysis.as_ref(),
         &filter_config,
         summary.motor_count,
         summary.duration_seconds,
     );
-    let step_resp = step_response::analyze_step_response(session);
 
     FlightAnalysis {
         summary,
         events: detected,
         vibration,
         step_response: step_resp,
+        pid: pid_analysis,
         diagnostics: diags,
     }
 }

@@ -7,7 +7,7 @@ repository = "https://github.com/Iteratrix/propwash"
 license = "MIT"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 propwash-core = { path = "../propwash-core" }

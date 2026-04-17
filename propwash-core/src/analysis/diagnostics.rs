@@ -1,7 +1,11 @@
+use std::fmt::Write;
+
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
 use super::fft::VibrationAnalysis;
+use super::pid::{PidAnalysis, TuningRating};
+use super::step_response::StepResponseAnalysis;
 use crate::types::FilterConfig;
 
 #[derive(Debug, Clone, Serialize)]
@@ -22,6 +26,8 @@ pub enum Severity {
 pub fn diagnose(
     events: &[FlightEvent],
     vibration: Option<&VibrationAnalysis>,
+    step_response: Option<&StepResponseAnalysis>,
+    pid: Option<&PidAnalysis>,
     filter_config: &FilterConfig,
     motor_count: usize,
     duration_seconds: f64,
@@ -37,6 +43,16 @@ pub fn diagnose(
         diagnostics.extend(diagnose_throttle_response(vib));
         diagnostics.extend(diagnose_fc_mounting(vib));
         diagnostics.extend(diagnose_filter_adequacy(vib, filter_config));
+    }
+    if let Some(sr) = step_response {
+        if let Some(vib) = vibration {
+            diagnostics.extend(diagnose_d_term_noise(sr, vib));
+        }
+    }
+    if let Some(pid) = pid {
+        diagnostics.extend(diagnose_tuning_from_analysis(pid));
+        diagnostics.extend(diagnose_windup(pid));
+        diagnostics.extend(diagnose_oscillation_frequency(pid));
     }
 
     diagnostics.sort_by(|a, b| b.severity.cmp(&a.severity));
@@ -418,4 +434,370 @@ fn diagnose_filter_adequacy(vib: &VibrationAnalysis, config: &FilterConfig) -> V
     }
 
     diagnostics
+}
+
+fn diagnose_tuning_from_analysis(pid: &PidAnalysis) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for t in &pid.tuning {
+        let axis = t.axis.as_str();
+        let rating = t.rating;
+
+        let severity = match rating {
+            TuningRating::Oscillating => Severity::Problem,
+            TuningRating::Overshooting | TuningRating::Sluggish => Severity::Warning,
+            TuningRating::Tight | TuningRating::Good => Severity::Info,
+        };
+
+        let mut detail = match rating {
+            TuningRating::Oscillating => format!(
+                "Lower P gain on {axis} axis. If already low, raise D gain to dampen oscillation."
+            ),
+            TuningRating::Overshooting => {
+                format!("Reduce P gain or increase D gain on {axis} axis to reduce overshoot.")
+            }
+            TuningRating::Sluggish => {
+                format!("Increase P gain on {axis} axis for faster response.")
+            }
+            TuningRating::Tight => format!("{axis} axis tuning looks tight."),
+            TuningRating::Good => format!("{axis} axis tuning is good."),
+        };
+
+        // Append specific gain suggestions when available
+        if t.current.p.is_some() || t.suggested.p.is_some() {
+            let gains_changed = t.current != t.suggested;
+            if gains_changed {
+                detail += " Try";
+                if let (Some(cur), Some(sug)) = (t.current.p, t.suggested.p) {
+                    if cur != sug {
+                        let _ = write!(detail, " P: {cur} → {sug}");
+                    }
+                }
+                if let (Some(cur), Some(sug)) = (t.current.d, t.suggested.d) {
+                    if cur != sug {
+                        let _ = write!(detail, ", D: {cur} → {sug}");
+                    }
+                }
+                detail += ".";
+            } else if let (Some(p), Some(d)) = (t.current.p, t.current.d) {
+                let _ = write!(detail, " Current gains — P: {p}, D: {d}.");
+            }
+        }
+
+        let _ = write!(
+            detail,
+            " ({:.0}% overshoot, {:.1}ms rise, {} steps)",
+            t.overshoot_percent, t.rise_time_ms, t.step_count
+        );
+
+        diagnostics.push(Diagnostic {
+            severity,
+            category: "tuning",
+            message: format!("{} axis response: {}", capitalize(axis), rating.as_str()),
+            detail,
+        });
+    }
+
+    diagnostics
+}
+
+fn diagnose_d_term_noise(sr: &StepResponseAnalysis, vib: &VibrationAnalysis) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    // Average noise floor across axes
+    let avg_noise_floor =
+        (vib.noise_floor_db[0] + vib.noise_floor_db[1] + vib.noise_floor_db[2]) / 3.0;
+
+    // Check for axes that are overshooting AND have a high noise floor
+    // This means the pilot can't safely raise D to control overshoot
+    let overshooting_axes: Vec<&str> = sr
+        .axes
+        .iter()
+        .filter(|a| a.step_count >= 3 && a.overshoot_percent > 25.0)
+        .map(|a| a.axis)
+        .collect();
+
+    if !overshooting_axes.is_empty() && avg_noise_floor > 35.0 {
+        let axes_str = overshooting_axes.join(", ");
+        diagnostics.push(Diagnostic {
+            severity: Severity::Warning,
+            category: "tuning",
+            message: format!("High noise floor ({avg_noise_floor:.0} dB) limits D-gain headroom"),
+            detail: format!(
+                "{axes_str} axis overshoot could be reduced with more D gain, but the noise floor \
+                 is too high ({avg_noise_floor:.0} dB) — raising D would amplify motor noise. \
+                 Improve filtering first (lower gyro LPF or add notch filters), then increase D."
+            ),
+        });
+    }
+
+    diagnostics
+}
+
+fn diagnose_windup(pid: &PidAnalysis) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for w in &pid.windup {
+        let axis = w.axis.as_str();
+        if w.i_dominant_fraction > 0.3 {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Warning,
+                category: "tuning",
+                message: format!(
+                    "{} I-term dominates P-term {:.0}% of the time",
+                    capitalize(axis),
+                    w.i_dominant_fraction * 100.0
+                ),
+                detail: format!(
+                    "The I-term exceeds the P-term for {:.0}% of the flight on {axis} axis \
+                     (peak ratio {:.1}x). This suggests I gain is too high — the integrator \
+                     is doing work that P should handle. Try reducing I gain.",
+                    w.i_dominant_fraction * 100.0,
+                    w.peak_ratio
+                ),
+            });
+        } else if w.peak_ratio > 5.0 {
+            diagnostics.push(Diagnostic {
+                severity: Severity::Info,
+                category: "tuning",
+                message: format!(
+                    "{} I-term spike detected (peak {:.1}x P-term)",
+                    capitalize(axis),
+                    w.peak_ratio
+                ),
+                detail: format!(
+                    "The {axis} I-term briefly reached {:.1}x the P-term value. \
+                     Occasional I-term spikes during sustained maneuvers are normal, \
+                     but frequent spikes may indicate I gain is slightly high.",
+                    w.peak_ratio
+                ),
+            });
+        }
+    }
+
+    diagnostics
+}
+
+fn diagnose_oscillation_frequency(pid: &PidAnalysis) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+
+    for osc in &pid.oscillation {
+        let axis = osc.axis.as_str();
+        if let (Some(freq), Some(mag)) = (osc.frequency_hz, osc.magnitude_db) {
+            if mag > -20.0 && osc.overshoot_percent > 20.0 {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Info,
+                    category: "tuning",
+                    message: format!("{} axis oscillating at ~{:.0} Hz", capitalize(axis), freq),
+                    detail: format!(
+                        "Step response error signal shows a dominant oscillation at {freq:.0} Hz \
+                         on {axis} axis ({mag:.0} dB, {overshoot:.0}% overshoot). \
+                         If this is below ~30 Hz, it's likely PID oscillation — reduce P or \
+                         increase D. If 30-100 Hz, it may be propwash. Above 100 Hz suggests \
+                         motor/frame vibration leaking into the control loop.",
+                        overshoot = osc.overshoot_percent
+                    ),
+                });
+            }
+        }
+    }
+
+    diagnostics
+}
+
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().to_string() + c.as_str(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::pid::{PidAnalysis, TuningRating, TuningSuggestion};
+    use crate::analysis::step_response::{AxisStepResponse, StepResponseAnalysis};
+    use crate::types::{Axis, AxisGains, PidGains};
+
+    fn make_sr(
+        axis: &'static str,
+        rise: f64,
+        overshoot: f64,
+        settling: f64,
+        steps: usize,
+    ) -> StepResponseAnalysis {
+        StepResponseAnalysis {
+            axes: vec![AxisStepResponse {
+                axis,
+                step_count: steps,
+                rise_time_ms: rise,
+                overshoot_percent: overshoot,
+                settling_time_ms: settling,
+            }],
+        }
+    }
+
+    fn bf_gains() -> PidGains {
+        PidGains::new(
+            AxisGains {
+                p: Some(35),
+                i: Some(75),
+                d: Some(35),
+            },
+            AxisGains {
+                p: Some(39),
+                i: Some(80),
+                d: Some(40),
+            },
+            AxisGains {
+                p: Some(40),
+                i: Some(60),
+                d: None,
+            },
+        )
+    }
+
+    fn make_pid_with_tuning(suggestions: Vec<TuningSuggestion>) -> PidAnalysis {
+        PidAnalysis {
+            windup: Vec::new(),
+            oscillation: Vec::new(),
+            tuning: suggestions,
+        }
+    }
+
+    fn make_suggestion(
+        axis: Axis,
+        rating: TuningRating,
+        current: AxisGains,
+        suggested: AxisGains,
+        overshoot: f64,
+        rise: f64,
+        settling: f64,
+        steps: usize,
+    ) -> TuningSuggestion {
+        TuningSuggestion {
+            axis,
+            rating,
+            current,
+            suggested,
+            overshoot_percent: overshoot,
+            rise_time_ms: rise,
+            settling_time_ms: settling,
+            step_count: steps,
+        }
+    }
+
+    #[test]
+    fn tuning_tight() {
+        let gains = *bf_gains().get(Axis::Roll);
+        let pid = make_pid_with_tuning(vec![make_suggestion(
+            Axis::Roll,
+            TuningRating::Tight,
+            gains,
+            gains,
+            5.0,
+            3.0,
+            8.0,
+            10,
+        )]);
+        let diags = diagnose_tuning_from_analysis(&pid);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("tight"));
+        assert_eq!(diags[0].severity, Severity::Info);
+        assert!(
+            diags[0].detail.contains("P: 35"),
+            "should show current gains"
+        );
+    }
+
+    #[test]
+    fn tuning_overshooting_with_suggestion() {
+        let current = *bf_gains().get(Axis::Pitch);
+        let suggested = AxisGains {
+            p: Some(33),
+            i: Some(80),
+            d: Some(46),
+        };
+        let pid = make_pid_with_tuning(vec![make_suggestion(
+            Axis::Pitch,
+            TuningRating::Overshooting,
+            current,
+            suggested,
+            30.0,
+            5.0,
+            20.0,
+            6,
+        )]);
+        let diags = diagnose_tuning_from_analysis(&pid);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("overshooting"));
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(
+            diags[0].detail.contains("P: 39 → 33"),
+            "should suggest P decrease"
+        );
+        assert!(
+            diags[0].detail.contains("D: 40 → 46"),
+            "should suggest D increase"
+        );
+    }
+
+    #[test]
+    fn tuning_without_gains() {
+        let empty = AxisGains::default();
+        let pid = make_pid_with_tuning(vec![make_suggestion(
+            Axis::Roll,
+            TuningRating::Overshooting,
+            empty,
+            empty,
+            30.0,
+            5.0,
+            20.0,
+            6,
+        )]);
+        let diags = diagnose_tuning_from_analysis(&pid);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("overshooting"));
+        assert!(
+            !diags[0].detail.contains("→"),
+            "no suggestions without gains"
+        );
+    }
+
+    fn make_vib(noise_floor: [f64; 3]) -> VibrationAnalysis {
+        VibrationAnalysis {
+            spectra: Vec::new(),
+            noise_floor_db: noise_floor,
+            throttle_bands: Vec::new(),
+            accel: None,
+            propwash: None,
+        }
+    }
+
+    #[test]
+    fn d_term_noise_fires_with_overshoot_and_high_noise() {
+        let sr = make_sr("roll", 5.0, 35.0, 20.0, 10);
+        let vib = make_vib([40.0, 38.0, 36.0]);
+        let diags = diagnose_d_term_noise(&sr, &vib);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("noise floor"));
+        assert!(diags[0].detail.contains("filtering"));
+    }
+
+    #[test]
+    fn d_term_noise_quiet_with_low_noise() {
+        let sr = make_sr("roll", 5.0, 35.0, 20.0, 10);
+        let vib = make_vib([20.0, 18.0, 16.0]);
+        let diags = diagnose_d_term_noise(&sr, &vib);
+        assert!(diags.is_empty(), "low noise floor should not trigger");
+    }
+
+    #[test]
+    fn d_term_noise_quiet_with_no_overshoot() {
+        let sr = make_sr("roll", 5.0, 10.0, 12.0, 10);
+        let vib = make_vib([40.0, 38.0, 36.0]);
+        let diags = diagnose_d_term_noise(&sr, &vib);
+        assert!(diags.is_empty(), "no overshoot means no D-gain concern");
+    }
 }

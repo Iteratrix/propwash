@@ -271,6 +271,10 @@ pub(crate) fn parse_bf_field_name(name: &str) -> SensorField {
             .map_or_else(|| SensorField::Unknown(name.to_string()), SensorField::PidI),
         _ if name.starts_with("axisD[") => parse_axis_field(name)
             .map_or_else(|| SensorField::Unknown(name.to_string()), SensorField::PidD),
+        _ if name.starts_with("axisF[") => parse_axis_field(name).map_or_else(
+            || SensorField::Unknown(name.to_string()),
+            SensorField::Feedforward,
+        ),
         _ if name.starts_with("eRPM[") => parse_index(name).map_or_else(
             || SensorField::Unknown(name.to_string()),
             |i| SensorField::ERpm(MotorIndex(i)),
