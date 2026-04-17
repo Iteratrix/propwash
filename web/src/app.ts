@@ -1,5 +1,5 @@
-import init, { add_file, clear_workspace, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames, get_trend } from "../pkg/propwash_web.js";
-import type { WorkspaceFile, SessionRef, SessionResult, TrendPoint, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, PidAnalysis } from "./types.js";
+import init, { add_file, clear_workspace, get_timeseries, get_spectrogram, get_filter_config, get_raw_frames, get_trend, get_step_overlay } from "../pkg/propwash_web.js";
+import type { WorkspaceFile, SessionRef, SessionResult, TrendPoint, FlightEvent, Diagnostic, VibrationAnalysis, Spectrum, FilterConfig, PidAnalysis, StepOverlay } from "./types.js";
 import { formatEventType, formatEventDetails, eventColor, heatColor, bucketDiagnostics, classifyDelta } from "./format.js";
 
 declare const echarts: any;
@@ -117,6 +117,7 @@ const FIELD_GROUPS = {
 
 const TS_MAX_POINTS = 4000;
 let tsPlots: any[] = [];
+let navigateTarget: number | null = null;
 let tsSync: any = null;
 let filterConfig: FilterConfig | null = null;
 
@@ -564,6 +565,7 @@ function renderViewIfNeeded(view: string): void {
     case "overview":
       renderSummary(s);
       renderTuning(s.analysis.pid);
+      renderStepOverlay(activeSession);
       renderDiagnostics(s.analysis.diagnostics);
       renderEvents(s.analysis.events);
       break;
@@ -603,12 +605,17 @@ function navigateToTime(seconds: number): void {
   renderViewIfNeeded("timeline");
 
   // Zoom to ±1.5s window around the event
-  const window = 1.5;
-  const min = Math.max(0, seconds - window);
-  const max = seconds + window;
+  const win = 1.5;
+  const min = Math.max(0, seconds - win);
+  const max = seconds + win;
   for (const p of tsPlots) {
     p.setScale("x", { min, max });
   }
+
+  // Flash the navigation target marker
+  navigateTarget = seconds;
+  setTimeout(() => { navigateTarget = null; for (const p of tsPlots) p.redraw(); }, 2000);
+  for (const p of tsPlots) p.redraw();
 }
 
 function setupTimeseriesControls() {
@@ -727,7 +734,7 @@ function renderTimeseries(ref: SessionRef, group: string): void {
       },
     ],
     series,
-    plugins: [eventMarkersPlugin(events)],
+    plugins: [eventMarkersPlugin(events), navigateMarkerPlugin()],
     select: { show: true },
     hooks: {
       setSelect: [
@@ -779,6 +786,38 @@ function eventMarkersPlugin(events: FlightEvent[]): any {
   };
 }
 
+function navigateMarkerPlugin(): any {
+  return {
+    hooks: {
+      draw: [
+        (u: any) => {
+          if (navigateTarget == null) return;
+          const t = navigateTarget;
+          const [xMin, xMax] = [u.scales.x.min, u.scales.x.max];
+          if (t < xMin || t > xMax) return;
+          const x = u.valToPos(t, "x", true);
+          const ctx = u.ctx;
+          ctx.save();
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.8;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(x, u.bbox.top);
+          ctx.lineTo(x, u.bbox.top + u.bbox.height);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "#ffffff";
+          ctx.globalAlpha = 0.9;
+          ctx.font = "10px JetBrains Mono, monospace";
+          ctx.textAlign = "center";
+          ctx.fillText(`${t.toFixed(2)}s`, x, u.bbox.top - 4);
+          ctx.restore();
+        },
+      ],
+    },
+  };
+}
 
 function renderSummary(session: SessionResult): void {
   const grid = $("#summary-grid");
@@ -902,6 +941,119 @@ function renderTuning(pid: PidAnalysis | null): void {
   }
 
   content.innerHTML = html;
+}
+
+function renderStepOverlay(ref: SessionRef): void {
+  const panel = $("#step-overlay-panel");
+  const container = $("#step-overlay-plots");
+
+  const json = get_step_overlay(ref.fileId, ref.sessionIdx);
+  const data: StepOverlay | { error: string } = JSON.parse(json);
+
+  if ("error" in data || !data.axes || data.axes.length === 0) {
+    panel.classList.add("hidden");
+    return;
+  }
+
+  panel.classList.remove("hidden");
+  container.innerHTML = "";
+
+  const width = chartWidth();
+  const axisColor: Record<string, string> = {
+    roll: "#5b8def",
+    pitch: "#4ec88c",
+    yaw: "#e8b84a",
+  };
+
+  for (const axis of data.axes) {
+    const row = document.createElement("div");
+    row.className = "step-overlay-row";
+
+    const title = document.createElement("h3");
+    title.textContent = `${axis.axis.charAt(0).toUpperCase() + axis.axis.slice(1)} (${axis.gyro_steps.length} steps)`;
+    row.appendChild(title);
+
+    const plotDiv = document.createElement("div");
+    row.appendChild(plotDiv);
+    container.appendChild(row);
+
+    const color = axisColor[axis.axis] || "#5b8def";
+    const time = axis.time_ms;
+
+    // Build datasets: time, then individual gyro traces, then average, then setpoint average
+    const datasets: (number[] | Float64Array)[] = [time];
+    const series: any[] = [{}];
+
+    // Individual gyro traces — thin, semi-transparent
+    for (let i = 0; i < axis.gyro_steps.length; i++) {
+      datasets.push(axis.gyro_steps[i]);
+      series.push({
+        label: i === 0 ? "Steps" : "",
+        stroke: color + "30",
+        width: 0.5,
+      });
+    }
+
+    // Average gyro — thick, solid
+    datasets.push(axis.gyro_average);
+    series.push({
+      label: "Average",
+      stroke: color,
+      width: 2.5,
+    });
+
+    // Average setpoint — dashed gray
+    // Use first setpoint trace as representative (they're all normalized similarly)
+    if (axis.setpoint_steps.length > 0) {
+      // Average the setpoint traces
+      const spAvg = new Array(time.length).fill(0);
+      for (const sp of axis.setpoint_steps) {
+        for (let j = 0; j < time.length; j++) {
+          spAvg[j] += (sp[j] ?? 0);
+        }
+      }
+      const n = axis.setpoint_steps.length;
+      for (let j = 0; j < time.length; j++) {
+        spAvg[j] /= n;
+      }
+      datasets.push(spAvg);
+      series.push({
+        label: "Setpoint",
+        stroke: "#888888",
+        width: 1.5,
+        dash: [6, 3],
+      });
+    }
+
+    const opts = {
+      width,
+      height: 220,
+      cursor: { show: true },
+      scales: { x: { time: false } },
+      legend: { show: true },
+      axes: [
+        {
+          label: "Time (ms)",
+          stroke: "#8888a0",
+          grid: { stroke: "rgba(42,45,58,0.6)" },
+          ticks: { stroke: "rgba(42,45,58,0.6)" },
+          font: "11px JetBrains Mono, monospace",
+          labelFont: "11px JetBrains Mono, monospace",
+        },
+        {
+          label: "Normalized",
+          stroke: "#8888a0",
+          grid: { stroke: "rgba(42,45,58,0.6)" },
+          ticks: { stroke: "rgba(42,45,58,0.6)" },
+          font: "11px JetBrains Mono, monospace",
+          labelFont: "11px JetBrains Mono, monospace",
+        },
+      ],
+      series,
+    };
+
+    new uPlot(opts, datasets, plotDiv);
+  }
 }
 
 function disposeEcharts() {
