@@ -93,6 +93,18 @@ export interface AxisGains {
   d: number | null;
 }
 
+export interface StepOverlay {
+  axes: StepOverlayAxis[];
+}
+
+export interface StepOverlayAxis {
+  axis: string;
+  time_ms: number[];
+  setpoint_steps: number[][];
+  gyro_steps: number[][];
+  gyro_average: number[];
+}
+
 export interface FlightSummary {
   total_events: number;
   desyncs: number;

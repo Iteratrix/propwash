@@ -234,6 +234,154 @@ fn detect_steps(setpoint: &[f64]) -> Vec<usize> {
     steps
 }
 
+// ---------------------------------------------------------------------------
+// Step overlay — aligned step windows for visualization
+// ---------------------------------------------------------------------------
+
+/// Number of samples before t=0 to include in overlay windows.
+const OVERLAY_PRE: usize = 30;
+/// Number of samples after t=0 to include in overlay windows.
+const OVERLAY_POST: usize = 150;
+
+/// Aligned step response data for one axis, ready for overlay charting.
+#[derive(Debug, Clone, Serialize)]
+pub struct StepOverlayAxis {
+    pub axis: &'static str,
+    /// Time axis in milliseconds relative to t=0 (the step).
+    pub time_ms: Vec<f64>,
+    /// Normalized setpoint per step (0.0 = before, 1.0 = target).
+    pub setpoint_steps: Vec<Vec<f64>>,
+    /// Normalized gyro response per step (0.0 = before, 1.0 = target).
+    pub gyro_steps: Vec<Vec<f64>>,
+    /// Average normalized gyro response across all steps.
+    pub gyro_average: Vec<f64>,
+}
+
+/// Complete step overlay data across all axes.
+#[derive(Debug, Clone, Serialize)]
+pub struct StepOverlay {
+    pub axes: Vec<StepOverlayAxis>,
+}
+
+/// Extract aligned, normalized step windows for overlay visualization.
+#[allow(clippy::cast_precision_loss)]
+pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
+    let sample_rate = session.sample_rate_hz();
+    if sample_rate <= 0.0 {
+        return None;
+    }
+    let ms_per_sample = 1000.0 / sample_rate;
+
+    let axis_names = ["roll", "pitch", "yaw"];
+    let mut axes = Vec::new();
+
+    for (i, axis) in Axis::ALL.iter().enumerate() {
+        let setpoint = session.field(&SensorField::Setpoint(*axis));
+        let gyro = session.field(&SensorField::Gyro(*axis));
+
+        if setpoint.len() < OVERLAY_PRE + OVERLAY_POST || gyro.len() < OVERLAY_PRE + OVERLAY_POST {
+            continue;
+        }
+        let len = setpoint.len().min(gyro.len());
+        let steps = detect_steps(&setpoint[..len]);
+
+        let mut sp_windows: Vec<Vec<f64>> = Vec::new();
+        let mut gyro_windows: Vec<Vec<f64>> = Vec::new();
+
+        for &step_idx in &steps {
+            if step_idx < OVERLAY_PRE + STEP_LOOKBACK {
+                continue;
+            }
+            let win_start = step_idx - OVERLAY_PRE;
+            let win_end = step_idx + OVERLAY_POST;
+            if win_end > len {
+                continue;
+            }
+
+            // Baseline: setpoint before the ramp
+            let pre_start = step_idx.saturating_sub(STEP_LOOKBACK + PRE_SAMPLES);
+            let pre_end = step_idx.saturating_sub(STEP_LOOKBACK);
+            let sp_before = if pre_end > pre_start {
+                mean(&setpoint[pre_start..pre_end])
+            } else {
+                setpoint[win_start]
+            };
+
+            // Target: settled setpoint after the ramp
+            let settle_start = (step_idx + STEP_LOOKBACK).min(win_end - 10);
+            let settle_end = (settle_start + 20).min(win_end);
+            let sp_after = mean(&setpoint[settle_start..settle_end]);
+            let step_size = sp_after - sp_before;
+
+            if step_size.abs() < MIN_STEP_SIZE {
+                continue;
+            }
+
+            // Check for corrupt data
+            let gyro_window = &gyro[win_start..win_end];
+            let max_abs = gyro_window.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+            if max_abs > 2000.0 {
+                continue;
+            }
+
+            // Normalize: 0.0 = sp_before, 1.0 = sp_after
+            let window_len = OVERLAY_PRE + OVERLAY_POST;
+            let sp_norm: Vec<f64> = (0..window_len)
+                .map(|j| (setpoint[win_start + j] - sp_before) / step_size)
+                .collect();
+            let gyro_norm: Vec<f64> = (0..window_len)
+                .map(|j| (gyro[win_start + j] - sp_before) / step_size)
+                .collect();
+
+            // Filter out windows with unreliable normalization (>200% overshoot)
+            let max_gyro_norm = gyro_norm.iter().copied().fold(0.0_f64, f64::max);
+            let min_gyro_norm = gyro_norm.iter().copied().fold(0.0_f64, f64::min);
+            if max_gyro_norm > 3.0 || min_gyro_norm < -2.0 {
+                continue;
+            }
+
+            sp_windows.push(sp_norm);
+            gyro_windows.push(gyro_norm);
+        }
+
+        if gyro_windows.len() < 2 {
+            continue;
+        }
+
+        // Compute average gyro response
+        let window_len = OVERLAY_PRE + OVERLAY_POST;
+        let mut gyro_average = vec![0.0f64; window_len];
+        for w in &gyro_windows {
+            for (j, v) in w.iter().enumerate() {
+                gyro_average[j] += v;
+            }
+        }
+        let n = gyro_windows.len() as f64;
+        for v in &mut gyro_average {
+            *v /= n;
+        }
+
+        // Build time axis (ms relative to t=0)
+        let time_ms: Vec<f64> = (0..window_len)
+            .map(|j| (j as f64 - OVERLAY_PRE as f64) * ms_per_sample)
+            .collect();
+
+        axes.push(StepOverlayAxis {
+            axis: axis_names[i],
+            time_ms,
+            setpoint_steps: sp_windows,
+            gyro_steps: gyro_windows,
+            gyro_average,
+        });
+    }
+
+    if axes.is_empty() {
+        None
+    } else {
+        Some(StepOverlay { axes })
+    }
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn mean(values: &[f64]) -> f64 {
     if values.is_empty() {

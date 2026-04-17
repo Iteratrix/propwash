@@ -601,6 +601,18 @@ footer a {
   color: var(--green);
 }
 
+/* Step overlay */
+.step-overlay-row {
+  margin-bottom: 1.5rem;
+}
+
+.step-overlay-row h3 {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+  color: var(--text);
+}
+
 /* Comparison */
 .compare-table {
   width: 100%;

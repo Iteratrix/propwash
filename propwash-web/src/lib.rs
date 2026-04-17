@@ -320,6 +320,22 @@ pub fn get_raw_frames(
     })
 }
 
+/// Get step response overlay data for a session.
+#[wasm_bindgen]
+pub fn get_step_overlay(file_id: u32, session_idx: usize) -> String {
+    use propwash_core::analysis::step_response;
+
+    with_session(
+        file_id,
+        session_idx,
+        |session| match step_response::extract_step_overlay(session) {
+            Some(overlay) => serde_json::to_string(&overlay)
+                .unwrap_or_else(|e| format!(r#"{{"error":"serialization failed: {e}"}}"#)),
+            None => r#"{"error":"no step data"}"#.to_string(),
+        },
+    )
+}
+
 /// Compute trend across all sessions in the workspace.
 #[wasm_bindgen]
 pub fn get_trend() -> String {
