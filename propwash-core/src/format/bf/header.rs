@@ -284,6 +284,7 @@ pub(crate) fn parse_bf_field_name(name: &str) -> SensorField {
         "GPS_altitude" => SensorField::Altitude,
         "GPS_speed" => SensorField::GpsSpeed,
         "GPS_ground_course" => SensorField::Heading,
+        "rssi" => SensorField::Rssi,
         other => SensorField::Unknown(other.to_string()),
     }
 }

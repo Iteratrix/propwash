@@ -439,6 +439,10 @@ impl BfSession {
         match sensor_field {
             // BF stores vbat in centivalts (0.01V units)
             SensorField::Vbat if !raw.is_empty() => raw.iter().map(|&v| v * 0.01).collect(),
+            // BF stores RSSI as 0-1023; scale to 0-100%
+            SensorField::Rssi if !raw.is_empty() => {
+                raw.iter().map(|&v| v / 1023.0 * 100.0).collect()
+            }
             _ => raw,
         }
     }

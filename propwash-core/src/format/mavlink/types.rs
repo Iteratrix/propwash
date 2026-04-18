@@ -408,6 +408,9 @@ impl MavlinkSession {
             | SensorField::PidI(_)
             | SensorField::PidD(_)
             | SensorField::Feedforward(_) => Vec::new(),
+            SensorField::Rssi => self
+                .msg_column("RC_CHANNELS", "rssi")
+                .map_or_else(Vec::new, <[f64]>::to_vec),
             SensorField::Unknown(name) => {
                 // Try "MSG_NAME.field_name" format
                 if let Some((msg, fld)) = name.split_once('.') {
