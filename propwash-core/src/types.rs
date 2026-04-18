@@ -156,6 +156,7 @@ pub enum SensorField {
     GpsLat,
     GpsLng,
     Heading,
+    Rssi,
     Unknown(String),
 }
 
@@ -187,7 +188,8 @@ impl SensorField {
             Self::Altitude => Unit::Meters,
             Self::GpsSpeed => Unit::MetersPerSecond,
             Self::GpsLat | Self::GpsLng | Self::Heading => Unit::Degrees,
-            Self::PidP(_)
+            Self::Rssi
+            | Self::PidP(_)
             | Self::PidI(_)
             | Self::PidD(_)
             | Self::Feedforward(_)
@@ -209,6 +211,7 @@ impl SensorField {
             "gps_lat" => Ok(Self::GpsLat),
             "gps_lng" => Ok(Self::GpsLng),
             "heading" => Ok(Self::Heading),
+            "rssi" => Ok(Self::Rssi),
 
             _ if name.starts_with("gyro[") => parse_axis_by_name(name)
                 .map(Self::Gyro)
@@ -269,6 +272,7 @@ impl fmt::Display for SensorField {
             Self::GpsLat => write!(f, "gps_lat"),
             Self::GpsLng => write!(f, "gps_lng"),
             Self::Heading => write!(f, "heading"),
+            Self::Rssi => write!(f, "rssi"),
             Self::Unknown(s) => write!(f, "{s}"),
         }
     }

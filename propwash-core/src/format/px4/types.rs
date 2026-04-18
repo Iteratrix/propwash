@@ -445,6 +445,11 @@ impl Px4Session {
             | SensorField::PidI(_)
             | SensorField::PidD(_)
             | SensorField::Feedforward(_) => Vec::new(),
+            SensorField::Rssi => {
+                // PX4 input_rc has an rssi field (int32)
+                self.topic_column("input_rc", "rssi")
+                    .map_or_else(Vec::new, <[f64]>::to_vec)
+            }
         }
     }
 

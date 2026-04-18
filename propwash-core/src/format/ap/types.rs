@@ -399,6 +399,9 @@ impl ApSession {
                     .map_or_else(Vec::new, <[f64]>::to_vec)
             }
             SensorField::Feedforward(_) => Vec::new(),
+            SensorField::Rssi => self
+                .msg_column("RCIN", "RSSI")
+                .map_or_else(Vec::new, <[f64]>::to_vec),
             SensorField::Unknown(name) => {
                 if let Some((msg, fld)) = name.split_once('.') {
                     self.msg_column(msg, fld)

@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "propwash-cli"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "clap",
  "propwash-core",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "propwash-core"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "memchr",
  "proptest",
@@ -410,7 +410,7 @@ dependencies = [
 
 [[package]]
 name = "propwash-web"
-version = "0.9.1"
+version = "0.9.2"
 dependencies = [
  "console_error_panic_hook",
  "propwash-core",

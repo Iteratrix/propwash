@@ -113,6 +113,12 @@ const FIELD_GROUPS = {
     names:  ["Latitude", "Longitude", "Heading"],
     colors: ["#5b8def", "#4ec88c", "#e8b84a"],
   },
+  rssi: {
+    label: "RSSI / Link Quality (%)",
+    fields: ["rssi"],
+    names:  ["RSSI"],
+    colors: ["#4ec88c"],
+  },
 };
 
 const TS_MAX_POINTS = 4000;
