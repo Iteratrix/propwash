@@ -234,7 +234,8 @@ fn detect_desync(
     }
 
     let (_, motor_max) = unified.motor_range();
-    let threshold = motor_max - (motor_max / 20.0);
+    // Motor must be near absolute max (top 5%)
+    let spike_threshold = motor_max * 0.95;
 
     let motors: Vec<Vec<f64>> = (0..n_motors)
         .map(|i| unified.field(&SensorField::Motor(MotorIndex(i))))
@@ -251,18 +252,27 @@ fn detect_desync(
         let vals: Vec<f64> = motors.iter().map(|m| m[j]).collect();
 
         for (mi, &val) in vals.iter().enumerate() {
-            if val < threshold {
+            // Motor must be near max output
+            if val < spike_threshold {
                 continue;
             }
-            let others_sum: f64 = vals
+            let others: Vec<f64> = vals
                 .iter()
                 .enumerate()
                 .filter(|(i, _)| *i != mi)
                 .map(|(_, &v)| v)
-                .sum();
-            let others_avg = others_sum / (n_motors - 1) as f64;
+                .collect();
+            let others_avg = others.iter().sum::<f64>() / others.len() as f64;
+            let others_max = others.iter().copied().fold(0.0_f64, f64::max);
 
-            if val > others_avg * 1.5 && others_avg > 0.0 {
+            // True desync: one motor at max while ALL others are well below max.
+            // During normal cornering/PID correction, at least one other motor
+            // is also elevated. A desync is one motor spiking alone.
+            // Requirements:
+            //   1. The spiking motor is near max (>95%)
+            //   2. No other motor is above 60% of max
+            //   3. The spiking motor is >3x the others average
+            if others_max < motor_max * 0.60 && val > others_avg * 3.0 && others_avg > 0.0 {
                 let t = timestamps.get(j).copied().unwrap_or(0.0);
                 events.push(FlightEvent {
                     frame_index: j,

@@ -136,14 +136,14 @@ fn diagnose_desync(events: &[FlightEvent]) -> Vec<Diagnostic> {
         .filter(|e| matches!(&e.kind, EventKind::Desync { .. }))
         .count();
 
-    if desync_count > 10 {
+    if desync_count > 50 {
         vec![Diagnostic {
             severity: Severity::Problem,
             category: "esc",
             message: format!("ESC desync detected ({desync_count} events)"),
-            detail: "One motor spiking to max while others are normal indicates ESC desync. Check motor timing, reduce DShot speed, or try a different ESC protocol. Also check for damaged motor wires or bad solder joints.".into(),
+            detail: "One motor repeatedly spiking to max while others are at normal levels indicates ESC desync. Check motor timing, reduce DShot speed, or try a different ESC protocol. Also check for damaged motor wires or bad solder joints.".into(),
         }]
-    } else if desync_count > 0 {
+    } else if desync_count > 5 {
         vec![Diagnostic {
             severity: Severity::Warning,
             category: "esc",
