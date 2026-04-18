@@ -1085,23 +1085,21 @@ fn bf_gps_data_parsed() {
     assert_eq!(home[1], 191_013_996, "GPS home lng");
 
     // First GPS coord after reconstruction should equal home (delta 0)
+    // Coordinates are scaled from raw ×10^7 to decimal degrees
     let gps_lat = session.field(&SensorField::GpsLat);
     let gps_lng = session.field(&SensorField::GpsLng);
     assert!(!gps_lat.is_empty(), "should have GPS lat data via field()");
     assert!(!gps_lng.is_empty(), "should have GPS lng data via field()");
-    #[allow(clippy::cast_precision_loss)]
-    {
-        assert!(
-            (gps_lat[0] - 502_075_967.0).abs() < 1.0,
-            "first GPS lat should be 502075967, got {}",
-            gps_lat[0]
-        );
-        assert!(
-            (gps_lng[0] - 191_013_996.0).abs() < 1.0,
-            "first GPS lng should be 191013996, got {}",
-            gps_lng[0]
-        );
-    }
+    assert!(
+        (gps_lat[0] - 50.2075967).abs() < 0.0000001,
+        "first GPS lat should be ~50.2076, got {}",
+        gps_lat[0]
+    );
+    assert!(
+        (gps_lng[0] - 19.1013996).abs() < 0.0000001,
+        "first GPS lng should be ~19.1014, got {}",
+        gps_lng[0]
+    );
 
     // eRPM[0] first 3 values
     let erpm = session.field(&SensorField::ERpm(propwash_core::types::MotorIndex(0)));

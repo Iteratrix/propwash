@@ -373,7 +373,14 @@ impl BfSession {
 
     /// Returns field names from header definitions.
     pub fn field_names(&self) -> Vec<String> {
-        self.main_field_defs.names()
+        let mut names = self.main_field_defs.names();
+        if let Some(ref slow) = self.slow_field_defs {
+            names.extend(slow.names());
+        }
+        if let Some(ref gps) = self.gps_field_defs {
+            names.extend(gps.names());
+        }
+        names
     }
 
     /// Returns the firmware version string.
@@ -442,6 +449,10 @@ impl BfSession {
             // BF stores RSSI as 0-1023; scale to 0-100%
             SensorField::Rssi if !raw.is_empty() => {
                 raw.iter().map(|&v| v / 1023.0 * 100.0).collect()
+            }
+            // BF stores GPS coordinates as degrees × 10^7
+            SensorField::GpsLat | SensorField::GpsLng if !raw.is_empty() => {
+                raw.iter().map(|&v| v * 1e-7).collect()
             }
             _ => raw,
         }

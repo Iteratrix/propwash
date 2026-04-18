@@ -202,6 +202,8 @@ impl ApSession {
         let has_rc = !self.msg_timestamps("RCIN").is_empty();
         let n_motors = self.motor_count();
 
+        let has_esc = self.msg_column("ESC", "RPM").is_some();
+
         Axis::ALL
             .iter()
             .filter(|_| has_gyro)
@@ -223,6 +225,11 @@ impl ApSession {
                 .iter()
                 .filter(|_| has_rc)
                 .map(|&ch| SensorField::Rc(ch).to_string()),
+            )
+            .chain(
+                (0..n_motors)
+                    .filter(|_| has_esc)
+                    .map(|i| SensorField::ERpm(MotorIndex(i)).to_string()),
             )
             .collect()
     }
