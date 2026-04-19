@@ -1,4 +1,5 @@
 use crate::analysis::events::{EventKind, FlightEvent};
+use crate::types::Axis;
 use serde::Serialize;
 
 /// A higher-level grouping of temporally-adjacent flight events.
@@ -31,12 +32,12 @@ pub enum EpisodeKind {
         duration_frames: usize,
     },
     GyroSpikes {
-        axis: &'static str,
+        axis: Axis,
         peak_magnitude: f64,
         count: usize,
     },
     Overshoot {
-        axis: &'static str,
+        axis: Axis,
         peak_overshoot_percent: f64,
         count: usize,
     },
@@ -129,11 +130,10 @@ fn consolidate_motor_saturations(events: &[FlightEvent], episodes: &mut Vec<Epis
 }
 
 fn consolidate_gyro_spikes(events: &[FlightEvent], episodes: &mut Vec<Episode>) {
-    let axes = ["roll", "pitch", "yaw"];
-    for axis in &axes {
+    for axis in Axis::ALL {
         let mut axis_events: Vec<&FlightEvent> = events
             .iter()
-            .filter(|e| matches!(&e.kind, EventKind::GyroSpike { axis: a, .. } if a == axis))
+            .filter(|e| matches!(&e.kind, EventKind::GyroSpike { axis: a, .. } if *a == axis))
             .collect();
         axis_events.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
 
@@ -175,11 +175,10 @@ fn consolidate_gyro_spikes(events: &[FlightEvent], episodes: &mut Vec<Episode>) 
 }
 
 fn consolidate_overshoots(events: &[FlightEvent], episodes: &mut Vec<Episode>) {
-    let axes = ["roll", "pitch", "yaw"];
-    for axis in &axes {
+    for axis in Axis::ALL {
         let mut axis_events: Vec<&FlightEvent> = events
             .iter()
-            .filter(|e| matches!(&e.kind, EventKind::Overshoot { axis: a, .. } if a == axis))
+            .filter(|e| matches!(&e.kind, EventKind::Overshoot { axis: a, .. } if *a == axis))
             .collect();
         axis_events.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
 

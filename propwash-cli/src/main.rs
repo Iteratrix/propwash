@@ -783,11 +783,7 @@ fn print_spectra(
     noise_floor: &[f64; 3],
 ) {
     for spectrum in spectra {
-        let floor_idx = match spectrum.axis {
-            "roll" => 0,
-            "pitch" => 1,
-            _ => 2,
-        };
+        let floor_idx = spectrum.axis.index();
         println!(
             "    {} axis — noise floor {:.1} dB:",
             spectrum.axis, noise_floor[floor_idx]

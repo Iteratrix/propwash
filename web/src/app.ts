@@ -25,9 +25,9 @@ let workspace: WorkspaceFile[] = [];
 let activeSession: SessionRef | null = null;
 
 const AXIS_COLORS: Record<string, string> = {
-  roll:  "#5b8def",
-  pitch: "#4ec88c",
-  yaw:   "#e8b84a",
+  Roll:  "#5b8def",
+  Pitch: "#4ec88c",
+  Yaw:   "#e8b84a",
   X: "#5b8def",
   Y: "#4ec88c",
   Z: "#e8b84a",
@@ -405,7 +405,7 @@ function renderComparisonSpectra(a: SessionResult, b: SessionResult): void {
     return;
   }
 
-  const axes = ["roll", "pitch", "yaw"];
+  const axes = ["Roll", "Pitch", "Yaw"];
   for (const axisName of axes) {
     const specA = vibA.spectra.find((s: Spectrum) => s.axis === axisName);
     const specB = vibB.spectra.find((s: Spectrum) => s.axis === axisName);
@@ -414,7 +414,7 @@ function renderComparisonSpectra(a: SessionResult, b: SessionResult): void {
     const row = document.createElement("div");
     row.className = "spectrum-row";
     const title = document.createElement("h3");
-    title.textContent = axisName.charAt(0).toUpperCase() + axisName.slice(1);
+    title.textContent = axisName;
     row.appendChild(title);
 
     const plotDiv = document.createElement("div");
@@ -966,9 +966,9 @@ function renderStepOverlay(ref: SessionRef): void {
 
   const width = chartWidth();
   const axisColor: Record<string, string> = {
-    roll: "#5b8def",
-    pitch: "#4ec88c",
-    yaw: "#e8b84a",
+    Roll: "#5b8def",
+    Pitch: "#4ec88c",
+    Yaw: "#e8b84a",
   };
 
   for (const axis of data.axes) {
@@ -976,7 +976,7 @@ function renderStepOverlay(ref: SessionRef): void {
     row.className = "step-overlay-row";
 
     const title = document.createElement("h3");
-    title.textContent = `${axis.axis.charAt(0).toUpperCase() + axis.axis.slice(1)} (${axis.gyro_steps.length} steps)`;
+    title.textContent = `${axis.axis} (${axis.gyro_steps.length} steps)`;
     row.appendChild(title);
 
     const plotDiv = document.createElement("div");
@@ -1083,7 +1083,7 @@ function renderSpectraEcharts(vibration: VibrationAnalysis | null): void {
     row.className = "spectrum-row";
 
     const title = document.createElement("h3");
-    title.textContent = spectrum.axis.charAt(0).toUpperCase() + spectrum.axis.slice(1);
+    title.textContent = spectrum.axis;
     row.appendChild(title);
 
     const chartDiv = document.createElement("div");
@@ -1324,7 +1324,7 @@ function renderSpectrogram(ref: SessionRef): void {
     row.className = "spectrogram-row";
 
     const title = document.createElement("h3");
-    title.textContent = axis.axis.charAt(0).toUpperCase() + axis.axis.slice(1);
+    title.textContent = axis.axis;
     row.appendChild(title);
 
     const canvas = document.createElement("canvas");

@@ -6,7 +6,7 @@ use crate::types::{Axis, SensorField, Session};
 /// Step response quality metrics for one axis.
 #[derive(Debug, Clone, Serialize)]
 pub struct AxisStepResponse {
-    pub axis: &'static str,
+    pub axis: Axis,
     /// Number of step events detected and analyzed.
     pub step_count: usize,
     /// Average time from 10% to 90% of target (milliseconds).
@@ -44,10 +44,9 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
     }
     let ms_per_sample = 1000.0 / sample_rate;
 
-    let axis_names = ["roll", "pitch", "yaw"];
     let mut axes = Vec::new();
 
-    for (i, axis) in Axis::ALL.iter().enumerate() {
+    for axis in &Axis::ALL {
         let setpoint = session.field(&SensorField::Setpoint(*axis));
         let gyro = session.field(&SensorField::Gyro(*axis));
 
@@ -184,7 +183,7 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
         }
 
         axes.push(AxisStepResponse {
-            axis: axis_names[i],
+            axis: *axis,
             step_count: overshoots.len(),
             rise_time_ms: if rise_times.is_empty() {
                 0.0
@@ -247,7 +246,7 @@ const OVERLAY_POST: usize = 150;
 /// Aligned step response data for one axis, ready for overlay charting.
 #[derive(Debug, Clone, Serialize)]
 pub struct StepOverlayAxis {
-    pub axis: &'static str,
+    pub axis: Axis,
     /// Time axis in milliseconds relative to t=0 (the step).
     pub time_ms: Vec<f64>,
     /// Normalized setpoint per step (0.0 = before, 1.0 = target).
@@ -272,10 +271,9 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
     }
     let ms_per_sample = 1000.0 / sample_rate;
 
-    let axis_names = ["roll", "pitch", "yaw"];
     let mut axes = Vec::new();
 
-    for (i, axis) in Axis::ALL.iter().enumerate() {
+    for axis in &Axis::ALL {
         let setpoint = session.field(&SensorField::Setpoint(*axis));
         let gyro = session.field(&SensorField::Gyro(*axis));
 
@@ -367,7 +365,7 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
             .collect();
 
         axes.push(StepOverlayAxis {
-            axis: axis_names[i],
+            axis: *axis,
             time_ms,
             setpoint_steps: sp_windows,
             gyro_steps: gyro_windows,

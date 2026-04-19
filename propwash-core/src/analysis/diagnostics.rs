@@ -7,7 +7,7 @@ use super::events::{EventKind, FlightEvent};
 use super::fft::VibrationAnalysis;
 use super::pid::{PidAnalysis, TuningRating};
 use super::step_response::StepResponseAnalysis;
-use crate::types::FilterConfig;
+use crate::types::{Axis, FilterConfig};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Diagnostic {
@@ -166,22 +166,17 @@ fn diagnose_overshoot(events: &[FlightEvent], duration_seconds: f64) -> Vec<Diag
             ..
         } = &event.kind
         {
-            let idx = match *axis {
-                "roll" => 0,
-                "pitch" => 1,
-                _ => 2,
-            };
-            axis_overshoots[idx].push(*overshoot_percent);
+            axis_overshoots[axis.index()].push(*overshoot_percent);
         }
     }
 
     let mut diagnostics = Vec::new();
-    let axis_names = ["roll", "pitch", "yaw"];
     for (idx, overshoots) in axis_overshoots.iter().enumerate() {
         if overshoots.is_empty() {
             continue;
         }
 
+        let axis = Axis::ALL[idx];
         let count_f = overshoots.len().az::<f64>();
         let rate = count_f / duration_seconds;
         let avg = overshoots.iter().sum::<f64>() / count_f;
@@ -192,25 +187,20 @@ fn diagnose_overshoot(events: &[FlightEvent], duration_seconds: f64) -> Vec<Diag
                 severity: Severity::Problem,
                 category: "pid",
                 message: format!(
-                    "Severe {} overshoot (peak {:.0}%, avg {:.0}%)",
-                    axis_names[idx], max, avg
+                    "Severe {axis} overshoot (peak {max:.0}%, avg {avg:.0}%)"
                 ),
                 detail: format!(
-                    "{} overshoot events ({:.1}/sec). Peak overshoot over 100% indicates P gain is too high or D gain is too low on {} axis.",
-                    overshoots.len(), rate, axis_names[idx]
+                    "{} overshoot events ({rate:.1}/sec). Peak overshoot over 100% indicates P gain is too high or D gain is too low on {axis} axis.",
+                    overshoots.len()
                 ),
             });
         } else if rate > 5.0 && avg > 20.0 {
             diagnostics.push(Diagnostic {
                 severity: Severity::Warning,
                 category: "pid",
-                message: format!(
-                    "Frequent {} overshoot ({:.0}/sec, avg {:.0}%)",
-                    axis_names[idx], rate, avg
-                ),
+                message: format!("Frequent {axis} overshoot ({rate:.0}/sec, avg {avg:.0}%)"),
                 detail: format!(
-                    "Consider increasing D gain or decreasing P gain slightly on {} axis.",
-                    axis_names[idx]
+                    "Consider increasing D gain or decreasing P gain slightly on {axis} axis."
                 ),
             });
         }
@@ -224,28 +214,22 @@ fn diagnose_gyro_spikes(events: &[FlightEvent]) -> Vec<Diagnostic> {
 
     for event in events {
         if let EventKind::GyroSpike { axis, magnitude } = &event.kind {
-            let idx = match *axis {
-                "roll" => 0,
-                "pitch" => 1,
-                _ => 2,
-            };
-            max_spike[idx] = max_spike[idx].max(magnitude.abs());
-            spike_count[idx] += 1;
+            max_spike[axis.index()] = max_spike[axis.index()].max(magnitude.abs());
+            spike_count[axis.index()] += 1;
         }
     }
 
     let mut diagnostics = Vec::new();
-    let axis_names = ["roll", "pitch", "yaw"];
     for (idx, (&peak, &count)) in max_spike.iter().zip(spike_count.iter()).enumerate() {
         if peak > 1500.0 {
+            let axis = Axis::ALL[idx];
             diagnostics.push(Diagnostic {
                 severity: Severity::Problem,
                 category: "mechanical",
                 message: format!(
-                    "Extreme {} gyro spike ({:.0}°/s, {} events)",
-                    axis_names[idx], peak, count
+                    "Extreme {axis} gyro spike ({peak:.0}\u{b0}/s, {count} events)"
                 ),
-                detail: "Gyro readings above 1500°/s typically indicate a crash, prop strike, or gyro clipping. Check for damage.".into(),
+                detail: "Gyro readings above 1500\u{b0}/s typically indicate a crash, prop strike, or gyro clipping. Check for damage.".into(),
             });
         }
     }
@@ -253,16 +237,10 @@ fn diagnose_gyro_spikes(events: &[FlightEvent]) -> Vec<Diagnostic> {
 }
 
 fn diagnose_vibration(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
-    let axis_names = ["roll", "pitch", "yaw"];
     let mut diagnostics = Vec::new();
 
     for spectrum in &vib.spectra {
-        let axis_idx = match spectrum.axis {
-            "roll" => 0,
-            "pitch" => 1,
-            _ => 2,
-        };
-        let noise_floor = vib.noise_floor_db[axis_idx];
+        let noise_floor = vib.noise_floor_db[spectrum.axis.index()];
 
         if let Some(peak) = spectrum.peaks.first() {
             let prominence = peak.magnitude_db - noise_floor;
@@ -273,7 +251,7 @@ fn diagnose_vibration(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
                     category: "vibration",
                     message: format!(
                         "Strong resonance at {:.0} Hz on {} ({:.1} dB above floor)",
-                        peak.frequency_hz, axis_names[axis_idx], prominence
+                        peak.frequency_hz, spectrum.axis, prominence
                     ),
                     detail: format!(
                         "A prominent peak at {:.0} Hz suggests frame or prop resonance. Consider adding a notch filter at this frequency if not already configured.",
@@ -288,7 +266,7 @@ fn diagnose_vibration(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
                     category: "vibration",
                     message: format!(
                         "Low-frequency noise at {:.0} Hz on {} ({:.1} dB above floor)",
-                        peak.frequency_hz, axis_names[axis_idx], prominence
+                        peak.frequency_hz, spectrum.axis, prominence
                     ),
                     detail: "Low-frequency peaks (20-100 Hz) often indicate propwash oscillation, PID oscillation, or mechanical looseness.".into(),
                 });
@@ -305,11 +283,7 @@ fn diagnose_throttle_response(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
 
     let mut diagnostics = Vec::new();
     for spectrum_idx in 0..3 {
-        let axis_name = match spectrum_idx {
-            0 => "roll",
-            1 => "pitch",
-            _ => "yaw",
-        };
+        let axis = Axis::ALL[spectrum_idx];
 
         let mut band_peaks: Vec<(f64, f64)> = Vec::new();
         for band in &vib.throttle_bands {
@@ -330,7 +304,7 @@ fn diagnose_throttle_response(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
                     severity: Severity::Info,
                     category: "vibration",
                     message: format!(
-                        "Dominant {axis_name} frequency shifts with throttle ({min_f:.0}-{max_f:.0} Hz)"
+                        "Dominant {axis} frequency shifts with throttle ({min_f:.0}-{max_f:.0} Hz)"
                     ),
                     detail: "Frequency that scales with throttle indicates motor noise (RPM-dependent). This is normal and addressed by RPM filtering or dynamic notch filters.".into(),
                 });
@@ -396,11 +370,7 @@ fn diagnose_filter_adequacy(vib: &VibrationAnalysis, config: &FilterConfig) -> V
     let mut diagnostics = Vec::new();
 
     for spectrum in &vib.spectra {
-        let noise_floor = vib.noise_floor_db[match spectrum.axis {
-            "roll" => 0,
-            "pitch" => 1,
-            _ => 2,
-        }];
+        let noise_floor = vib.noise_floor_db[spectrum.axis.index()];
 
         for peak in &spectrum.peaks {
             let prominence = peak.magnitude_db - noise_floor;
@@ -514,7 +484,7 @@ fn diagnose_d_term_noise(sr: &StepResponseAnalysis, vib: &VibrationAnalysis) -> 
 
     // Check for axes that are overshooting AND have a high noise floor
     // This means the pilot can't safely raise D to control overshoot
-    let overshooting_axes: Vec<&str> = sr
+    let overshooting_axes: Vec<Axis> = sr
         .axes
         .iter()
         .filter(|a| a.step_count >= 3 && a.overshoot_percent > 25.0)
@@ -522,7 +492,11 @@ fn diagnose_d_term_noise(sr: &StepResponseAnalysis, vib: &VibrationAnalysis) -> 
         .collect();
 
     if !overshooting_axes.is_empty() && avg_noise_floor > 35.0 {
-        let axes_str = overshooting_axes.join(", ");
+        let axes_str = overshooting_axes
+            .iter()
+            .map(|a| a.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         diagnostics.push(Diagnostic {
             severity: Severity::Warning,
             category: "tuning",
@@ -625,7 +599,7 @@ mod tests {
     use crate::types::{Axis, AxisGains, PidGains};
 
     fn make_sr(
-        axis: &'static str,
+        axis: Axis,
         rise: f64,
         overshoot: f64,
         settling: f64,
@@ -782,7 +756,7 @@ mod tests {
 
     #[test]
     fn d_term_noise_fires_with_overshoot_and_high_noise() {
-        let sr = make_sr("roll", 5.0, 35.0, 20.0, 10);
+        let sr = make_sr(Axis::Roll, 5.0, 35.0, 20.0, 10);
         let vib = make_vib([40.0, 38.0, 36.0]);
         let diags = diagnose_d_term_noise(&sr, &vib);
         assert_eq!(diags.len(), 1);
@@ -792,7 +766,7 @@ mod tests {
 
     #[test]
     fn d_term_noise_quiet_with_low_noise() {
-        let sr = make_sr("roll", 5.0, 35.0, 20.0, 10);
+        let sr = make_sr(Axis::Roll, 5.0, 35.0, 20.0, 10);
         let vib = make_vib([20.0, 18.0, 16.0]);
         let diags = diagnose_d_term_noise(&sr, &vib);
         assert!(diags.is_empty(), "low noise floor should not trigger");
@@ -800,7 +774,7 @@ mod tests {
 
     #[test]
     fn d_term_noise_quiet_with_no_overshoot() {
-        let sr = make_sr("roll", 5.0, 10.0, 12.0, 10);
+        let sr = make_sr(Axis::Roll, 5.0, 10.0, 12.0, 10);
         let vib = make_vib([40.0, 38.0, 36.0]);
         let diags = diagnose_d_term_noise(&sr, &vib);
         assert!(diags.is_empty(), "no overshoot means no D-gain concern");
