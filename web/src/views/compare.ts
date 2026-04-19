@@ -78,7 +78,7 @@ export function renderComparisonSummary(a: SessionResult, b: SessionResult): voi
   ];
 
   let html = `<table class="compare-table">
-    <thead><tr><th>Metric</th><th>Session A</th><th>Session B</th><th>Delta</th></tr></thead><tbody>`;
+    <thead><tr><th>Metric</th><th>Before</th><th>After</th><th>Delta</th></tr></thead><tbody>`;
 
   for (const [label, va, vb] of rows) {
     html += `<tr><td>${label}</td><td>${va}</td><td>${vb}</td><td></td></tr>`;
@@ -247,8 +247,8 @@ export function renderComparisonSpectra(a: SessionResult, b: SessionResult): voi
       ],
       series: [
         {},
-        { label: "Session A", stroke: color, width: 1.5 },
-        { label: "Session B", stroke: color, width: 1.5, dash: [4, 4] },
+        { label: "Before", stroke: color, width: 1.5 },
+        { label: "After", stroke: color, width: 1.5, dash: [4, 4] },
       ],
     };
 

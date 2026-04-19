@@ -48,9 +48,11 @@
 
       <!-- Overview tab -->
       <div class="view-content active" data-view="overview">
-        <section id="summary" class="panel">
-          <h2>Summary</h2>
-          <div id="summary-grid" class="summary-grid"></div>
+        <div id="health-verdict"></div>
+
+        <section id="diagnostics-panel" class="panel">
+          <h2>Diagnostics</h2>
+          <div id="diagnostics-list"></div>
         </section>
 
         <section id="tuning-panel" class="panel hidden">
@@ -63,9 +65,10 @@
           <div id="step-overlay-plots"></div>
         </section>
 
-        <section id="diagnostics-panel" class="panel">
-          <h2>Diagnostics</h2>
-          <div id="diagnostics-list"></div>
+        <section id="summary" class="panel">
+          <h2>Summary</h2>
+          <div id="summary-meta" class="summary-meta"></div>
+          <div id="summary-grid" class="summary-grid"></div>
         </section>
 
         <section id="events-panel" class="panel">
@@ -81,20 +84,19 @@
             <div class="ts-tabs" id="ts-tabs">
               <button class="ts-tab active" data-group="gyro">Gyro</button>
               <button class="ts-tab" data-group="spVsGyro">SP vs Gyro</button>
-              <button class="ts-tab" data-group="gyroFilt">Filt vs Raw</button>
-              <button class="ts-tab" data-group="motors">Motors</button>
-              <button class="ts-tab" data-group="rc">RC</button>
-              <button class="ts-tab" data-group="erpm">RPM</button>
-              <button class="ts-tab" data-group="voltage">Voltage</button>
               <button class="ts-tab" data-group="pidError">PID Error</button>
-              <button class="ts-tab" data-group="pids">PIDs Roll</button>
-              <button class="ts-tab" data-group="pidsPitch">PIDs Pitch</button>
-              <button class="ts-tab" data-group="pidsYaw">PIDs Yaw</button>
-              <button class="ts-tab" data-group="altitude">Altitude</button>
-              <button class="ts-tab" data-group="gps">GPS</button>
-              <button class="ts-tab" data-group="rssi">RSSI</button>
+              <button class="ts-tab" data-group="pids">PIDs</button>
+              <button class="ts-tab" data-group="motors">Motors</button>
+              <button class="ts-tab" data-group="power">Power</button>
+              <button class="ts-tab" data-group="rc">RC</button>
+              <button class="ts-tab" data-group="telemetry">Telemetry</button>
             </div>
             <button id="ts-reset-zoom" class="ts-reset-zoom">Reset zoom</button>
+          </div>
+          <div id="ts-pid-axis-toggle" class="pid-axis-toggle hidden">
+            <button class="pid-axis-btn active" data-axis="roll">Roll</button>
+            <button class="pid-axis-btn" data-axis="pitch">Pitch</button>
+            <button class="pid-axis-btn" data-axis="yaw">Yaw</button>
           </div>
           <div id="ts-charts"></div>
         </section>
@@ -135,9 +137,9 @@
         <section class="panel">
           <h2>Compare Sessions</h2>
           <div class="compare-pickers">
-            <label>Session A <select id="compare-a" class="session-select"></select></label>
+            <label>Before <select id="compare-a" class="session-select"></select></label>
             <span class="compare-vs">vs</span>
-            <label>Session B <select id="compare-b" class="session-select"></select></label>
+            <label>After <select id="compare-b" class="session-select"></select></label>
           </div>
           <div id="compare-summary-table"></div>
         </section>

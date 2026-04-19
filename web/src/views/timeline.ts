@@ -2,8 +2,27 @@ import { get_timeseries } from "../../pkg/propwash_web.js";
 import { eventColor } from "../format.js";
 import type { SessionRef, FlightEvent } from "../types.js";
 import { $, $$, chartWidth, activeSession, activeSessionResult, renderedViews, tsPlots, setTsPlots, setTsSync } from "../state.js";
-import { FIELD_GROUPS, TS_MAX_POINTS } from "../chart-config.js";
+import { FIELD_GROUPS, TS_MAX_POINTS, pidFieldGroup } from "../chart-config.js";
+import type { PidAxis, FieldGroup } from "../chart-config.js";
 import { navigateMarkerPlugin } from "./overview.js";
+
+let selectedPidAxis: PidAxis = "roll";
+
+function updatePidAxisToggleVisibility(group: string): void {
+  const toggle = $("#ts-pid-axis-toggle");
+  if (group === "pids") {
+    toggle.classList.remove("hidden");
+  } else {
+    toggle.classList.add("hidden");
+  }
+}
+
+function resolveFieldGroup(group: string): FieldGroup | undefined {
+  if (group === "pids") {
+    return pidFieldGroup(selectedPidAxis);
+  }
+  return FIELD_GROUPS[group];
+}
 
 export function setupTimeseriesControls(): void {
   const tabs = $$("#ts-tabs .ts-tab");
@@ -12,10 +31,26 @@ export function setupTimeseriesControls(): void {
       if (!activeSession) return;
       tabs.forEach((t) => t.classList.remove("active"));
       tab.classList.add("active");
+      const group = tab.dataset.group!;
+      updatePidAxisToggleVisibility(group);
       renderedViews.delete(`timeline-${activeSession.fileId}-${activeSession.sessionIdx}`);
-      renderTimeseries(activeSession, tab.dataset.group!);
+      renderTimeseries(activeSession, group);
     });
   });
+
+  // PID axis toggle
+  const axisButtons = $$("#ts-pid-axis-toggle .pid-axis-btn");
+  axisButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!activeSession) return;
+      axisButtons.forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      selectedPidAxis = btn.dataset.axis as PidAxis;
+      renderedViews.delete(`timeline-${activeSession.fileId}-${activeSession.sessionIdx}`);
+      renderTimeseries(activeSession, "pids");
+    });
+  });
+
   $("#ts-reset-zoom").addEventListener("click", () => {
     if (!activeSession) return;
     const activeGroup = $(".ts-tab.active")?.dataset.group || "gyro";
@@ -56,7 +91,9 @@ export function renderTimeseries(ref: SessionRef, group: string): void {
   container.innerHTML = "";
   setTsPlots([]);
 
-  const g = FIELD_GROUPS[group as keyof typeof FIELD_GROUPS];
+  updatePidAxisToggleVisibility(group);
+
+  const g = resolveFieldGroup(group);
   if (!g) return;
 
   const allFields = g.fields.join(",");
