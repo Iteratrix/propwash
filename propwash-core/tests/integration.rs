@@ -1887,6 +1887,95 @@ fn unit_contract_gyro_is_degrees_per_second() {
     }
 }
 
+#[test]
+fn unit_contract_accel_is_m_per_s2() {
+    let fixtures = [
+        "fc-blackbox/btfl_001.bbl",
+        "ardupilot/methodic-copter-tarot-x4.bin",
+        "px4/sample_log_small.ulg",
+    ];
+    for fixture in fixtures {
+        let log = parse_fixture(fixture);
+        let session = &log.sessions[0];
+        let accel = session.field(&SensorField::Accel(Axis::Roll));
+        if accel.is_empty() {
+            continue;
+        }
+        let max_abs = accel.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+        assert!(
+            max_abs < 500.0,
+            "{fixture}: accel max {max_abs:.0} m/s² seems too high — wrong units?"
+        );
+    }
+}
+
+#[test]
+fn unit_contract_gps_is_degrees() {
+    // GPS coordinates should be in decimal degrees (-180 to 180)
+    let log = parse_fixture("fc-blackbox/btfl_gps_rescue.bbl");
+    let session = &log.sessions[0];
+    let lat = session.field(&SensorField::GpsLat);
+    let lng = session.field(&SensorField::GpsLng);
+    if !lat.is_empty() {
+        let max_lat = lat.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+        assert!(
+            max_lat < 90.0,
+            "GPS lat max {max_lat:.0} should be < 90 — probably raw ×10^7"
+        );
+    }
+    if !lng.is_empty() {
+        let max_lng = lng.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+        assert!(
+            max_lng < 180.0,
+            "GPS lng max {max_lng:.0} should be < 180 — probably raw ×10^7"
+        );
+    }
+}
+
+#[test]
+fn unit_contract_time_is_microseconds_monotonic() {
+    let fixtures = [
+        "fc-blackbox/btfl_001.bbl",
+        "ardupilot/dronekit-copter-log171.bin",
+        "px4/sample_log_small.ulg",
+    ];
+    for fixture in fixtures {
+        let log = parse_fixture(fixture);
+        let session = &log.sessions[0];
+        let time = session.field(&SensorField::Time);
+        if time.len() < 2 {
+            continue;
+        }
+        // Should be microseconds (values in millions)
+        let last = *time.last().unwrap();
+        assert!(
+            last > 1000.0,
+            "{fixture}: last time {last:.0} seems too small for microseconds"
+        );
+        // Should be monotonically increasing (allowing small wraps)
+        let decreases = time.windows(2).filter(|w| w[1] < w[0]).count();
+        assert!(
+            decreases == 0,
+            "{fixture}: time has {decreases} non-monotonic samples"
+        );
+    }
+}
+
+#[test]
+fn unit_contract_rssi_is_percentage() {
+    let fixtures = ["fc-blackbox/btfl_035.bbl", "fc-blackbox/btfl_002.bbl"];
+    for fixture in fixtures {
+        let log = parse_fixture(fixture);
+        let session = &log.sessions[0];
+        let rssi = session.field(&SensorField::Rssi);
+        if rssi.is_empty() {
+            continue;
+        }
+        let max = rssi.iter().copied().fold(f64::MIN, f64::max);
+        assert!(max <= 100.0, "{fixture}: RSSI max {max:.1} should be ≤100%");
+    }
+}
+
 // ── PID analysis golden tests ─────────────────────────────────────
 // These fixtures are from real FPV freestyle flights (BF 2025.12.2, 1kHz).
 // They exercise windowed step detection needed for modern RC-smoothed setpoints.
@@ -2026,5 +2115,204 @@ fn pid_feedforward_field_present() {
         ff.len(),
         session.frame_count(),
         "feedforward should have one value per frame"
+    );
+}
+
+// ── RSSI field tests ──────────────────────────────────────────────
+
+#[test]
+fn bf_rssi_scaled_to_percentage() {
+    let log = parse_fixture("fc-blackbox/btfl_035.bbl");
+    let session = &log.sessions[0];
+    let rssi = session.field(&SensorField::Rssi);
+    assert!(!rssi.is_empty(), "should have RSSI data");
+
+    // RSSI should be scaled to 0-100%
+    let max = rssi.iter().copied().fold(f64::MIN, f64::max);
+    let min = rssi
+        .iter()
+        .copied()
+        .filter(|&v| v > 0.0)
+        .fold(f64::MAX, f64::min);
+    assert!(
+        max <= 100.0,
+        "RSSI max should be ≤100%, got {max:.1} — probably raw 0-1023"
+    );
+    assert!(min >= 0.0, "RSSI min should be ≥0%, got {min:.1}");
+}
+
+#[test]
+fn bf_rssi_in_field_names() {
+    let log = parse_fixture("fc-blackbox/btfl_035.bbl");
+    let session = &log.sessions[0];
+    let names = session.field_names();
+    assert!(
+        names.iter().any(|n| n == "rssi"),
+        "field_names should include 'rssi', got: {names:?}"
+    );
+}
+
+#[test]
+fn bf_gps_fields_in_field_names() {
+    let log = parse_fixture("fc-blackbox/btfl_gps_rescue.bbl");
+    let session = &log.sessions[0];
+    let names = session.field_names();
+    assert!(
+        names.iter().any(|n| n == "gps_lat"),
+        "field_names should include 'gps_lat'"
+    );
+    assert!(
+        names.iter().any(|n| n == "gps_lng"),
+        "field_names should include 'gps_lng'"
+    );
+}
+
+// ── Analysis snapshot tests ───────────────────────────────────────
+// Compare key analysis output against committed JSON snapshots.
+// Catches structural changes that break the Rust→TypeScript contract.
+
+fn diag_categories(
+    diagnostics: &[propwash_core::analysis::diagnostics::Diagnostic],
+) -> Vec<String> {
+    let mut cats: Vec<String> = diagnostics
+        .iter()
+        .map(|d| d.category.to_string())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    cats.sort();
+    cats
+}
+
+fn analysis_snapshot(fixture: &str) -> serde_json::Value {
+    let log = parse_fixture(fixture);
+    let session = &log.sessions[0];
+    let a = analysis::analyze(session);
+
+    // Build compact snapshot matching the Python generator format
+    let round2 = |v: f64| (v * 100.0).round() / 100.0;
+
+    let vib = a.vibration.as_ref().map(|v| {
+        serde_json::json!({
+            "noise_floor_db": v.noise_floor_db.iter().map(|&x| round2(x)).collect::<Vec<_>>(),
+            "spectrum_count": v.spectra.len(),
+            "throttle_band_count": v.throttle_bands.len(),
+            "avg_motor_hz": v.avg_motor_hz.map(round2),
+            "has_accel": v.accel.is_some(),
+            "has_propwash": v.propwash.is_some(),
+        })
+    });
+
+    serde_json::json!({
+        "summary": serde_json::to_value(&a.summary).unwrap(),
+        "episode_count": propwash_core::analysis::episodes::consolidate(&a.events).len(),
+        "diagnostic_count": a.diagnostics.len(),
+        "diagnostics_categories": diag_categories(&a.diagnostics),
+        "vibration": vib,
+        "step_response": a.step_response.as_ref().map(|sr| serde_json::to_value(sr).unwrap()),
+        "pid": a.pid.as_ref().map(|p| serde_json::to_value(p).unwrap()),
+    })
+}
+
+#[test]
+fn snapshot_btfl_035() {
+    let actual = analysis_snapshot("fc-blackbox/btfl_035.bbl");
+    let expected_str =
+        std::fs::read_to_string(fixtures_dir().join("fc-blackbox/btfl_035.analysis.json"))
+            .expect("snapshot file should exist");
+    let expected: serde_json::Value =
+        serde_json::from_str(&expected_str).expect("snapshot should be valid JSON");
+
+    // Compare key structural fields
+    assert_eq!(
+        actual["summary"]["motor_count"], expected["summary"]["motor_count"],
+        "motor_count mismatch"
+    );
+    assert_eq!(
+        actual["summary"]["frame_count"], expected["summary"]["frame_count"],
+        "frame_count mismatch"
+    );
+    assert_eq!(
+        actual["diagnostic_count"], expected["diagnostic_count"],
+        "diagnostic count changed — analysis output may have shifted"
+    );
+    assert_eq!(
+        actual["diagnostics_categories"], expected["diagnostics_categories"],
+        "diagnostic categories changed"
+    );
+
+    // Vibration structure
+    assert_eq!(
+        actual["vibration"]["spectrum_count"], expected["vibration"]["spectrum_count"],
+        "spectrum count changed"
+    );
+    assert_eq!(
+        actual["vibration"]["throttle_band_count"], expected["vibration"]["throttle_band_count"],
+        "throttle band count changed"
+    );
+    assert_eq!(
+        actual["vibration"]["has_accel"],
+        expected["vibration"]["has_accel"],
+    );
+    assert_eq!(
+        actual["vibration"]["has_propwash"],
+        expected["vibration"]["has_propwash"],
+    );
+
+    // Step response structure (number of axes detected)
+    if let (Some(a_sr), Some(e_sr)) = (
+        actual["step_response"].as_object(),
+        expected["step_response"].as_object(),
+    ) {
+        assert_eq!(
+            a_sr.get("axes").and_then(|v| v.as_array()).map(|a| a.len()),
+            e_sr.get("axes").and_then(|v| v.as_array()).map(|a| a.len()),
+            "step response axis count changed"
+        );
+    }
+
+    // PID tuning count
+    if let (Some(a_pid), Some(e_pid)) = (actual["pid"].as_object(), expected["pid"].as_object()) {
+        assert_eq!(
+            a_pid
+                .get("tuning")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            e_pid
+                .get("tuning")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            "tuning suggestion count changed"
+        );
+        assert_eq!(
+            a_pid
+                .get("windup")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            e_pid
+                .get("windup")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            "windup axis count changed"
+        );
+    }
+}
+
+#[test]
+fn snapshot_btfl_001() {
+    let actual = analysis_snapshot("fc-blackbox/btfl_001.bbl");
+    let expected_str =
+        std::fs::read_to_string(fixtures_dir().join("fc-blackbox/btfl_001.analysis.json"))
+            .expect("snapshot file should exist");
+    let expected: serde_json::Value =
+        serde_json::from_str(&expected_str).expect("snapshot should be valid JSON");
+
+    assert_eq!(
+        actual["summary"]["motor_count"],
+        expected["summary"]["motor_count"],
+    );
+    assert_eq!(
+        actual["diagnostic_count"], expected["diagnostic_count"],
+        "diagnostic count changed for btfl_001"
     );
 }

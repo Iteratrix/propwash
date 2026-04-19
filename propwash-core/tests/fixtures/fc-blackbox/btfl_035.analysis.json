@@ -1,0 +1,182 @@
+{
+  "diagnostic_count": 18,
+  "diagnostics_categories": [
+    "esc",
+    "motors",
+    "mounting",
+    "pid",
+    "tuning",
+    "vibration"
+  ],
+  "episode_count": 57,
+  "pid": {
+    "oscillation": [
+      {
+        "axis": "Roll",
+        "frequency_hz": 15.58,
+        "magnitude_db": -1.25,
+        "overshoot_percent": 41.25
+      },
+      {
+        "axis": "Pitch",
+        "frequency_hz": 23.37,
+        "magnitude_db": -12.02,
+        "overshoot_percent": 47.25
+      },
+      {
+        "axis": "Yaw",
+        "frequency_hz": 23.37,
+        "magnitude_db": -1.94,
+        "overshoot_percent": 39.7
+      }
+    ],
+    "tuning": [
+      {
+        "axis": "Roll",
+        "current": {
+          "d": 30,
+          "i": 80,
+          "p": 45
+        },
+        "overshoot_percent": 41.25,
+        "rating": "Overshooting",
+        "rise_time_ms": 52.91,
+        "settling_time_ms": 63.19,
+        "step_count": 13,
+        "suggested": {
+          "d": 34,
+          "i": 80,
+          "p": 38
+        }
+      },
+      {
+        "axis": "Pitch",
+        "current": {
+          "d": 34,
+          "i": 84,
+          "p": 47
+        },
+        "overshoot_percent": 47.25,
+        "rating": "Overshooting",
+        "rise_time_ms": 64.46,
+        "settling_time_ms": 102.3,
+        "step_count": 15,
+        "suggested": {
+          "d": 39,
+          "i": 84,
+          "p": 39
+        }
+      },
+      {
+        "axis": "Yaw",
+        "current": {
+          "d": null,
+          "i": 80,
+          "p": 45
+        },
+        "overshoot_percent": 39.7,
+        "rating": "Overshooting",
+        "rise_time_ms": 35.41,
+        "settling_time_ms": 74.51,
+        "step_count": 13,
+        "suggested": {
+          "d": null,
+          "i": 80,
+          "p": 38
+        }
+      }
+    ],
+    "windup": [
+      {
+        "axis": "Roll",
+        "i_dominant_fraction": 0.52,
+        "peak_ratio": 27.0
+      },
+      {
+        "axis": "Pitch",
+        "i_dominant_fraction": 0.23,
+        "peak_ratio": 41.0
+      },
+      {
+        "axis": "Yaw",
+        "i_dominant_fraction": 0.68,
+        "peak_ratio": 68.5
+      }
+    ]
+  },
+  "step_response": {
+    "axes": [
+      {
+        "axis": "roll",
+        "overshoot_percent": 41.25,
+        "rise_time_ms": 52.91,
+        "settling_time_ms": 63.19,
+        "step_count": 13
+      },
+      {
+        "axis": "pitch",
+        "overshoot_percent": 47.25,
+        "rise_time_ms": 64.46,
+        "settling_time_ms": 102.3,
+        "step_count": 15
+      },
+      {
+        "axis": "yaw",
+        "overshoot_percent": 39.7,
+        "rise_time_ms": 35.41,
+        "settling_time_ms": 74.51,
+        "step_count": 13
+      }
+    ]
+  },
+  "summary": {
+    "craft": "Maia",
+    "desyncs": 6,
+    "duration_seconds": 29.01,
+    "firmware": "Betaflight 2025.12.2 (79065c96b) STM32F7X2",
+    "frame_count": 28923,
+    "gyro_spikes": 6,
+    "motor_balance": [
+      {
+        "deviation_percent": -0.34,
+        "index": 0,
+        "mean": 837.33
+      },
+      {
+        "deviation_percent": 4.58,
+        "index": 1,
+        "mean": 878.72
+      },
+      {
+        "deviation_percent": 1.29,
+        "index": 2,
+        "mean": 851.03
+      },
+      {
+        "deviation_percent": -5.53,
+        "index": 3,
+        "mean": 793.78
+      }
+    ],
+    "motor_count": 4,
+    "motor_saturations": 29,
+    "overshoots": 1279,
+    "sample_rate_hz": 997.03,
+    "session_index": 1,
+    "throttle_chops": 0,
+    "throttle_punches": 2,
+    "total_events": 1322
+  },
+  "vibration": {
+    "avg_motor_hz": 159.84,
+    "has_accel": true,
+    "has_propwash": false,
+    "noise_floor_db": [
+      26.03,
+      22.71,
+      18.22
+    ],
+    "spectrum_count": 3,
+    "throttle_band_count": 3
+  }
+}

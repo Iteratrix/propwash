@@ -290,3 +290,108 @@ fn detect_desync(
         }
     }
 }
+
+/// Check if a single motor value constitutes a desync given the motor values and max.
+/// Extracted for testability.
+#[cfg_attr(not(test), allow(dead_code))]
+#[allow(clippy::cast_precision_loss)]
+fn is_desync(motor_vals: &[f64], motor_idx: usize, motor_max: f64) -> bool {
+    let val = motor_vals[motor_idx];
+    let spike_threshold = motor_max * 0.95;
+    if val < spike_threshold {
+        return false;
+    }
+    let others: Vec<f64> = motor_vals
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != motor_idx)
+        .map(|(_, &v)| v)
+        .collect();
+    let others_avg = others.iter().sum::<f64>() / others.len() as f64;
+    let others_max = others.iter().copied().fold(0.0_f64, f64::max);
+
+    others_max < motor_max * 0.60 && val > others_avg * 3.0 && others_avg > 0.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MOTOR_MAX: f64 = 2047.0;
+
+    #[test]
+    fn desync_real_desync() {
+        let vals = [2000.0, 400.0, 500.0, 450.0];
+        assert!(
+            is_desync(&vals, 0, MOTOR_MAX),
+            "motor at max with others low should be desync"
+        );
+    }
+
+    #[test]
+    fn desync_normal_cornering() {
+        let vals = [1950.0, 1800.0, 800.0, 900.0];
+        assert!(
+            !is_desync(&vals, 0, MOTOR_MAX),
+            "two motors high = normal cornering"
+        );
+    }
+
+    #[test]
+    fn desync_throttle_punch() {
+        let vals = [2000.0, 1500.0, 1600.0, 1400.0];
+        assert!(
+            !is_desync(&vals, 0, MOTOR_MAX),
+            "all motors high = throttle punch"
+        );
+    }
+
+    #[test]
+    fn desync_motor_below_spike_threshold() {
+        // 1842/2047 = 90% — below the 95% spike threshold
+        let vals = [1842.0, 400.0, 500.0, 450.0];
+        assert!(
+            !is_desync(&vals, 0, MOTOR_MAX),
+            "motor below 95% should not trigger"
+        );
+    }
+
+    #[test]
+    fn desync_boundary_others_at_60_percent() {
+        let vals = [2000.0, MOTOR_MAX * 0.60, 400.0, 400.0];
+        assert!(
+            !is_desync(&vals, 0, MOTOR_MAX),
+            "other motor at 60% should block desync"
+        );
+    }
+
+    #[test]
+    fn desync_ratio_too_low() {
+        // Others at 59% of max — below 60% threshold, but ratio is only ~1.7x
+        let others_val = MOTOR_MAX * 0.59;
+        let vals = [2000.0, others_val, others_val, others_val];
+        assert!(
+            !is_desync(&vals, 0, MOTOR_MAX),
+            "ratio too low even though others < 60%"
+        );
+    }
+
+    #[test]
+    fn desync_all_conditions_met() {
+        // Spike at 98%, others at ~24%, ratio = 4x
+        let vals = [2000.0, 500.0, 500.0, 500.0];
+        assert!(is_desync(&vals, 0, MOTOR_MAX));
+    }
+
+    #[test]
+    fn desync_idle_not_triggered() {
+        let vals = [100.0, 50.0, 60.0, 55.0];
+        assert!(!is_desync(&vals, 0, MOTOR_MAX), "idle should not trigger");
+    }
+
+    #[test]
+    fn desync_two_motors() {
+        let vals = [2000.0, 400.0];
+        assert!(is_desync(&vals, 0, MOTOR_MAX));
+    }
+}
