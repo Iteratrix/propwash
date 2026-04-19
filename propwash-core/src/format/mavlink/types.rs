@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use az::{Az, SaturatingAs};
+
 use crate::types::{Axis, FilterConfig, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Columnar storage for one `MAVLink` message type.
@@ -272,7 +274,6 @@ impl MavlinkSession {
         self.vehicle_type.as_str()
     }
 
-    #[allow(clippy::cast_precision_loss)]
     pub fn sample_rate_hz(&self) -> f64 {
         let ts = self.msg_timestamps("ATTITUDE");
         if ts.len() >= 2 {
@@ -280,13 +281,12 @@ impl MavlinkSession {
             let tn = ts[ts.len() - 1];
             let dt = tn.saturating_sub(t0);
             if dt > 0 {
-                return (ts.len() - 1) as f64 / (dt as f64 / 1_000_000.0);
+                return (ts.len() - 1).az::<f64>() / (dt.az::<f64>() / 1_000_000.0);
             }
         }
         0.0
     }
 
-    #[allow(clippy::cast_precision_loss)]
     pub fn duration_seconds(&self) -> f64 {
         let mut min_t = u64::MAX;
         let mut max_t = 0u64;
@@ -303,16 +303,16 @@ impl MavlinkSession {
         if min_t >= max_t {
             return 0.0;
         }
-        (max_t - min_t) as f64 / 1_000_000.0
+        (max_t - min_t).az::<f64>() / 1_000_000.0
     }
 
-    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)]
     pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => {
                 // ATTITUDE time_boot_ms (stored as microseconds)
                 let ts = self.msg_timestamps("ATTITUDE");
-                ts.iter().map(|&t| t as f64).collect()
+                ts.iter().map(|&t| t.az::<f64>()).collect()
             }
             SensorField::Gyro(axis) => {
                 // ATTITUDE rollspeed/pitchspeed/yawspeed (rad/s → deg/s)
@@ -463,7 +463,6 @@ impl MavlinkSession {
         self.stats.corrupt_bytes
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn pid_gains(&self) -> crate::types::PidGains {
         let parse = |p_key: &str, i_key: &str, d_key: &str| -> crate::types::AxisGains {
             let get = |k: &str| -> Option<u32> {
@@ -471,7 +470,7 @@ impl MavlinkSession {
                     .get(k)
                     .copied()
                     .filter(|&v| v > 0.0)
-                    .map(|v| (v * 1000.0) as u32)
+                    .map(|v| (v * 1000.0).saturating_as::<u32>())
             };
             crate::types::AxisGains {
                 p: get(p_key),

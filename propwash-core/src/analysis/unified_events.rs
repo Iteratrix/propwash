@@ -1,9 +1,10 @@
+use az::Az;
+
 use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session};
 
 use super::events::{EventKind, FlightEvent};
 
 /// Run all format-agnostic event detectors using the `Unified` trait.
-#[allow(clippy::cast_precision_loss)]
 pub fn detect_all(unified: &Session) -> Vec<FlightEvent> {
     let timestamps = unified.field(&SensorField::Time);
     if timestamps.len() < 2 {
@@ -39,8 +40,7 @@ fn detect_gyro_spikes(
                 let t = timestamps.get(j).copied().unwrap_or(0.0);
                 events.push(FlightEvent {
                     frame_index: j,
-                    #[allow(clippy::cast_possible_truncation)]
-                    time_us: t as i64,
+                    time_us: t.az::<i64>(),
                     time_seconds: (t - first_t) / 1_000_000.0,
                     kind: EventKind::GyroSpike {
                         axis: axis_names[i],
@@ -60,7 +60,6 @@ const THROTTLE_MIN_CHANGE_PCT: f64 = 30.0;
 /// Minimum cooldown between events (microseconds) to avoid duplicates.
 const THROTTLE_COOLDOWN_US: f64 = 500_000.0;
 
-#[allow(clippy::cast_precision_loss)]
 fn detect_throttle_events(
     unified: &Session,
     timestamps: &[f64],
@@ -102,8 +101,7 @@ fn detect_throttle_events(
             last_chop_t = curr_t;
             events.push(FlightEvent {
                 frame_index: i,
-                #[allow(clippy::cast_possible_truncation)]
-                time_us: curr_t as i64,
+                time_us: curr_t.az::<i64>(),
                 time_seconds: (curr_t - first_t) / 1_000_000.0,
                 kind: EventKind::ThrottleChop {
                     from_percent: from_pct,
@@ -115,8 +113,7 @@ fn detect_throttle_events(
             last_punch_t = curr_t;
             events.push(FlightEvent {
                 frame_index: i,
-                #[allow(clippy::cast_possible_truncation)]
-                time_us: curr_t as i64,
+                time_us: curr_t.az::<i64>(),
                 time_seconds: (curr_t - first_t) / 1_000_000.0,
                 kind: EventKind::ThrottlePunch {
                     from_percent: from_pct,
@@ -151,8 +148,7 @@ fn detect_motor_saturation(
                         let t = timestamps.get(start).copied().unwrap_or(0.0);
                         events.push(FlightEvent {
                             frame_index: start,
-                            #[allow(clippy::cast_possible_truncation)]
-                            time_us: t as i64,
+                            time_us: t.az::<i64>(),
                             time_seconds: (t - first_t) / 1_000_000.0,
                             kind: EventKind::MotorSaturation {
                                 motor_index: mi,
@@ -206,8 +202,7 @@ fn detect_overshoot(
                 let t = timestamps.get(j).copied().unwrap_or(0.0);
                 events.push(FlightEvent {
                     frame_index: j,
-                    #[allow(clippy::cast_possible_truncation)]
-                    time_us: t as i64,
+                    time_us: t.az::<i64>(),
                     time_seconds: (t - first_t) / 1_000_000.0,
                     kind: EventKind::Overshoot {
                         axis: axis_names[i],
@@ -221,7 +216,6 @@ fn detect_overshoot(
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn detect_desync(
     unified: &Session,
     timestamps: &[f64],
@@ -262,7 +256,7 @@ fn detect_desync(
                 .filter(|(i, _)| *i != mi)
                 .map(|(_, &v)| v)
                 .collect();
-            let others_avg = others.iter().sum::<f64>() / others.len() as f64;
+            let others_avg = others.iter().sum::<f64>() / others.len().az::<f64>();
             let others_max = others.iter().copied().fold(0.0_f64, f64::max);
 
             // True desync: one motor at max while ALL others are well below max.
@@ -276,13 +270,11 @@ fn detect_desync(
                 let t = timestamps.get(j).copied().unwrap_or(0.0);
                 events.push(FlightEvent {
                     frame_index: j,
-                    #[allow(clippy::cast_possible_truncation)]
-                    time_us: t as i64,
+                    time_us: t.az::<i64>(),
                     time_seconds: (t - first_t) / 1_000_000.0,
                     kind: EventKind::Desync {
                         motor_index: mi,
-                        #[allow(clippy::cast_possible_truncation)]
-                        motor_value: val as i64,
+                        motor_value: val.az::<i64>(),
                         average_others: others_avg,
                     },
                 });
@@ -294,7 +286,6 @@ fn detect_desync(
 /// Check if a single motor value constitutes a desync given the motor values and max.
 /// Extracted for testability.
 #[cfg_attr(not(test), allow(dead_code))]
-#[allow(clippy::cast_precision_loss)]
 fn is_desync(motor_vals: &[f64], motor_idx: usize, motor_max: f64) -> bool {
     let val = motor_vals[motor_idx];
     let spike_threshold = motor_max * 0.95;
@@ -307,7 +298,7 @@ fn is_desync(motor_vals: &[f64], motor_idx: usize, motor_max: f64) -> bool {
         .filter(|(i, _)| *i != motor_idx)
         .map(|(_, &v)| v)
         .collect();
-    let others_avg = others.iter().sum::<f64>() / others.len() as f64;
+    let others_avg = others.iter().sum::<f64>() / others.len().az::<f64>();
     let others_max = others.iter().copied().fold(0.0_f64, f64::max);
 
     others_max < motor_max * 0.60 && val > others_avg * 3.0 && others_avg > 0.0

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use az::Az;
+
 use crate::types::Warning;
 
 use super::types::{
@@ -203,8 +205,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4Session {
 
     // Parse appended data sections
     for offset in appended_offsets {
-        #[allow(clippy::cast_possible_truncation)]
-        let mut apos = offset as usize;
+        let mut apos = offset.az::<usize>();
         if apos < data.len() {
             parse_messages(
                 data,
@@ -430,7 +431,6 @@ fn decode_u64(data: &[u8], offset: usize) -> u64 {
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 #[inline]
 fn decode_f64(prim: ULogType, data: &[u8]) -> f64 {
     match prim {
@@ -440,8 +440,8 @@ fn decode_f64(prim: ULogType, data: &[u8]) -> f64 {
         ULogType::UInt16 => f64::from(u16::from_le_bytes([data[0], data[1]])),
         ULogType::Int32 => f64::from(i32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
         ULogType::UInt32 => f64::from(u32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
-        ULogType::Int64 => i64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])) as f64,
-        ULogType::UInt64 => u64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])) as f64,
+        ULogType::Int64 => i64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])).az::<f64>(),
+        ULogType::UInt64 => u64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])).az::<f64>(),
         ULogType::Float => f64::from(f32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
         ULogType::Double => f64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])),
     }

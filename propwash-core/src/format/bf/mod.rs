@@ -4,6 +4,8 @@ mod header;
 mod predictor;
 pub mod types;
 
+use az::{Az, WrappingAs};
+
 use crate::types::{Log, Session, Warning};
 use header::{find_sessions, parse_headers};
 use types::{BfFrame, BfHeaderValue, BfSession};
@@ -38,9 +40,8 @@ pub(crate) fn decode(data: &[u8]) -> Log {
             });
         }
 
-        #[allow(clippy::cast_possible_truncation)]
         let motor_output = match parsed.raw.get("motorOutput") {
-            Some(BfHeaderValue::IntList(v)) => v.first().copied().unwrap_or(0) as i32,
+            Some(BfHeaderValue::IntList(v)) => v.first().copied().unwrap_or(0).wrapping_as::<i32>(),
             _ => 0,
         };
 
@@ -95,7 +96,6 @@ pub(crate) fn decode(data: &[u8]) -> Log {
 }
 
 /// Transpose row-oriented `BfFrame` vectors into column-oriented `Vec<Vec<f64>>`.
-#[allow(clippy::cast_precision_loss)]
 fn transpose(frames: &[BfFrame], n_fields: usize) -> Vec<Vec<f64>> {
     let mut columns = Vec::with_capacity(n_fields);
     for _ in 0..n_fields {
@@ -103,7 +103,7 @@ fn transpose(frames: &[BfFrame], n_fields: usize) -> Vec<Vec<f64>> {
     }
     for frame in frames {
         for (i, col) in columns.iter_mut().enumerate() {
-            col.push(frame.values.get(i).copied().unwrap_or(0) as f64);
+            col.push(frame.values.get(i).copied().unwrap_or(0).az::<f64>());
         }
     }
     columns

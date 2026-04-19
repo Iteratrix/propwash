@@ -1,3 +1,4 @@
+use az::Az;
 use serde::Serialize;
 
 use super::FlightAnalysis;
@@ -30,7 +31,6 @@ pub struct TrendPoint {
 ///
 /// Each entry is `(label, analysis)`. Returns one `TrendPoint` per entry
 /// in the same order.
-#[allow(clippy::cast_precision_loss)]
 pub fn compute_trend(analyses: &[(String, &FlightAnalysis)]) -> Vec<TrendPoint> {
     analyses
         .iter()
@@ -55,7 +55,7 @@ pub fn compute_trend(analyses: &[(String, &FlightAnalysis)]) -> Vec<TrendPoint> 
                 if rises.is_empty() {
                     None
                 } else {
-                    Some(rises.iter().sum::<f64>() / rises.len() as f64)
+                    Some(rises.iter().sum::<f64>() / rises.len().az::<f64>())
                 }
             });
 
@@ -64,7 +64,7 @@ pub fn compute_trend(analyses: &[(String, &FlightAnalysis)]) -> Vec<TrendPoint> 
                 if os.is_empty() {
                     None
                 } else {
-                    Some(os.iter().sum::<f64>() / os.len() as f64)
+                    Some(os.iter().sum::<f64>() / os.len().az::<f64>())
                 }
             });
 

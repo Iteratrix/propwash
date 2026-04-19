@@ -8,6 +8,7 @@ pub mod summary;
 pub mod trend;
 pub mod unified_events;
 
+use az::Az;
 use diagnostics::Diagnostic;
 use events::{EventKind, FlightEvent};
 use fft::VibrationAnalysis;
@@ -77,7 +78,6 @@ pub fn analyze(session: &Session) -> FlightAnalysis {
 }
 
 /// Detect events from PX4 firmware log messages (warnings/errors).
-#[allow(clippy::cast_precision_loss)]
 fn detect_px4_log_events(px4: &Px4Session) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
@@ -98,9 +98,8 @@ fn detect_px4_log_events(px4: &Px4Session) -> Vec<FlightEvent> {
         };
         events.push(FlightEvent {
             frame_index: 0,
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-            time_us: msg.timestamp_us as i64,
-            time_seconds: msg.timestamp_us as f64 / 1_000_000.0,
+            time_us: msg.timestamp_us.az::<i64>(),
+            time_seconds: msg.timestamp_us.az::<f64>() / 1_000_000.0,
             kind: EventKind::FirmwareMessage {
                 level: level_name.to_string(),
                 message: msg.message.clone(),
@@ -112,15 +111,13 @@ fn detect_px4_log_events(px4: &Px4Session) -> Vec<FlightEvent> {
 }
 
 /// Detect events from `ArduPilot` EV/ERR messages.
-#[allow(clippy::cast_precision_loss)]
 fn detect_ardupilot_events(ap: &ApSession) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
     let ev_ts = ap.msg_timestamps("EV");
     if let Some(id_col) = ap.msg_column("EV", "Id") {
         for (i, &id) in id_col.iter().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
-            let kind = match id as i64 {
+            let kind = match id.az::<i64>() {
                 10 => EventKind::ThrottlePunch {
                     from_percent: 0.0,
                     to_percent: 100.0,
@@ -137,7 +134,7 @@ fn detect_ardupilot_events(ap: &ApSession) -> Vec<FlightEvent> {
             events.push(FlightEvent {
                 frame_index: 0,
                 time_us: t.cast_signed(),
-                time_seconds: t as f64 / 1_000_000.0,
+                time_seconds: t.az::<f64>() / 1_000_000.0,
                 kind,
             });
         }
@@ -147,7 +144,6 @@ fn detect_ardupilot_events(ap: &ApSession) -> Vec<FlightEvent> {
 }
 
 /// Detect events from `MAVLink` `STATUSTEXT` messages (warnings/errors).
-#[allow(clippy::cast_precision_loss)]
 fn detect_mavlink_status_messages(mav: &MavlinkSession) -> Vec<FlightEvent> {
     use crate::format::mavlink::types::Severity;
 
@@ -156,9 +152,8 @@ fn detect_mavlink_status_messages(mav: &MavlinkSession) -> Vec<FlightEvent> {
         .filter(|msg| msg.severity <= Severity::Warning)
         .map(|msg| FlightEvent {
             frame_index: 0,
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-            time_us: msg.timestamp_us as i64,
-            time_seconds: msg.timestamp_us as f64 / 1_000_000.0,
+            time_us: msg.timestamp_us.az::<i64>(),
+            time_seconds: msg.timestamp_us.az::<f64>() / 1_000_000.0,
             kind: EventKind::FirmwareMessage {
                 level: msg.severity.as_str().to_string(),
                 message: msg.text.clone(),
@@ -168,7 +163,6 @@ fn detect_mavlink_status_messages(mav: &MavlinkSession) -> Vec<FlightEvent> {
 }
 
 /// Detect firmware messages from `ArduPilot` ERR log messages.
-#[allow(clippy::cast_precision_loss)]
 fn detect_ardupilot_firmware_messages(ap: &ApSession) -> Vec<FlightEvent> {
     let mut events = Vec::new();
 
@@ -176,16 +170,15 @@ fn detect_ardupilot_firmware_messages(ap: &ApSession) -> Vec<FlightEvent> {
     let subsys_col = ap.msg_column("ERR", "Subsys");
     let ecode_col = ap.msg_column("ERR", "ECode");
     if let (Some(subsys), Some(codes)) = (subsys_col, ecode_col) {
-        #[allow(clippy::cast_possible_truncation)]
         for (i, (&s, &c)) in subsys.iter().zip(codes.iter()).enumerate() {
             let t = err_ts.get(i).copied().unwrap_or(0);
             events.push(FlightEvent {
                 frame_index: 0,
                 time_us: t.cast_signed(),
-                time_seconds: t as f64 / 1_000_000.0,
+                time_seconds: t.az::<f64>() / 1_000_000.0,
                 kind: EventKind::FirmwareMessage {
                     level: "error".to_string(),
-                    message: format!("Subsystem {} error code {}", s as i64, c as i64),
+                    message: format!("Subsystem {} error code {}", s.az::<i64>(), c.az::<i64>()),
                 },
             });
         }

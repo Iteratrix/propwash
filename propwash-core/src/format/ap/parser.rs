@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use az::Az;
+
 use crate::types::Warning;
 
 use super::types::{ApMsgDef, ApParseStats, ApSession, FieldType, MsgColumns};
@@ -203,7 +205,6 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
 // Primitive decoders
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::cast_precision_loss)]
 #[inline]
 fn decode_f64(ft: FieldType, data: &[u8]) -> f64 {
     match ft {
@@ -213,8 +214,8 @@ fn decode_f64(ft: FieldType, data: &[u8]) -> f64 {
         FieldType::U16 => f64::from(u16::from_le_bytes([data[0], data[1]])),
         FieldType::I32 => f64::from(i32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
         FieldType::U32 => f64::from(u32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
-        FieldType::I64 => i64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])) as f64,
-        FieldType::U64 => u64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])) as f64,
+        FieldType::I64 => i64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])).az::<f64>(),
+        FieldType::U64 => u64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])).az::<f64>(),
         FieldType::Float => f64::from(f32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
         FieldType::Double => f64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])),
         FieldType::Float16 => {
@@ -225,7 +226,6 @@ fn decode_f64(ft: FieldType, data: &[u8]) -> f64 {
     }
 }
 
-#[allow(clippy::cast_sign_loss)]
 fn decode_u64(data: &[u8], offset: usize, ft: FieldType) -> u64 {
     let d = &data[offset..];
     match ft {

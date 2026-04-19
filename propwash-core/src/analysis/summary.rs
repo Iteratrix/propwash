@@ -1,3 +1,4 @@
+use az::Az;
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
@@ -74,7 +75,6 @@ pub fn summarize(session: &Session, events: &[FlightEvent]) -> FlightSummary {
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn compute_motor_balance(session: &Session) -> Vec<MotorStats> {
     let n = session.motor_count();
     if n == 0 {
@@ -88,7 +88,7 @@ fn compute_motor_balance(session: &Session) -> Vec<MotorStats> {
                 return None;
             }
             let sum: f64 = col.iter().sum();
-            Some((i, sum / col.len() as f64))
+            Some((i, sum / col.len().az::<f64>()))
         })
         .collect();
 
@@ -96,7 +96,7 @@ fn compute_motor_balance(session: &Session) -> Vec<MotorStats> {
         return Vec::new();
     }
 
-    let overall_avg = means.iter().map(|(_, m)| m).sum::<f64>() / means.len() as f64;
+    let overall_avg = means.iter().map(|(_, m)| m).sum::<f64>() / means.len().az::<f64>();
 
     means
         .iter()

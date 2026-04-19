@@ -1,5 +1,6 @@
 use std::fmt::Write;
 
+use az::Az;
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
@@ -181,8 +182,7 @@ fn diagnose_overshoot(events: &[FlightEvent], duration_seconds: f64) -> Vec<Diag
             continue;
         }
 
-        #[allow(clippy::cast_precision_loss)]
-        let count_f = overshoots.len() as f64;
+        let count_f = overshoots.len().az::<f64>();
         let rate = count_f / duration_seconds;
         let avg = overshoots.iter().sum::<f64>() / count_f;
         let max = overshoots.iter().copied().reduce(f64::max).unwrap_or(0.0);
