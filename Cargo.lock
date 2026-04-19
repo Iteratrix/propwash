@@ -406,6 +406,7 @@ dependencies = [
  "proptest",
  "rustfft",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

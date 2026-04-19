@@ -1,0 +1,46 @@
+{
+  "diagnostic_count": 0,
+  "diagnostics_categories": [],
+  "episode_count": 0,
+  "pid": null,
+  "step_response": null,
+  "summary": {
+    "craft": "",
+    "desyncs": 0,
+    "duration_seconds": 0.19,
+    "firmware": "Betaflight 4.2.11 (948ba6339) STM32F7X2",
+    "frame_count": 98,
+    "gyro_spikes": 0,
+    "motor_balance": [
+      {
+        "deviation_percent": -0.64,
+        "index": 0,
+        "mean": 160.4
+      },
+      {
+        "deviation_percent": 0.38,
+        "index": 1,
+        "mean": 162.04
+      },
+      {
+        "deviation_percent": 0.67,
+        "index": 2,
+        "mean": 162.5
+      },
+      {
+        "deviation_percent": -0.41,
+        "index": 3,
+        "mean": 160.76
+      }
+    ],
+    "motor_count": 4,
+    "motor_saturations": 0,
+    "overshoots": 0,
+    "sample_rate_hz": 498.19,
+    "session_index": 1,
+    "throttle_chops": 0,
+    "throttle_punches": 0,
+    "total_events": 0
+  },
+  "vibration": null
+}

@@ -49,9 +49,6 @@ proptest! {
 // ═══════════════════════════════════════════════════════════════════
 // Property: encoding decoders never panic on arbitrary bytes
 // ═══════════════════════════════════════════════════════════════════
-// These test the internal encoding functions directly via the public API.
-// Since we can't access pub(crate) functions from integration tests,
-// we test them indirectly through decode().
 
 proptest! {
     #[test]
@@ -66,11 +63,76 @@ proptest! {
         data.extend_from_slice(b"H Field I encoding:1,1\n");
         data.extend_from_slice(b"H Field P predictor:6,2\n");
         data.extend_from_slice(b"H Field P encoding:9,0\n");
-        // Inject an I-frame marker followed by random bytes
         data.push(b'I');
         data.extend_from_slice(&body);
 
         let log = propwash_core::decode(&data).expect("valid BF header should be recognized");
         let _ = log.session_count();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Property: ArduPilot parser never panics on random data
+// ═══════════════════════════════════════════════════════════════════
+// AP DataFlash format starts with FMT messages (header 0xA3 0x95).
+
+proptest! {
+    #[test]
+    fn ap_parser_never_panics(
+        body in proptest::collection::vec(any::<u8>(), 0..4096)
+    ) {
+        // AP header: 0xA3 0x95 + type 0x80 (FMT) + length 89
+        // Minimal FMT message defining the FMT format itself
+        let mut data: Vec<u8> = vec![0xA3, 0x95, 0x80];
+        // FMT message body: type=128, length=89, name="FMT\0", format="BBnNZ"
+        // (simplified — just enough bytes to be recognized as AP)
+        data.resize(92, 0); // pad to FMT message length
+        data[3] = 128; // type = FMT
+        data[4] = 89;  // length = 89
+        data[5..9].copy_from_slice(b"FMT\0");
+        data.extend_from_slice(&body);
+
+        // Should not panic regardless of body content
+        let _ = propwash_core::decode(&data);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Property: PX4 ULog parser never panics on random data
+// ═══════════════════════════════════════════════════════════════════
+
+proptest! {
+    #[test]
+    fn px4_parser_never_panics(
+        body in proptest::collection::vec(any::<u8>(), 0..4096)
+    ) {
+        // ULog magic: 7 bytes + 1 version byte + 8 timestamp bytes = 16 byte header
+        let mut data = b"\x55\x4c\x6f\x67\x01\x12\x35".to_vec(); // "ULog" magic
+        data.push(1); // version
+        data.extend_from_slice(&[0u8; 8]); // timestamp
+        data.extend_from_slice(&body);
+
+        let _ = propwash_core::decode(&data);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Property: MAVLink tlog parser never panics on random data
+// ═══════════════════════════════════════════════════════════════════
+
+proptest! {
+    #[test]
+    fn mavlink_parser_never_panics(
+        body in proptest::collection::vec(any::<u8>(), 0..4096)
+    ) {
+        // MAVLink tlog: 8-byte timestamp (reasonable Unix timestamp) + 0xFE marker
+        let mut data = Vec::new();
+        // Timestamp: 2024-01-01 in microseconds (within 2000-2100 detection range)
+        let ts: u64 = 1_704_067_200_000_000;
+        data.extend_from_slice(&ts.to_le_bytes());
+        data.push(0xFE); // MAVLink v1 marker
+        data.extend_from_slice(&body);
+
+        let _ = propwash_core::decode(&data);
     }
 }

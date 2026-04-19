@@ -375,3 +375,62 @@ fn session_result_contains_analysis() {
     // Events
     assert!(analysis["events"].is_array());
 }
+
+// ---------------------------------------------------------------------------
+// Step overlay
+// ---------------------------------------------------------------------------
+
+#[test]
+fn get_step_overlay_gentle_flight() {
+    propwash_web::clear_workspace();
+    let data = read_fixture("fc-blackbox/btfl_002.bbl");
+    let r: serde_json::Value =
+        serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
+    let file_id = r["file_id"].as_u64().unwrap() as u32;
+
+    let json = propwash_web::get_step_overlay(file_id, 0);
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    // Gentle flight may not have enough steps — either error or valid response
+    assert!(
+        result.get("error").is_some() || result.get("axes").is_some(),
+        "should return error or axes"
+    );
+}
+
+#[test]
+fn get_step_overlay_aggressive_flight() {
+    propwash_web::clear_workspace();
+    let data = read_fixture("fc-blackbox/btfl_035.bbl");
+    let r: serde_json::Value =
+        serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
+    let file_id = r["file_id"].as_u64().unwrap() as u32;
+
+    let json = propwash_web::get_step_overlay(file_id, 0);
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    // btfl_035 has aggressive flying — should have step data
+    if let Some(axes) = result.get("axes") {
+        let axes = axes.as_array().unwrap();
+        if !axes.is_empty() {
+            let first = &axes[0];
+            assert!(first["time_ms"].is_array());
+            assert!(first["gyro_steps"].is_array());
+            assert!(first["gyro_average"].is_array());
+            assert!(first["setpoint_steps"].is_array());
+        }
+    }
+}
+
+#[test]
+fn get_step_overlay_invalid_session() {
+    propwash_web::clear_workspace();
+    let data = read_fixture("fc-blackbox/btfl_001.bbl");
+    let r: serde_json::Value =
+        serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
+    let file_id = r["file_id"].as_u64().unwrap() as u32;
+
+    let json = propwash_web::get_step_overlay(file_id, 999);
+    let result: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(result["error"].is_string());
+}

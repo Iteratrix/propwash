@@ -722,3 +722,169 @@ pub fn compute_spectrogram(
         sample_rate_hz: sample_rate,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Generate a pure sine wave at the given frequency and sample rate.
+    fn sine_wave(freq_hz: f64, sample_rate: f64, n_samples: usize) -> Vec<f64> {
+        (0..n_samples)
+            .map(|i| (2.0 * std::f64::consts::PI * freq_hz * i as f64 / sample_rate).sin() * 100.0)
+            .collect()
+    }
+
+    #[test]
+    fn spectrum_detects_single_sine() {
+        let samples = sine_wave(200.0, 1000.0, 4096);
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+
+        assert!(!spectrum.peaks.is_empty(), "should detect a peak");
+        let peak = &spectrum.peaks[0];
+        assert!(
+            (peak.frequency_hz - 200.0).abs() < 10.0,
+            "peak should be near 200 Hz, got {:.1} Hz",
+            peak.frequency_hz
+        );
+    }
+
+    #[test]
+    fn spectrum_detects_two_sines() {
+        // Two frequencies: 100 Hz and 300 Hz
+        let mut samples = sine_wave(100.0, 1000.0, 4096);
+        let second = sine_wave(300.0, 1000.0, 4096);
+        for (i, v) in second.iter().enumerate() {
+            samples[i] += v;
+        }
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+
+        assert!(
+            spectrum.peaks.len() >= 2,
+            "should detect at least 2 peaks, got {}",
+            spectrum.peaks.len()
+        );
+
+        let freqs: Vec<f64> = spectrum.peaks.iter().map(|p| p.frequency_hz).collect();
+        let has_100 = freqs.iter().any(|f| (f - 100.0).abs() < 10.0);
+        let has_300 = freqs.iter().any(|f| (f - 300.0).abs() < 10.0);
+        assert!(has_100, "should find peak near 100 Hz, got {freqs:?}");
+        assert!(has_300, "should find peak near 300 Hz, got {freqs:?}");
+    }
+
+    #[test]
+    fn spectrum_frequency_resolution() {
+        // At 1000 Hz sample rate with 1024-point FFT, resolution is ~0.98 Hz
+        let resolution = 1000.0 / FFT_WINDOW_SIZE as f64;
+        assert!(
+            resolution < 2.0,
+            "frequency resolution should be < 2 Hz, got {resolution:.2}"
+        );
+    }
+
+    #[test]
+    fn noise_floor_of_sine() {
+        let samples = sine_wave(200.0, 1000.0, 4096);
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+        let floor = compute_noise_floor(&spectrum.magnitudes_db);
+
+        // Noise floor should be well below the peak
+        let peak_db = spectrum
+            .peaks
+            .first()
+            .map(|p| p.magnitude_db)
+            .unwrap_or(0.0);
+        assert!(
+            peak_db - floor > 20.0,
+            "peak ({peak_db:.0} dB) should be >20 dB above floor ({floor:.0} dB)"
+        );
+    }
+
+    #[test]
+    fn noise_floor_of_noise() {
+        // White noise — noise floor should be relatively high (no clear peaks)
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let samples: Vec<f64> = (0..4096)
+            .map(|i| {
+                let mut h = DefaultHasher::new();
+                i.hash(&mut h);
+                (h.finish() as f64 / u64::MAX as f64 - 0.5) * 100.0
+            })
+            .collect();
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+        let floor = compute_noise_floor(&spectrum.magnitudes_db);
+        // White noise has a relatively flat spectrum — floor should be near peak
+        let max_db = spectrum
+            .magnitudes_db
+            .iter()
+            .copied()
+            .fold(f64::MIN, f64::max);
+        assert!(
+            max_db - floor < 20.0,
+            "white noise: peak ({max_db:.0} dB) should be <20 dB above floor ({floor:.0} dB)"
+        );
+    }
+
+    #[test]
+    fn hann_window_properties() {
+        let w = hann_window(1024);
+        assert_eq!(w.len(), 1024);
+        // Hann window is zero at endpoints
+        assert!(w[0].abs() < 1e-10, "first sample should be ~0");
+        // Peak at center
+        let mid = w[512];
+        assert!((mid - 1.0).abs() < 0.01, "center should be ~1.0, got {mid}");
+    }
+
+    #[test]
+    fn find_peaks_returns_sorted_by_magnitude() {
+        let samples = sine_wave(200.0, 1000.0, 4096);
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+
+        for pair in spectrum.peaks.windows(2) {
+            assert!(
+                pair[0].magnitude_db >= pair[1].magnitude_db,
+                "peaks should be sorted by magnitude descending"
+            );
+        }
+    }
+
+    #[test]
+    fn avg_motor_hz_basic() {
+        // 4 motors all at 6000 RPM (stored as eRPM/100 = 60 for BF)
+        // With 14 poles: freq = 60 * 100 / 60 / 7 = 14.3 Hz
+        let erpm = vec![vec![60.0; 100]; 4];
+        let indices: Vec<usize> = (0..100).collect();
+        let result = compute_avg_motor_hz(&erpm, &indices, 14);
+        assert!(result.is_some());
+        let hz = result.unwrap();
+        assert!((hz - 14.3).abs() < 0.5, "expected ~14.3 Hz, got {hz:.1}");
+    }
+
+    #[test]
+    fn avg_motor_hz_empty() {
+        let erpm: Vec<Vec<f64>> = vec![vec![]; 4];
+        let indices: Vec<usize> = (0..100).collect();
+        let result = compute_avg_motor_hz(&erpm, &indices, 14);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn avg_motor_hz_zeros_filtered() {
+        // Mix of zero and non-zero RPM — zeros should be excluded
+        let mut motor = vec![0.0; 100];
+        for i in 50..100 {
+            motor[i] = 60.0;
+        }
+        let erpm = vec![motor; 4];
+        let indices: Vec<usize> = (0..100).collect();
+        let result = compute_avg_motor_hz(&erpm, &indices, 14);
+        assert!(result.is_some());
+        let hz = result.unwrap();
+        // Only non-zero samples contribute
+        assert!(
+            (hz - 14.3).abs() < 0.5,
+            "should be ~14.3 Hz (ignoring zeros), got {hz:.1}"
+        );
+    }
+}
