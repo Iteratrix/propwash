@@ -97,8 +97,8 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
             }
 
             // Rise time: samples from 10% to 90% of step
-            let target_10 = sp_before + step_size * 0.1;
-            let target_90 = sp_before + step_size * 0.9;
+            let target_10 = step_size.mul_add(0.1, sp_before);
+            let target_90 = step_size.mul_add(0.9, sp_before);
             let rising = step_size > 0.0;
 
             let crossed_10 = gyro_window.iter().position(|&v| {

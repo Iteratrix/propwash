@@ -400,7 +400,7 @@ impl BfSession {
     }
 
     /// Computes sample rate from first/last frame timestamps.
-    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
+    #[allow(clippy::cast_precision_loss)]
     pub fn sample_rate_hz(&self) -> f64 {
         let Some(time) = self.time_column() else {
             return 0.0;
@@ -408,7 +408,7 @@ impl BfSession {
         if time.len() < 2 {
             return 0.0;
         }
-        let dt_us = time.last().unwrap() - time.first().unwrap();
+        let dt_us = time[time.len() - 1] - time[0];
         if dt_us <= 0.0 {
             return 0.0;
         }
@@ -416,7 +416,7 @@ impl BfSession {
     }
 
     /// Returns flight duration in seconds.
-    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
+    #[allow(clippy::cast_precision_loss)]
     pub fn duration_seconds(&self) -> f64 {
         let Some(time) = self.time_column() else {
             return 0.0;
@@ -424,7 +424,7 @@ impl BfSession {
         if time.len() < 2 {
             return 0.0;
         }
-        let dt_us = time.last().unwrap() - time.first().unwrap();
+        let dt_us = time[time.len() - 1] - time[0];
         if dt_us <= 0.0 {
             return 0.0;
         }

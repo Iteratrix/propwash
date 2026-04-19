@@ -275,13 +275,13 @@ impl Px4Session {
     }
 
     /// Computes sample rate from gyro timestamps.
-    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
+    #[allow(clippy::cast_precision_loss)]
     pub fn sample_rate_hz(&self) -> f64 {
         let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
         for topic in candidates {
             let ts = self.topic_timestamps(topic);
             if ts.len() >= 2 {
-                let dt = ts.last().unwrap().saturating_sub(*ts.first().unwrap());
+                let dt = ts[ts.len() - 1].saturating_sub(ts[0]);
                 if dt > 0 {
                     return (ts.len() - 1) as f64 / (dt as f64 / 1_000_000.0);
                 }
@@ -401,7 +401,7 @@ impl Px4Session {
                     (Some(vn), Some(ve)) => vn
                         .iter()
                         .zip(ve.iter())
-                        .map(|(&n, &e)| (n * n + e * e).sqrt())
+                        .map(|(&n, &e)| n.hypot(e))
                         .collect(),
                     _ => Vec::new(),
                 }
