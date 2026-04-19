@@ -1,6 +1,6 @@
 [package]
 name = "propwash-core"
-version = "0.9.2"
+version = "0.10.0"
 edition.workspace = true
 description = "Lenient parser for flight controller blackbox logs"
 repository = "https://github.com/Iteratrix/propwash"
