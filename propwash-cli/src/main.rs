@@ -1,9 +1,16 @@
 use std::process;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use propwash_core::analysis::episodes;
 use propwash_core::types::SensorField;
 use serde::Serialize;
+
+#[derive(Clone, Copy, Default, ValueEnum)]
+enum OutputFormat {
+    #[default]
+    Summary,
+    Json,
+}
 
 #[derive(Parser)]
 #[command(name = "propwash", about = "Flight log vibration analyzer")]
@@ -27,8 +34,8 @@ enum Command {
         /// Path to a .bbl or .bfl log file.
         log_file: String,
         /// Output format.
-        #[arg(long, default_value = "summary")]
-        output: String,
+        #[arg(long, default_value_t, value_enum)]
+        output: OutputFormat,
     },
     /// Compare two log files side by side.
     Compare {
@@ -75,7 +82,7 @@ fn main() {
     let cli = Cli::parse();
     match cli.command {
         Command::Info { log_file, json } => cmd_info(&log_file, json),
-        Command::Analyze { log_file, output } => cmd_analyze(&log_file, &output),
+        Command::Analyze { log_file, output } => cmd_analyze(&log_file, output),
         Command::Compare { log_a, log_b } => cmd_compare(&log_a, &log_b),
         Command::Scan { files } => cmd_scan(&files),
         Command::Trend { files, json } => cmd_trend(&files, json),
@@ -456,7 +463,7 @@ fn cmd_trend(files: &[String], json: bool) {
     }
 }
 
-fn cmd_analyze(path: &str, output: &str) {
+fn cmd_analyze(path: &str, output: OutputFormat) {
     let log = load_log(path);
 
     for session in &log.sessions {
@@ -468,7 +475,7 @@ fn cmd_analyze(path: &str, output: &str) {
         let episodes = episodes::consolidate(&analysis.events);
 
         match output {
-            "json" => {
+            OutputFormat::Json => {
                 #[derive(Serialize)]
                 struct JsonOutput<'a> {
                     summary: &'a propwash_core::analysis::summary::FlightSummary,
@@ -489,7 +496,7 @@ fn cmd_analyze(path: &str, output: &str) {
                 };
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
             }
-            "summary" => {
+            OutputFormat::Summary => {
                 print_summary(
                     &analysis.summary,
                     &episodes,
@@ -497,10 +504,6 @@ fn cmd_analyze(path: &str, output: &str) {
                     analysis.step_response.as_ref(),
                     &analysis.diagnostics,
                 );
-            }
-            _ => {
-                eprintln!("Unknown output format: {output}. Use 'json' or 'summary'.");
-                process::exit(1);
             }
         }
     }

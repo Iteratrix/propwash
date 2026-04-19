@@ -4,7 +4,7 @@ use serde::Serialize;
 use super::events::{EventKind, FlightEvent};
 use crate::types::{MotorIndex, SensorField, Session};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FlightSummary {
     pub session_index: usize,
     pub firmware: String,
@@ -25,7 +25,7 @@ pub struct FlightSummary {
 }
 
 /// Average output and deviation for one motor.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MotorStats {
     pub index: usize,
     pub mean: f64,

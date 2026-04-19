@@ -399,8 +399,9 @@ fn compute_throttle_bands_unified(
 
 /// Compute average motor vibration frequency (Hz) from eRPM data at the given frame indices.
 ///
-/// BF logs `eRPM`/100. Vibration frequency = `eRPM_raw` * 100 / 60 / (poles/2).
-/// Default pole count is 14 (7 pole pairs) if not specified.
+/// Assumes eRPM values are already in actual electrical RPM (each format's
+/// `field()` handles scaling — e.g., BF multiplies raw ×100 in `field()`).
+/// Vibration frequency = eRPM / 60 / (poles/2).
 fn compute_avg_motor_hz(
     erpm_data: &[Vec<f64>],
     indices: &[usize],
@@ -414,9 +415,9 @@ fn compute_avg_motor_hz(
             continue;
         }
         for &i in indices {
-            if let Some(&raw) = motor.get(i) {
-                if raw > 0.0 {
-                    sum += raw;
+            if let Some(&erpm) = motor.get(i) {
+                if erpm > 0.0 {
+                    sum += erpm;
                     count += 1;
                 }
             }
@@ -425,9 +426,7 @@ fn compute_avg_motor_hz(
 
     if count > 0 {
         let pole_pairs = f64::from(motor_poles.max(2)) / 2.0;
-        // raw eRPM values are eRPM/100 in BF, actual eRPM for other formats
-        // Convert: raw * 100 / 60 / pole_pairs = Hz
-        Some(sum / count.az::<f64>() * 100.0 / 60.0 / pole_pairs)
+        Some(sum / count.az::<f64>() / 60.0 / pole_pairs)
     } else {
         None
     }
@@ -840,9 +839,9 @@ mod tests {
 
     #[test]
     fn avg_motor_hz_basic() {
-        // 4 motors all at 6000 RPM (stored as eRPM/100 = 60 for BF)
-        // With 14 poles: freq = 60 * 100 / 60 / 7 = 14.3 Hz
-        let erpm = vec![vec![60.0; 100]; 4];
+        // 4 motors at 6000 eRPM (already scaled by format's field())
+        // With 14 poles (7 pole pairs): freq = 6000 / 60 / 7 = 14.3 Hz
+        let erpm = vec![vec![6000.0; 100]; 4];
         let indices: Vec<usize> = (0..100).collect();
         let result = compute_avg_motor_hz(&erpm, &indices, 14);
         assert!(result.is_some());
@@ -860,10 +859,10 @@ mod tests {
 
     #[test]
     fn avg_motor_hz_zeros_filtered() {
-        // Mix of zero and non-zero RPM — zeros should be excluded
+        // Mix of zero and non-zero eRPM — zeros should be excluded
         let mut motor = vec![0.0; 100];
         for i in 50..100 {
-            motor[i] = 60.0;
+            motor[i] = 6000.0;
         }
         let erpm = vec![motor; 4];
         let indices: Vec<usize> = (0..100).collect();

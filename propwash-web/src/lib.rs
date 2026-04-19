@@ -11,11 +11,11 @@ use propwash_core::types::{Log, SensorField};
 // Workspace state — supports multiple loaded files
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 struct WorkspaceEntry {
     id: u32,
     filename: String,
     log: Log,
+    analyses: Vec<FlightAnalysis>,
 }
 
 #[derive(Default)]
@@ -119,11 +119,13 @@ pub fn add_file(data: &[u8], filename: &str) -> String {
         }
     };
 
-    let analyses: Vec<SessionResult> = log
+    let mut cached_analyses = Vec::new();
+    let session_results: Vec<SessionResult> = log
         .sessions
         .iter()
         .map(|session| {
             let flight_analysis = analysis::analyze(session);
+            cached_analyses.push(flight_analysis.clone());
             SessionResult {
                 index: session.index(),
                 firmware: session.firmware_version().to_string(),
@@ -148,7 +150,7 @@ pub fn add_file(data: &[u8], filename: &str) -> String {
         let result = AddFileResult {
             file_id,
             filename: filename.to_string(),
-            sessions: analyses,
+            sessions: session_results,
             warnings,
         };
 
@@ -156,6 +158,7 @@ pub fn add_file(data: &[u8], filename: &str) -> String {
             id: file_id,
             filename: filename.to_string(),
             log,
+            analyses: cached_analyses,
         });
 
         serde_json::to_string(&result)
@@ -342,25 +345,25 @@ pub fn get_trend() -> String {
     WORKSPACE.with(|cell| {
         let ws = cell.borrow();
 
-        let mut entries: Vec<(String, FlightAnalysis)> = Vec::new();
+        let mut refs: Vec<(String, &FlightAnalysis)> = Vec::new();
         for entry in &ws.entries {
-            for session in &entry.log.sessions {
-                if session.frame_count() == 0 {
-                    continue;
-                }
-                let label = if entry.log.sessions.len() == 1 {
+            for (i, analysis) in entry.analyses.iter().enumerate() {
+                let label = if entry.analyses.len() == 1 {
                     entry.filename.clone()
                 } else {
-                    format!("{} / s{}", entry.filename, session.index())
+                    format!(
+                        "{} / s{}",
+                        entry.filename,
+                        entry
+                            .log
+                            .sessions
+                            .get(i)
+                            .map_or(i, propwash_core::Session::index)
+                    )
                 };
-                entries.push((label, analysis::analyze(session)));
+                refs.push((label, analysis));
             }
         }
-
-        let refs: Vec<(String, &FlightAnalysis)> = entries
-            .iter()
-            .map(|(label, a)| (label.clone(), a))
-            .collect();
         let points = trend::compute_trend(&refs);
 
         serde_json::to_string(&points)

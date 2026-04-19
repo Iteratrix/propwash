@@ -24,7 +24,7 @@ use crate::types::Session;
 
 use serde::Serialize;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FlightAnalysis {
     pub summary: FlightSummary,
     pub events: Vec<FlightEvent>,

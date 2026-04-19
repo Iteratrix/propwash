@@ -448,6 +448,8 @@ impl BfSession {
             SensorField::GpsLat | SensorField::GpsLng if !raw.is_empty() => {
                 raw.iter().map(|&v| v * 1e-7).collect()
             }
+            // BF stores eRPM/100 to save bytes in variable-length encoding
+            SensorField::ERpm(_) if !raw.is_empty() => raw.iter().map(|&v| v * 100.0).collect(),
             _ => raw,
         }
     }
