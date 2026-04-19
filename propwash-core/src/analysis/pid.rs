@@ -3,6 +3,8 @@ use serde::Serialize;
 
 use crate::types::{Axis, AxisGains, PidGains, SensorField, Session};
 
+use super::util;
+
 use super::step_response::StepResponseAnalysis;
 
 /// Step response quality rating for a single axis.
@@ -87,17 +89,8 @@ const MIN_STEPS_OSCILLATION: usize = 3;
 /// FFT window size for oscillation detection around steps.
 const OSC_FFT_SIZE: usize = 128;
 
-/// Minimum setpoint change to qualify as a step.
-const MIN_STEP_SIZE: f64 = 50.0;
-
 /// Post-step window in samples for oscillation FFT.
 const OSC_POST_SAMPLES: usize = 200;
-
-/// Step cooldown in samples.
-const OSC_STEP_COOLDOWN: usize = 100;
-
-/// Lookback window for step detection.
-const OSC_STEP_LOOKBACK: usize = 50;
 
 /// Analyze PID behavior from session data.
 pub fn analyze_pid(
@@ -308,7 +301,7 @@ fn analyze_oscillation(
         }
 
         let len = setpoint.len().min(gyro.len());
-        let steps = detect_steps(&setpoint[..len]);
+        let steps = util::detect_steps(&setpoint[..len]);
 
         let mut error_windows: Vec<Vec<f64>> = Vec::new();
         for &step_idx in &steps {
@@ -342,25 +335,6 @@ fn analyze_oscillation(
     }
 
     results
-}
-
-/// Detect step indices using windowed lookback.
-fn detect_steps(setpoint: &[f64]) -> Vec<usize> {
-    let mut steps = Vec::new();
-    let mut last_step = 0usize;
-    let start = OSC_STEP_LOOKBACK;
-
-    for i in start..setpoint.len() {
-        if i > last_step && i - last_step < OSC_STEP_COOLDOWN && last_step >= start {
-            continue;
-        }
-        let delta = (setpoint[i] - setpoint[i - OSC_STEP_LOOKBACK]).abs();
-        if delta >= MIN_STEP_SIZE {
-            steps.push(i);
-            last_step = i;
-        }
-    }
-    steps
 }
 
 /// Average error windows and find dominant frequency via FFT.
@@ -427,36 +401,6 @@ fn find_dominant_oscillation(windows: &[Vec<f64>], sample_rate: f64) -> (Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn detect_steps_finds_large_changes() {
-        // Simulate a ramp: 0 for 100 samples, then 100 for the rest
-        // The lookback window detects the change at index 100+LOOKBACK
-        let mut sp = vec![0.0; 300];
-        for i in 100..300 {
-            sp[i] = 100.0;
-        }
-        let steps = detect_steps(&sp);
-        assert!(!steps.is_empty(), "should detect at least one step");
-        // Step detected when lookback window spans the transition
-        assert!(steps[0] >= 100, "step should be at or after the transition");
-    }
-
-    #[test]
-    fn detect_steps_respects_cooldown() {
-        let mut sp = vec![0.0; 400];
-        // First step at 100
-        for i in 100..150 {
-            sp[i] = 100.0;
-        }
-        // Second step at 150 — within cooldown (100 samples)
-        for i in 150..400 {
-            sp[i] = 200.0;
-        }
-        let steps = detect_steps(&sp);
-        // Both transitions are within cooldown distance of each other
-        assert!(steps.len() <= 2, "cooldown should limit detections");
-    }
 
     #[test]
     fn find_dominant_oscillation_with_sine() {

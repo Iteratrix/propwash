@@ -7,6 +7,7 @@ pub mod step_response;
 pub mod summary;
 pub mod trend;
 pub mod unified_events;
+pub(crate) mod util;
 
 use az::Az;
 use diagnostics::Diagnostic;
