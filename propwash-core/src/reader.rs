@@ -8,6 +8,8 @@ pub(crate) enum InternalError {
     Corrupt,
 }
 
+use az::Az;
+
 /// Zero-copy byte reader over a borrowed slice with bit-level positioning.
 /// Supports sub-byte reads for `TAG8_4S16` nibble-aligned encoding,
 /// and `byte_align()` to match the firmware's `streamByteAlign()`.
@@ -121,8 +123,7 @@ impl<'a> Reader<'a> {
                 self.bit_pos = 0;
                 self.pos += 1;
             }
-            #[allow(clippy::cast_possible_truncation)]
-            Ok(result as u8)
+            Ok(result.az::<u8>())
         } else {
             // Bits span two bytes
             let from_first = bits_left_in_byte;
@@ -144,8 +145,7 @@ impl<'a> Reader<'a> {
                 self.pos += 1;
             }
 
-            #[allow(clippy::cast_possible_truncation)]
-            Ok(((first_bits << from_second) | second_bits) as u8)
+            Ok(((first_bits << from_second) | second_bits).az::<u8>())
         }
     }
 

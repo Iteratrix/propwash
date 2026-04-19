@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use az::{Az, SaturatingAs};
+
 use crate::types::{Axis, FilterConfig, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Format character from FMT message — determines wire size and interpretation.
@@ -242,7 +244,6 @@ impl ApSession {
         &self.vehicle_name
     }
 
-    #[allow(clippy::cast_precision_loss)]
     pub fn sample_rate_hz(&self) -> f64 {
         let ts = self.msg_timestamps("IMU");
         if ts.len() >= 2 {
@@ -250,13 +251,12 @@ impl ApSession {
             let tn = ts[ts.len() - 1];
             let dt = tn.saturating_sub(t0);
             if dt > 0 {
-                return (ts.len() - 1) as f64 / (dt as f64 / 1_000_000.0);
+                return (ts.len() - 1).az::<f64>() / (dt.az::<f64>() / 1_000_000.0);
             }
         }
         0.0
     }
 
-    #[allow(clippy::cast_precision_loss)]
     pub fn duration_seconds(&self) -> f64 {
         let mut min_t = u64::MAX;
         let mut max_t = 0u64;
@@ -273,15 +273,15 @@ impl ApSession {
         if min_t >= max_t {
             return 0.0;
         }
-        (max_t - min_t) as f64 / 1_000_000.0
+        (max_t - min_t).az::<f64>() / 1_000_000.0
     }
 
-    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines)]
     pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => {
                 let ts = self.msg_timestamps("IMU");
-                ts.iter().map(|&t| t as f64).collect()
+                ts.iter().map(|&t| t.az::<f64>()).collect()
             }
             SensorField::Gyro(axis) => {
                 let field_name = match axis {
@@ -355,8 +355,7 @@ impl ApSession {
                 let Some(rpm_col) = mc.column("RPM") else {
                     return Vec::new();
                 };
-                #[allow(clippy::cast_precision_loss)]
-                let target = idx.0 as f64;
+                let target = idx.0.az::<f64>();
                 inst_col
                     .iter()
                     .zip(rpm_col.iter())
@@ -422,15 +421,13 @@ impl ApSession {
 
     pub fn motor_count(&self) -> usize {
         if let Some(&count) = self.params.get("MOT_PWM_COUNT") {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            return (count as usize).min(8);
+            return count.saturating_as::<usize>().min(8);
         }
         let mut count = 0;
         for i in 1..=14 {
             let key = format!("SERVO{i}_FUNCTION");
             if let Some(&func) = self.params.get(&key) {
-                #[allow(clippy::cast_possible_truncation)]
-                let f = func as i32;
+                let f = func.az::<i32>();
                 if (33..=40).contains(&f) {
                     count += 1;
                 }
@@ -460,7 +457,6 @@ impl ApSession {
         self.stats.corrupt_bytes
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn pid_gains(&self) -> crate::types::PidGains {
         let parse = |p_key: &str, i_key: &str, d_key: &str| -> crate::types::AxisGains {
             let get = |k: &str| -> Option<u32> {
@@ -468,7 +464,7 @@ impl ApSession {
                     .get(k)
                     .copied()
                     .filter(|&v| v > 0.0)
-                    .map(|v| (v * 1000.0) as u32)
+                    .map(|v| (v * 1000.0).saturating_as::<u32>())
             };
             crate::types::AxisGains {
                 p: get(p_key),

@@ -1,3 +1,5 @@
+use az::WrappingAs;
+
 use super::types::{BfFieldSign, BfSession, Predictor};
 use crate::types::{MotorIndex, SensorField};
 
@@ -12,11 +14,16 @@ pub(crate) struct FrameSchedule {
 
 impl FrameSchedule {
     pub fn from_headers(session: &BfSession) -> Self {
-        #[allow(clippy::cast_sign_loss)]
         Self {
-            i_interval: session.get_header_int("I interval", 1).max(1) as u32,
-            p_num: session.get_header_int("P interval", 1).max(1) as u32,
-            p_denom: session.get_header_int("P ratio", 1).max(1) as u32,
+            i_interval: session
+                .get_header_int("I interval", 1)
+                .max(1)
+                .cast_unsigned(),
+            p_num: session
+                .get_header_int("P interval", 1)
+                .max(1)
+                .cast_unsigned(),
+            p_denom: session.get_header_int("P ratio", 1).max(1).cast_unsigned(),
         }
     }
 
@@ -150,11 +157,10 @@ pub(crate) fn apply_i_predictor(
     let predicted: i32 = match predictor {
         Predictor::MinThrottle => decoded.wrapping_add(session.min_throttle()),
         Predictor::Motor0 => {
-            #[allow(clippy::cast_possible_truncation)]
             let motor0 = motor0_idx
                 .and_then(|idx| current_values.get(idx))
                 .copied()
-                .map_or(0, |v| v as i32);
+                .map_or(0, WrappingAs::wrapping_as);
             decoded.wrapping_add(motor0)
         }
         Predictor::FifteenHundred => decoded.wrapping_add(1500),
@@ -192,8 +198,7 @@ pub(crate) fn apply_p_predictor(
             decoded.wrapping_add(avg)
         }
         Predictor::Increment => {
-            #[allow(clippy::cast_possible_wrap)]
-            let skip = skipped_frames as i32;
+            let skip = skipped_frames.wrapping_as::<i32>();
             p1.wrapping_add(skip + 1).wrapping_add(decoded)
         }
         Predictor::Motor0 => {
@@ -222,17 +227,15 @@ pub(crate) fn apply_p_predictor(
     to_i64(predicted, sign)
 }
 
-#[allow(clippy::cast_sign_loss)]
 fn to_i64(value: i32, sign: BfFieldSign) -> i64 {
     match sign {
-        BfFieldSign::Unsigned => i64::from(value as u32),
+        BfFieldSign::Unsigned => i64::from(value.cast_unsigned()),
         BfFieldSign::Signed => i64::from(value),
     }
 }
 
-#[allow(clippy::cast_possible_truncation)]
 fn to_i32(value: i64) -> i32 {
-    value as i32
+    value.wrapping_as::<i32>()
 }
 
 #[cfg(test)]

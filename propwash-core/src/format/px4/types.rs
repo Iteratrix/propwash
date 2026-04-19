@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use az::{Az, SaturatingAs};
+
 use crate::types::{Axis, FilterConfig, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Primitive types in the `ULog` type system.
@@ -275,7 +277,6 @@ impl Px4Session {
     }
 
     /// Computes sample rate from gyro timestamps.
-    #[allow(clippy::cast_precision_loss)]
     pub fn sample_rate_hz(&self) -> f64 {
         let candidates = ["vehicle_angular_velocity", "sensor_combined", "sensor_gyro"];
         for topic in candidates {
@@ -283,7 +284,7 @@ impl Px4Session {
             if ts.len() >= 2 {
                 let dt = ts[ts.len() - 1].saturating_sub(ts[0]);
                 if dt > 0 {
-                    return (ts.len() - 1) as f64 / (dt as f64 / 1_000_000.0);
+                    return (ts.len() - 1).az::<f64>() / (dt.az::<f64>() / 1_000_000.0);
                 }
             }
         }
@@ -291,7 +292,6 @@ impl Px4Session {
     }
 
     /// Returns flight duration in seconds.
-    #[allow(clippy::cast_precision_loss)]
     pub fn duration_seconds(&self) -> f64 {
         let mut min_t = u64::MAX;
         let mut max_t = 0u64;
@@ -308,15 +308,11 @@ impl Px4Session {
         if min_t >= max_t {
             return 0.0;
         }
-        (max_t - min_t) as f64 / 1_000_000.0
+        (max_t - min_t).az::<f64>() / 1_000_000.0
     }
 
     /// Extracts one field as a `Vec<f64>` across all relevant messages.
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::too_many_lines,
-        clippy::cast_possible_truncation
-    )]
+    #[allow(clippy::too_many_lines)]
     pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => {
@@ -324,7 +320,7 @@ impl Px4Session {
                 for topic in candidates {
                     let ts = self.topic_timestamps(topic);
                     if !ts.is_empty() {
-                        return ts.iter().map(|&t| t as f64).collect();
+                        return ts.iter().map(|&t| t.az::<f64>()).collect();
                     }
                 }
                 Vec::new()
@@ -456,8 +452,7 @@ impl Px4Session {
     /// Returns the number of motors detected from parameters or data.
     pub fn motor_count(&self) -> usize {
         if let Some(&count) = self.params.get("MOT_COUNT") {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            return (count as usize).min(8);
+            return count.saturating_as::<usize>().min(8);
         }
         let id = self.primary_msg_id("actuator_outputs");
         if let Some(td) = id.and_then(|id| self.topics.get(&id)) {
@@ -508,7 +503,6 @@ impl Px4Session {
         self.stats.corrupt_bytes
     }
 
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn pid_gains(&self) -> crate::types::PidGains {
         let parse = |p_key: &str, i_key: &str, d_key: &str| -> crate::types::AxisGains {
             let get = |k: &str| -> Option<u32> {
@@ -516,7 +510,7 @@ impl Px4Session {
                     .get(k)
                     .copied()
                     .filter(|&v| v > 0.0)
-                    .map(|v| (v * 1000.0) as u32)
+                    .map(|v| (v * 1000.0).saturating_as::<u32>())
             };
             crate::types::AxisGains {
                 p: get(p_key),

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use az::{Az, WrappingAs};
+
 use super::header::parse_bf_field_name;
 use crate::types::{FilterConfig, SensorField, Warning};
 
@@ -281,14 +283,12 @@ impl BfSession {
         gps_home_field_defs: Option<BfFrameDefs>,
         min_motor_override: i32,
     ) -> Self {
-        #[allow(clippy::cast_possible_truncation)]
         let min_throttle = match headers.get("minthrottle") {
-            Some(BfHeaderValue::Int(v)) => *v as i32,
+            Some(BfHeaderValue::Int(v)) => (*v).wrapping_as::<i32>(),
             _ => 0,
         };
-        #[allow(clippy::cast_possible_truncation)]
         let vbat_ref = match headers.get("vbatref") {
-            Some(BfHeaderValue::Int(v)) => *v as i32,
+            Some(BfHeaderValue::Int(v)) => (*v).wrapping_as::<i32>(),
             _ => 0,
         };
         Self {
@@ -318,21 +318,19 @@ impl BfSession {
     }
 
     /// Gets a header value as an integer with a default fallback.
-    #[allow(clippy::cast_possible_truncation)]
     pub fn get_header_int(&self, key: &str, default: i32) -> i32 {
         match self.headers.get(key) {
-            Some(BfHeaderValue::Int(v)) => *v as i32,
+            Some(BfHeaderValue::Int(v)) => (*v).wrapping_as::<i32>(),
             Some(BfHeaderValue::Str(s)) => s.parse().unwrap_or(default),
             Some(BfHeaderValue::IntList(_)) | None => default,
         }
     }
 
     /// Gets a header value as a list of integers.
-    #[allow(clippy::cast_possible_truncation)]
     pub fn get_header_int_list(&self, key: &str) -> Vec<i32> {
         match self.headers.get(key) {
-            Some(BfHeaderValue::IntList(v)) => v.iter().map(|&x| x as i32).collect(),
-            Some(BfHeaderValue::Int(v)) => vec![*v as i32],
+            Some(BfHeaderValue::IntList(v)) => v.iter().map(|&x| x.wrapping_as::<i32>()).collect(),
+            Some(BfHeaderValue::Int(v)) => vec![(*v).wrapping_as::<i32>()],
             Some(BfHeaderValue::Str(s)) => {
                 s.split(',').filter_map(|p| p.trim().parse().ok()).collect()
             }
@@ -356,12 +354,11 @@ impl BfSession {
     }
 
     /// Gets a main-frame field value by field index and frame index.
-    #[allow(clippy::cast_possible_truncation)]
     pub fn main_value(&self, frame_idx: usize, field_idx: usize) -> i64 {
         self.main_columns
             .get(field_idx)
             .and_then(|col| col.get(frame_idx))
-            .map_or(0, |&v| v as i64)
+            .map_or(0, |&v| v.az::<i64>())
     }
 
     // ── Methods absorbed from BfAnalyzedView ────────────────────────
@@ -400,7 +397,6 @@ impl BfSession {
     }
 
     /// Computes sample rate from first/last frame timestamps.
-    #[allow(clippy::cast_precision_loss)]
     pub fn sample_rate_hz(&self) -> f64 {
         let Some(time) = self.time_column() else {
             return 0.0;
@@ -412,11 +408,10 @@ impl BfSession {
         if dt_us <= 0.0 {
             return 0.0;
         }
-        (time.len() - 1) as f64 / (dt_us / 1_000_000.0)
+        (time.len() - 1).az::<f64>() / (dt_us / 1_000_000.0)
     }
 
     /// Returns flight duration in seconds.
-    #[allow(clippy::cast_precision_loss)]
     pub fn duration_seconds(&self) -> f64 {
         let Some(time) = self.time_column() else {
             return 0.0;
@@ -438,7 +433,6 @@ impl BfSession {
     /// a field isn't found in main frames. `SensorField::Unknown` values
     /// resolve only if the parser previously mapped that exact string to a
     /// field index. Unresolvable fields return an empty `Vec`.
-    #[allow(clippy::cast_precision_loss)]
     pub fn field(&self, sensor_field: &SensorField) -> Vec<f64> {
         let raw = self.field_raw(sensor_field);
 
@@ -509,13 +503,12 @@ impl BfSession {
     }
 
     /// Returns the filter configuration extracted from headers.
-    #[allow(clippy::cast_sign_loss)]
     pub fn pid_gains(&self) -> crate::types::PidGains {
         let parse = |key: &str| -> crate::types::AxisGains {
             let vals = self.get_header_int_list(key);
             let to_u32 = |v: i32| -> Option<u32> {
                 if v > 0 {
-                    Some(v as u32)
+                    Some(v.cast_unsigned())
                 } else {
                     None
                 }

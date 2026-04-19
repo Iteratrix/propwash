@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use az::Az;
+
 use crate::types::Warning;
 
 use super::types::{
@@ -14,7 +16,6 @@ const GCS_SYSID: u8 = 255;
 // MAVLink X.25 CRC-16
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::cast_possible_truncation)]
 fn mavlink_crc(data: &[u8], crc_extra: u8) -> u16 {
     let mut crc: u16 = 0xFFFF;
     for &b in data {
@@ -90,7 +91,6 @@ enum W {
 }
 
 #[inline]
-#[allow(clippy::cast_precision_loss)]
 fn decode_w(data: &[u8], offset: usize, w: W) -> f64 {
     match w {
         W::U8 => f64::from(data[offset]),
@@ -103,7 +103,9 @@ fn decode_w(data: &[u8], offset: usize, w: W) -> f64 {
         W::I32 => f64::from(i32::from_le_bytes(
             data[offset..offset + 4].try_into().unwrap_or([0; 4]),
         )),
-        W::U64 => u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap_or([0; 8])) as f64,
+        W::U64 => {
+            u64::from_le_bytes(data[offset..offset + 8].try_into().unwrap_or([0; 8])).az::<f64>()
+        }
         W::F32 => f64::from(f32::from_le_bytes(
             data[offset..offset + 4].try_into().unwrap_or([0; 4]),
         )),

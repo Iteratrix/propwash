@@ -1,3 +1,4 @@
+use az::{Az, SaturatingAs};
 use serde::Serialize;
 
 use crate::types::{Axis, AxisGains, PidGains, SensorField, Session};
@@ -166,15 +167,22 @@ fn compute_tuning(
 }
 
 /// Classify the response and compute suggested gains.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn classify_and_suggest(
     overshoot: f64,
     rise: f64,
     settling: f64,
     current: &AxisGains,
 ) -> (TuningRating, AxisGains) {
-    let scale_p = |factor: f64| current.p.map(|p| (f64::from(p) * factor) as u32);
-    let scale_d = |factor: f64| current.d.map(|d| (f64::from(d) * factor) as u32);
+    let scale_p = |factor: f64| {
+        current
+            .p
+            .map(|p| (f64::from(p) * factor).saturating_as::<u32>())
+    };
+    let scale_d = |factor: f64| {
+        current
+            .d
+            .map(|d| (f64::from(d) * factor).saturating_as::<u32>())
+    };
 
     if overshoot > 40.0 && settling > rise * 3.0 {
         // Oscillating: aggressively lower P, raise D
@@ -220,7 +228,6 @@ fn classify_and_suggest(
 // ---------------------------------------------------------------------------
 
 /// Detect I-term windup: frames where |I-term| exceeds |P-term|.
-#[allow(clippy::cast_precision_loss)]
 fn analyze_windup(session: &Session) -> Vec<AxisWindup> {
     let mut results = Vec::new();
 
@@ -251,7 +258,7 @@ fn analyze_windup(session: &Session) -> Vec<AxisWindup> {
             }
         }
 
-        let fraction = i_dominant_count as f64 / len as f64;
+        let fraction = i_dominant_count.az::<f64>() / len.az::<f64>();
 
         if fraction > 0.01 || peak_ratio > 2.0 {
             results.push(AxisWindup {
@@ -270,7 +277,6 @@ fn analyze_windup(session: &Session) -> Vec<AxisWindup> {
 // ---------------------------------------------------------------------------
 
 /// Detect oscillation frequency from error signal (setpoint - gyro) around steps.
-#[allow(clippy::cast_precision_loss)]
 fn analyze_oscillation(
     session: &Session,
     step_response: Option<&StepResponseAnalysis>,
@@ -360,11 +366,6 @@ fn detect_steps(setpoint: &[f64]) -> Vec<usize> {
 }
 
 /// Average error windows and find dominant frequency via FFT.
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 fn find_dominant_oscillation(windows: &[Vec<f64>], sample_rate: f64) -> (Option<f64>, Option<f64>) {
     use rustfft::num_complex::Complex;
     use rustfft::FftPlanner;
@@ -380,13 +381,14 @@ fn find_dominant_oscillation(windows: &[Vec<f64>], sample_rate: f64) -> (Option<
             avg[i] += val;
         }
     }
-    let count = windows.len() as f64;
+    let count = windows.len().az::<f64>();
     for v in &mut avg {
         *v /= count;
     }
 
     for (i, v) in avg.iter_mut().enumerate() {
-        let w = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (n - 1) as f64).cos());
+        let w =
+            0.5 * (1.0 - (2.0 * std::f64::consts::PI * i.az::<f64>() / (n - 1).az::<f64>()).cos());
         *v *= w;
     }
 
@@ -395,8 +397,8 @@ fn find_dominant_oscillation(windows: &[Vec<f64>], sample_rate: f64) -> (Option<
     let mut buffer: Vec<Complex<f64>> = avg.iter().map(|&v| Complex { re: v, im: 0.0 }).collect();
     fft.process(&mut buffer);
 
-    let freq_resolution = sample_rate / n as f64;
-    let min_bin = (10.0 / freq_resolution).ceil() as usize;
+    let freq_resolution = sample_rate / n.az::<f64>();
+    let min_bin = (10.0 / freq_resolution).ceil().az::<usize>();
     let max_bin = n / 2;
 
     if min_bin >= max_bin {
@@ -418,8 +420,8 @@ fn find_dominant_oscillation(windows: &[Vec<f64>], sample_rate: f64) -> (Option<
         return (None, None);
     }
 
-    let freq = best_bin as f64 * freq_resolution;
-    let mag_db = 20.0 * (best_mag / n as f64).max(1e-10).log10();
+    let freq = best_bin.az::<f64>() * freq_resolution;
+    let mag_db = 20.0 * (best_mag / n.az::<f64>()).max(1e-10).log10();
 
     (Some(freq), Some(mag_db))
 }

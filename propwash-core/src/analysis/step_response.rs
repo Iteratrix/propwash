@@ -1,3 +1,4 @@
+use az::Az;
 use serde::Serialize;
 
 use crate::types::{Axis, SensorField, Session};
@@ -35,7 +36,7 @@ const POST_SAMPLES: usize = 200;
 const STEP_COOLDOWN: usize = 100;
 
 /// Analyze step response quality from setpoint and gyro data.
-#[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)]
 pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> {
     let sample_rate = session.sample_rate_hz();
     if sample_rate <= 0.0 {
@@ -118,7 +119,7 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
 
             if let (Some(t10), Some(t90)) = (crossed_10, crossed_90) {
                 if t90 > t10 {
-                    rise_times.push((t90 - t10) as f64 * ms_per_sample);
+                    rise_times.push((t90 - t10).az::<f64>() * ms_per_sample);
                 }
             }
 
@@ -174,7 +175,7 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
                     .all(|&v| (v - sp_after).abs() < tolerance)
             });
             if let Some(t) = settled_at {
-                settling_times.push(t as f64 * ms_per_sample);
+                settling_times.push(t.az::<f64>() * ms_per_sample);
             }
         }
 
@@ -264,7 +265,6 @@ pub struct StepOverlay {
 }
 
 /// Extract aligned, normalized step windows for overlay visualization.
-#[allow(clippy::cast_precision_loss)]
 pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
     let sample_rate = session.sample_rate_hz();
     if sample_rate <= 0.0 {
@@ -356,14 +356,14 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
                 gyro_average[j] += v;
             }
         }
-        let n = gyro_windows.len() as f64;
+        let n = gyro_windows.len().az::<f64>();
         for v in &mut gyro_average {
             *v /= n;
         }
 
         // Build time axis (ms relative to t=0)
         let time_ms: Vec<f64> = (0..window_len)
-            .map(|j| (j as f64 - OVERLAY_PRE as f64) * ms_per_sample)
+            .map(|j| (j.az::<f64>() - OVERLAY_PRE.az::<f64>()) * ms_per_sample)
             .collect();
 
         axes.push(StepOverlayAxis {
@@ -382,12 +382,11 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn mean(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
     }
-    values.iter().sum::<f64>() / values.len() as f64
+    values.iter().sum::<f64>() / values.len().az::<f64>()
 }
 
 #[cfg(test)]

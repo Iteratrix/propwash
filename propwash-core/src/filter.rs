@@ -1,3 +1,5 @@
+use az::Az;
+
 /// Filters frame indices by index range and/or time range.
 ///
 /// Returns the indices of frames that satisfy both the frame range and
@@ -13,7 +15,6 @@
 ///   When `None`, all frames are considered. `start` is inclusive, `end` is inclusive.
 /// * `time_range_us` — Optional `(start_us, optional_end_us)` for time filtering.
 ///   When `None`, no time filtering is applied. `start_us` is inclusive, `end_us` is inclusive.
-#[allow(clippy::cast_possible_truncation)]
 pub fn filter_frame_indices(
     total_frames: usize,
     time_data: &[f64],
@@ -31,7 +32,7 @@ pub fn filter_frame_indices(
             let Some((t_start, t_end)) = time_range_us else {
                 return true;
             };
-            let t = time_data.get(i).copied().unwrap_or(0.0) as i64;
+            let t = time_data.get(i).copied().unwrap_or(0.0).az::<i64>();
             if t < t_start {
                 return false;
             }

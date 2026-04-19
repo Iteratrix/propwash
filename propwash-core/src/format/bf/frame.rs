@@ -8,6 +8,7 @@ use super::types::{
 };
 use crate::reader::{InternalError, Reader};
 use crate::types::Warning;
+use az::WrappingAs;
 
 pub(crate) struct ParsedFrames {
     pub main: Vec<BfFrame>,
@@ -128,10 +129,10 @@ pub(crate) fn parse_session_frames(
                 match result {
                     Ok(frame) => {
                         if validate_next_marker(&reader) {
-                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                             let iteration = iter_idx
                                 .and_then(|i| frame.values.get(i).copied())
-                                .unwrap_or(0) as u32;
+                                .unwrap_or(0)
+                                .wrapping_as::<u32>();
                             ctx.reset_from_i_frame(&frame.values, iteration);
                             main_frames.push(frame);
                             stats.i_frame_count += 1;
@@ -345,10 +346,7 @@ fn decode_fields(
                 i += 1;
             }
             Encoding::UnsignedVb => {
-                #[allow(clippy::cast_possible_wrap)]
-                {
-                    values[i] = read_unsigned_vb(reader)? as i32;
-                }
+                values[i] = read_unsigned_vb(reader)?.wrapping_as::<i32>();
                 i += 1;
             }
             Encoding::Neg14Bit => {

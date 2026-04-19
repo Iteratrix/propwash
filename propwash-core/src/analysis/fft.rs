@@ -1,3 +1,4 @@
+use az::{Az, SaturatingAs};
 use rustfft::num_complex::Complex;
 use rustfft::FftPlanner;
 use serde::Serialize;
@@ -85,7 +86,6 @@ const THROTTLE_BANDS: [(f64, f64, &str); 4] = [
     (75.0, 100.0, "75-100%"),
 ];
 
-#[allow(clippy::cast_precision_loss)]
 pub fn compute_spectrum_from_samples(
     samples: &[f64],
     sample_rate: f64,
@@ -118,13 +118,15 @@ pub fn compute_spectrum_from_samples(
         }
     }
 
-    let scale = 1.0 / n_windows as f64;
+    let scale = 1.0 / n_windows.az::<f64>();
     for mag in &mut avg_magnitudes {
         *mag *= scale;
     }
 
-    let freq_resolution = sample_rate / FFT_WINDOW_SIZE as f64;
-    let frequencies_hz: Vec<f64> = (0..n_bins).map(|i| i as f64 * freq_resolution).collect();
+    let freq_resolution = sample_rate / FFT_WINDOW_SIZE.az::<f64>();
+    let frequencies_hz: Vec<f64> = (0..n_bins)
+        .map(|i| i.az::<f64>() * freq_resolution)
+        .collect();
 
     let magnitudes_db: Vec<f64> = avg_magnitudes
         .iter()
@@ -142,11 +144,10 @@ pub fn compute_spectrum_from_samples(
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn hann_window(size: usize) -> Vec<f64> {
     (0..size)
         .map(|i| {
-            let x = std::f64::consts::PI * 2.0 * i as f64 / (size - 1) as f64;
+            let x = std::f64::consts::PI * 2.0 * i.az::<f64>() / (size - 1).az::<f64>();
             0.5 * (1.0 - x.cos())
         })
         .collect()
@@ -244,7 +245,6 @@ fn compute_noise_floor(magnitudes_db: &[f64]) -> f64 {
 
 /// Format-agnostic vibration analysis using the `Unified` trait.
 /// Includes throttle-banded FFT, accelerometer analysis, and propwash analysis.
-#[allow(clippy::cast_precision_loss)]
 pub fn analyze_vibration_unified(
     unified: &Session,
     events: &[FlightEvent],
@@ -255,12 +255,11 @@ pub fn analyze_vibration_unified(
     }
 
     // Get motor pole count for eRPM → frequency conversion
-    #[allow(clippy::cast_sign_loss)]
     let motor_poles: u32 = match unified {
         Session::Betaflight(bf) => {
             let v = bf.get_header_int("motor_poles", 14);
             if v > 0 {
-                v as u32
+                v.cast_unsigned()
             } else {
                 14
             }
@@ -320,7 +319,6 @@ pub fn analyze_vibration_unified(
     })
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn compute_throttle_bands_unified(
     unified: &Session,
     sample_rate: f64,
@@ -409,7 +407,6 @@ fn compute_throttle_bands_unified(
 ///
 /// BF logs `eRPM`/100. Vibration frequency = `eRPM_raw` * 100 / 60 / (poles/2).
 /// Default pole count is 14 (7 pole pairs) if not specified.
-#[allow(clippy::cast_precision_loss)]
 fn compute_avg_motor_hz(
     erpm_data: &[Vec<f64>],
     indices: &[usize],
@@ -436,13 +433,12 @@ fn compute_avg_motor_hz(
         let pole_pairs = f64::from(motor_poles.max(2)) / 2.0;
         // raw eRPM values are eRPM/100 in BF, actual eRPM for other formats
         // Convert: raw * 100 / 60 / pole_pairs = Hz
-        Some(sum / count as f64 * 100.0 / 60.0 / pole_pairs)
+        Some(sum / count.az::<f64>() * 100.0 / 60.0 / pole_pairs)
     } else {
         None
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVibration> {
     let accel_names = ["X", "Y", "Z"];
     let mut rms = [0.0; 3];
@@ -456,10 +452,10 @@ fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVib
         }
         has_data = true;
 
-        let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+        let mean = samples.iter().sum::<f64>() / samples.len().az::<f64>();
         let ac_coupled: Vec<f64> = samples.iter().map(|&s| s - mean).collect();
 
-        let variance = ac_coupled.iter().map(|v| v * v).sum::<f64>() / ac_coupled.len() as f64;
+        let variance = ac_coupled.iter().map(|v| v * v).sum::<f64>() / ac_coupled.len().az::<f64>();
         rms[i] = variance.sqrt();
 
         if ac_coupled.len() >= FFT_WINDOW_SIZE {
@@ -488,11 +484,6 @@ const PROPWASH_WINDOW_SECS: f64 = 0.75;
 const PROPWASH_MIN_HZ: f64 = 20.0;
 const PROPWASH_MAX_HZ: f64 = 100.0;
 
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
 fn analyze_propwash(
     session: &Session,
     events: &[FlightEvent],
@@ -516,7 +507,7 @@ fn analyze_propwash(
     }
     let t0_us = time[0];
 
-    let window_samples = (PROPWASH_WINDOW_SECS * sample_rate) as usize;
+    let window_samples = (PROPWASH_WINDOW_SECS * sample_rate).saturating_as::<usize>();
     if window_samples < 64 {
         return None;
     }
@@ -537,8 +528,10 @@ fn analyze_propwash(
     let fft = planner.plan_fft_forward(fft_size);
     let hann = hann_window(fft_size);
     let n_bins = fft_size / 2;
-    let freq_resolution = sample_rate / fft_size as f64;
-    let frequencies_hz: Vec<f64> = (0..n_bins).map(|i| i as f64 * freq_resolution).collect();
+    let freq_resolution = sample_rate / fft_size.az::<f64>();
+    let frequencies_hz: Vec<f64> = (0..n_bins)
+        .map(|i| i.az::<f64>() * freq_resolution)
+        .collect();
 
     let mut spectra = Vec::new();
 
@@ -576,7 +569,7 @@ fn analyze_propwash(
             continue;
         }
 
-        let scale = 1.0 / window_count as f64;
+        let scale = 1.0 / window_count.az::<f64>();
         for mag in &mut avg_magnitudes {
             *mag *= scale;
         }
@@ -642,7 +635,6 @@ pub struct Spectrogram {
 ///
 /// Each entry in `axes` is `(axis_name, sensor_field)`. Returns `None` if the
 /// session has no valid sample rate or no axis produced output.
-#[allow(clippy::cast_precision_loss)]
 pub fn compute_spectrogram(
     session: &Session,
     axes: &[(&str, &SensorField)],
@@ -652,10 +644,11 @@ pub fn compute_spectrogram(
         return None;
     }
 
-    let freq_res = sample_rate / SPEC_WINDOW as f64;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let max_bin = ((SPEC_MAX_FREQ / freq_res) as usize).min(SPEC_WINDOW / 2);
-    let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i as f64 * freq_res).collect();
+    let freq_res = sample_rate / SPEC_WINDOW.az::<f64>();
+    let max_bin = (SPEC_MAX_FREQ / freq_res)
+        .saturating_as::<usize>()
+        .min(SPEC_WINDOW / 2);
+    let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i.az::<f64>() * freq_res).collect();
 
     let time_raw = session.field(&SensorField::Time);
     let t0 = time_raw.first().copied().unwrap_or(0.0);
