@@ -22,6 +22,18 @@ async function boot() {
   $("#add-files-btn")?.addEventListener("click", () => {
     ($("#file-input") as HTMLInputElement).click();
   });
+  registerServiceWorker();
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  if (location.hostname === "localhost" || location.hostname === "127.0.0.1") return;
+  navigator.serviceWorker.register("./sw.js").catch((err) => {
+    console.warn("Service worker registration failed:", err);
+  });
+  if (navigator.storage?.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
 }
 
 function setupViewTabs() {
