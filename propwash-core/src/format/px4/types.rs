@@ -76,52 +76,8 @@ pub struct ULogSubscription {
     pub format_name: String,
 }
 
-/// Columnar storage for one subscription's data messages.
-///
-/// All column vectors have the same length as `timestamps`.
-#[derive(Debug)]
-pub struct TopicData {
-    /// Timestamps in microseconds, one per message.
-    pub timestamps: Vec<u64>,
-    /// Parallel column vectors of decoded field values.
-    pub columns: Vec<Vec<f64>>,
-    /// Field names, parallel to `columns`.
-    pub field_names: Vec<String>,
-    /// name -> column index for O(1) field lookup.
-    field_index: HashMap<String, usize>,
-}
-
-impl TopicData {
-    pub(crate) fn new(field_names: Vec<String>) -> Self {
-        let field_index = field_names
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (n.clone(), i))
-            .collect();
-        let columns = vec![Vec::new(); field_names.len()];
-        Self {
-            timestamps: Vec::new(),
-            columns,
-            field_names,
-            field_index,
-        }
-    }
-
-    /// Returns the column for a given field name.
-    pub fn column(&self, field: &str) -> Option<&[f64]> {
-        let idx = self.field_index.get(field)?;
-        Some(&self.columns[*idx])
-    }
-
-    /// Pushes one row of decoded values into the columns.
-    #[inline]
-    pub(crate) fn push_row(&mut self, timestamp: u64, values: &[f64]) {
-        self.timestamps.push(timestamp);
-        for (col, &val) in self.columns.iter_mut().zip(values.iter()) {
-            col.push(val);
-        }
-    }
-}
+/// Type alias preserving the PX4-specific name for columnar topic storage.
+pub type TopicData = crate::format::common::MsgColumns;
 
 /// A log message emitted by PX4 firmware (debug/warning/error).
 #[derive(Debug, Clone)]

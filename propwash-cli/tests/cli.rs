@@ -142,7 +142,11 @@ fn analyze_invalid_output_format() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Unknown output format"));
+    // clap rejects invalid ValueEnum values at argument parsing time
+    assert!(
+        stderr.contains("invalid value") || stderr.contains("isn't a valid value"),
+        "expected clap to reject invalid output format, got: {stderr}"
+    );
 }
 
 // ---------------------------------------------------------------------------

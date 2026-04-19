@@ -1104,19 +1104,20 @@ fn bf_gps_data_parsed() {
     // eRPM[0] first 3 values
     let erpm = session.field(&SensorField::ERpm(propwash_core::types::MotorIndex(0)));
     assert!(erpm.len() >= 3, "should have at least 3 eRPM values");
+    // BF field() scales raw eRPM/100 to actual eRPM (×100)
     assert!(
-        (erpm[0] - 294.0).abs() < 1e-2,
-        "eRPM[0][0] expected 294.0, got {}",
+        (erpm[0] - 29400.0).abs() < 1.0,
+        "eRPM[0][0] expected 29400.0, got {}",
         erpm[0]
     );
     assert!(
-        (erpm[1] - 301.0).abs() < 1e-2,
-        "eRPM[0][1] expected 301.0, got {}",
+        (erpm[1] - 30100.0).abs() < 1.0,
+        "eRPM[0][1] expected 30100.0, got {}",
         erpm[1]
     );
     assert!(
-        (erpm[2] - 303.0).abs() < 1e-2,
-        "eRPM[0][2] expected 303.0, got {}",
+        (erpm[2] - 30300.0).abs() < 1.0,
+        "eRPM[0][2] expected 30300.0, got {}",
         erpm[2]
     );
 

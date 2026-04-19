@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use az::{Az, SaturatingAs};
 
+use crate::format::common::{ardupilot_filter_config, ardupilot_pid_gains};
 use crate::types::{Axis, FilterConfig, MotorIndex, RcChannel, SensorField, Warning};
 
 /// Format character from FMT message — determines wire size and interpretation.
@@ -79,52 +80,7 @@ pub struct ApMsgDef {
     pub format_str: String,
 }
 
-/// Columnar storage for one message type's data.
-///
-/// All column vectors have the same length as `timestamps`.
-#[derive(Debug)]
-pub struct MsgColumns {
-    /// Timestamps in microseconds, one per message.
-    pub timestamps: Vec<u64>,
-    /// Parallel column vectors of decoded field values.
-    pub columns: Vec<Vec<f64>>,
-    /// Field names, parallel to `columns`.
-    pub field_names: Vec<String>,
-    /// name -> column index for O(1) field lookup.
-    field_index: HashMap<String, usize>,
-}
-
-impl MsgColumns {
-    pub(crate) fn new(field_names: Vec<String>) -> Self {
-        let field_index = field_names
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (n.clone(), i))
-            .collect();
-        let columns = vec![Vec::new(); field_names.len()];
-        Self {
-            timestamps: Vec::new(),
-            columns,
-            field_names,
-            field_index,
-        }
-    }
-
-    /// Returns the column for a given field name.
-    pub fn column(&self, field: &str) -> Option<&[f64]> {
-        let idx = self.field_index.get(field)?;
-        Some(&self.columns[*idx])
-    }
-
-    /// Pushes one row of decoded values into the columns.
-    #[inline]
-    pub(crate) fn push_row(&mut self, timestamp: u64, values: &[f64]) {
-        self.timestamps.push(timestamp);
-        for (col, &val) in self.columns.iter_mut().zip(values.iter()) {
-            col.push(val);
-        }
-    }
-}
+pub use crate::format::common::MsgColumns;
 
 /// Complete raw data for one `ArduPilot` session.
 #[derive(Debug)]
@@ -458,57 +414,11 @@ impl ApSession {
     }
 
     pub fn pid_gains(&self) -> crate::types::PidGains {
-        let parse = |p_key: &str, i_key: &str, d_key: &str| -> crate::types::AxisGains {
-            let get = |k: &str| -> Option<u32> {
-                self.params
-                    .get(k)
-                    .copied()
-                    .filter(|&v| v > 0.0)
-                    .map(|v| (v * 1000.0).saturating_as::<u32>())
-            };
-            crate::types::AxisGains {
-                p: get(p_key),
-                i: get(i_key),
-                d: get(d_key),
-            }
-        };
-        crate::types::PidGains::new(
-            parse("ATC_RAT_RLL_P", "ATC_RAT_RLL_I", "ATC_RAT_RLL_D"),
-            parse("ATC_RAT_PIT_P", "ATC_RAT_PIT_I", "ATC_RAT_PIT_D"),
-            parse("ATC_RAT_YAW_P", "ATC_RAT_YAW_I", "ATC_RAT_YAW_D"),
-        )
+        ardupilot_pid_gains(&self.params)
     }
 
     pub fn filter_config(&self) -> FilterConfig {
-        let p = |k: &str| self.params.get(k).copied().unwrap_or(0.0);
-        let non_zero = |v: f64| -> Option<f64> {
-            if v > 0.0 {
-                Some(v)
-            } else {
-                None
-            }
-        };
-        FilterConfig {
-            gyro_lpf_hz: non_zero(p("INS_GYRO_FILTER")),
-            gyro_lpf2_hz: None,
-            dterm_lpf_hz: non_zero(p("ATC_RAT_RLL_FLTE")),
-            dyn_notch_min_hz: if p("INS_HNTCH_ENABLE") > 0.0 {
-                non_zero(p("INS_HNTCH_FREQ"))
-            } else {
-                None
-            },
-            dyn_notch_max_hz: None,
-            gyro_notch1_hz: if p("INS_NOTCH_ENABLE") > 0.0 {
-                non_zero(p("INS_NOTCH_FREQ"))
-            } else {
-                None
-            },
-            gyro_notch2_hz: if p("INS_NOTC2_ENABLE") > 0.0 {
-                non_zero(p("INS_NOTC2_FREQ"))
-            } else {
-                None
-            },
-        }
+        ardupilot_filter_config(&self.params)
     }
 
     pub fn warnings(&self) -> &[Warning] {
