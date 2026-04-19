@@ -242,12 +242,12 @@ impl ApSession {
         &self.vehicle_name
     }
 
-    #[allow(clippy::cast_precision_loss, clippy::missing_panics_doc)]
+    #[allow(clippy::cast_precision_loss)]
     pub fn sample_rate_hz(&self) -> f64 {
         let ts = self.msg_timestamps("IMU");
         if ts.len() >= 2 {
-            let t0 = *ts.first().unwrap();
-            let tn = *ts.last().unwrap();
+            let t0 = ts[0];
+            let tn = ts[ts.len() - 1];
             let dt = tn.saturating_sub(t0);
             if dt > 0 {
                 return (ts.len() - 1) as f64 / (dt as f64 / 1_000_000.0);

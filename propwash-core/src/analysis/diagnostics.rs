@@ -346,8 +346,12 @@ fn diagnose_fc_mounting(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
     };
 
     let mut diagnostics = Vec::new();
-    let accel_rms_total =
-        (accel.rms[0].powi(2) + accel.rms[1].powi(2) + accel.rms[2].powi(2)).sqrt();
+    let accel_rms_total = accel.rms[2]
+        .mul_add(
+            accel.rms[2],
+            accel.rms[1].mul_add(accel.rms[1], accel.rms[0].powi(2)),
+        )
+        .sqrt();
 
     if accel_rms_total > 200.0 {
         diagnostics.push(Diagnostic {

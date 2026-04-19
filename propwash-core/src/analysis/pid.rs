@@ -407,7 +407,7 @@ fn find_dominant_oscillation(windows: &[Vec<f64>], sample_rate: f64) -> (Option<
     let mut best_mag = 0.0f64;
 
     for (bin, c) in buffer.iter().enumerate().take(max_bin).skip(min_bin) {
-        let mag = (c.re.powi(2) + c.im.powi(2)).sqrt();
+        let mag = c.re.hypot(c.im);
         if mag > best_mag {
             best_mag = mag;
             best_bin = bin;

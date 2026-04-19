@@ -114,7 +114,7 @@ pub fn compute_spectrum_from_samples(
 
         for (i, mag) in avg_magnitudes.iter_mut().enumerate() {
             let c = buffer[i];
-            *mag += (c.re * c.re + c.im * c.im).sqrt();
+            *mag += c.re.hypot(c.im);
         }
     }
 
@@ -165,7 +165,7 @@ fn find_peaks(frequencies: &[f64], magnitudes_db: &[f64]) -> Vec<FrequencyPeak> 
         }
     }
 
-    peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     peaks.truncate(PEAK_COUNT);
 
     peaks
@@ -238,7 +238,7 @@ fn compute_noise_floor(magnitudes_db: &[f64]) -> f64 {
         return -120.0;
     }
     let mut sorted = magnitudes_db.to_vec();
-    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     sorted[sorted.len() / 2]
 }
 
@@ -552,7 +552,7 @@ fn analyze_propwash(
 
         for &chop_t in &chop_times {
             // Convert chop time (seconds) to sample index
-            let chop_us = chop_t * 1_000_000.0 + t0_us;
+            let chop_us = chop_t.mul_add(1_000_000.0, t0_us);
             let start_idx = time.partition_point(|&t| t < chop_us);
 
             if start_idx + fft_size > gyro.len() {
@@ -567,7 +567,7 @@ fn analyze_propwash(
 
             for (i, mag) in avg_magnitudes.iter_mut().enumerate() {
                 let c = buffer[i];
-                *mag += (c.re * c.re + c.im * c.im).sqrt();
+                *mag += c.re.hypot(c.im);
             }
             window_count += 1;
         }
@@ -606,7 +606,11 @@ fn analyze_propwash(
         .iter()
         .flat_map(|s| &s.peaks)
         .filter(|p| p.frequency_hz >= PROPWASH_MIN_HZ && p.frequency_hz <= PROPWASH_MAX_HZ)
-        .max_by(|a, b| a.magnitude_db.partial_cmp(&b.magnitude_db).unwrap())
+        .max_by(|a, b| {
+            a.magnitude_db
+                .partial_cmp(&b.magnitude_db)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map_or((None, None), |p| {
             (Some(p.frequency_hz), Some(p.magnitude_db))
         });
@@ -693,7 +697,7 @@ pub fn compute_spectrogram(
             let row: Vec<f64> = (0..max_bin)
                 .map(|i| {
                     let c = buffer[i];
-                    let mag = (c.re * c.re + c.im * c.im).sqrt();
+                    let mag = c.re.hypot(c.im);
                     if mag > 0.0 {
                         20.0 * mag.log10()
                     } else {
