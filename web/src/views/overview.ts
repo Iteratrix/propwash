@@ -3,6 +3,36 @@ import { formatEventType, formatEventDetails, eventColor } from "../format.js";
 import type { SessionRef, SessionResult, FlightEvent, Diagnostic, PidAnalysis, StepOverlay } from "../types.js";
 import { $, $$, chartWidth, escHtml, tsPlots, navigateTarget, setNavigateTarget, renderedViews, activeSession } from "../state.js";
 
+function navigateToView(view: string, category: string): void {
+  // Switch to target view tab
+  const tabs = $$("#view-tabs .view-tab");
+  tabs.forEach((t) => t.classList.remove("active"));
+  const targetTab = $(`.view-tab[data-view="${view}"]`);
+  if (targetTab) targetTab.classList.add("active");
+  $$(".view-content").forEach((v) => v.classList.remove("active"));
+  $(`.view-content[data-view="${view}"]`)?.classList.add("active");
+
+  // If navigating to timeline, select the appropriate sub-tab
+  if (view === "timeline") {
+    const groupMap: Record<string, string> = {
+      tuning: "pids",
+      pid: "pids",
+      motors: "motors",
+      esc: "motors",
+    };
+    const group = groupMap[category];
+    if (group) {
+      const tsTab = $(`.ts-tab[data-group="${group}"]`);
+      if (tsTab) tsTab.click();
+    }
+  }
+
+  // Render the view
+  import("../app.js").then(({ renderViewIfNeeded }) => {
+    renderViewIfNeeded(view);
+  });
+}
+
 export function navigateToTime(seconds: number): void {
   // Switch to timeline tab
   const tabs = $$("#view-tabs .view-tab");
@@ -64,15 +94,48 @@ export function navigateMarkerPlugin(): any {
   };
 }
 
+export function renderVerdict(diagnostics: Diagnostic[]): void {
+  const container = $("#health-verdict");
+  if (!diagnostics || diagnostics.length === 0) {
+    container.innerHTML = `<div class="health-verdict verdict-green">No issues detected</div>`;
+    return;
+  }
+
+  const problems = diagnostics.filter(d => d.severity === "Problem").length;
+  const warnings = diagnostics.filter(d => d.severity === "Warning").length;
+  const infos = diagnostics.filter(d => d.severity === "Info").length;
+
+  const parts: string[] = [];
+  if (problems > 0) parts.push(`${problems} problem${problems > 1 ? "s" : ""}`);
+  if (warnings > 0) parts.push(`${warnings} warning${warnings > 1 ? "s" : ""}`);
+  if (infos > 0) parts.push(`${infos} info`);
+
+  const severity = problems > 0 ? "red" : warnings > 0 ? "yellow" : "green";
+  container.innerHTML = `<div class="health-verdict verdict-${severity}">${parts.join(", ")}</div>`;
+}
+
 export function renderSummary(session: SessionResult): void {
   const grid = $("#summary-grid");
-  const cards: [string, string | number][] = [
+  const meta = $("#summary-meta");
+
+  // Compact metadata line for less important fields
+  const metaItems: [string, string | number][] = [
     ["Firmware", session.firmware || "Unknown"],
     ["Craft", session.craft || "Unknown"],
-    ["Duration", `${session.duration_seconds.toFixed(1)}s`],
     ["Sample Rate", `${session.sample_rate_hz.toFixed(0)} Hz`],
     ["Frames", session.frame_count.toLocaleString()],
     ["Motors", session.analysis.summary.motor_count],
+  ];
+
+  meta.innerHTML = metaItems
+    .map(([label, value]) =>
+      `<span><span class="meta-label">${label}</span>${value}</span>`
+    )
+    .join("");
+
+  // Prominent cards for key operational fields
+  const cards: [string, string | number][] = [
+    ["Duration", `${session.duration_seconds.toFixed(1)}s`],
     ["Events", session.analysis.summary.total_events],
     ["Desyncs", session.analysis.summary.desyncs],
   ];
@@ -131,6 +194,13 @@ export function renderTuning(pid: PidAnalysis | null): void {
   }
 
   panel.classList.remove("hidden");
+
+  // If all axes are Good or Tight, show a single summary line
+  const allGood = pid.tuning.every(t => t.rating === "Good" || t.rating === "Tight");
+  if (allGood) {
+    content.innerHTML = `<p class="tuning-good">PID tuning looks good on all axes</p>`;
+    return;
+  }
 
   const ratingColor: Record<string, string> = {
     Tight: "var(--green)",
@@ -310,18 +380,46 @@ export function renderDiagnostics(diagnostics: Diagnostic[]): void {
     (a, b) => (order[a.severity] ?? 3) - (order[b.severity] ?? 3)
   );
 
+  const categoryView: Record<string, string> = {
+    vibration: "spectrum",
+    filters: "spectrum",
+    mounting: "spectrum",
+    tuning: "timeline",
+    pid: "timeline",
+    motors: "timeline",
+    esc: "timeline",
+  };
+
   list.innerHTML = sorted
-    .map((d) =>
-      `<div class="diagnostic ${d.severity}">
+    .map((d, i) => {
+      const target = categoryView[d.category];
+      const showBtn = target
+        ? `<button class="diag-show-btn" data-idx="${i}">Show</button>`
+        : "";
+      return `<div class="diagnostic ${d.severity}">
         <div class="diag-header">
           <span class="severity">${d.severity}</span>
           <span class="category">${d.category}</span>
+          ${showBtn}
         </div>
         <div class="message">${escHtml(d.message)}</div>
         <div class="detail">${escHtml(d.detail)}</div>
-      </div>`
-    )
+      </div>`;
+    })
     .join("");
+
+  // Wire up "Show" buttons
+  list.querySelectorAll(".diag-show-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const idx = parseInt((btn as HTMLElement).dataset.idx!, 10);
+      const d = sorted[idx];
+      const view = categoryView[d.category];
+      if (view) {
+        navigateToView(view, d.category);
+      }
+    });
+  });
 }
 
 export function renderEvents(events: FlightEvent[]): void {

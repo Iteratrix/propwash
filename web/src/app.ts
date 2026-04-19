@@ -5,7 +5,7 @@ import {
   setWasmReady, setWorkspace, setActiveSession, setFilterConfig, setRenderedViews,
   activeSessionResult, allSessionRefs, disposeEcharts,
 } from "./state.js";
-import { renderSummary, renderTuning, renderStepOverlay, renderDiagnostics, renderEvents } from "./views/overview.js";
+import { renderVerdict, renderSummary, renderTuning, renderStepOverlay, renderDiagnostics, renderEvents } from "./views/overview.js";
 import { renderTimeseries, setupTimeseriesControls } from "./views/timeline.js";
 import { renderSpectraEcharts, renderSpectrogram, renderThrottleBandsEcharts, renderAccel, renderPropwash } from "./views/spectrum.js";
 import { populateComparePickers, renderCompare } from "./views/compare.js";
@@ -109,6 +109,19 @@ async function handleFiles(files: FileList): Promise<void> {
   if (refs.length > 0) {
     showSession(refs[0]);
   }
+
+  // Auto-compare: if exactly 2 sessions loaded, switch to compare view
+  if (refs.length === 2) {
+    const tabs = $$("#view-tabs .view-tab");
+    tabs.forEach((t) => t.classList.remove("active"));
+    const compareTab = $(".view-tab[data-view='compare']");
+    if (compareTab) {
+      compareTab.classList.add("active");
+      $$(".view-content").forEach((v) => v.classList.remove("active"));
+      $(`.view-content[data-view="compare"]`)!.classList.add("active");
+      renderViewIfNeeded("compare");
+    }
+  }
 }
 
 function renderSessionSelector() {
@@ -165,10 +178,11 @@ export function renderViewIfNeeded(view: string): void {
 
   switch (view) {
     case "overview":
-      renderSummary(s);
+      renderVerdict(s.analysis.diagnostics);
+      renderDiagnostics(s.analysis.diagnostics);
       renderTuning(s.analysis.pid);
       renderStepOverlay(activeSession);
-      renderDiagnostics(s.analysis.diagnostics);
+      renderSummary(s);
       renderEvents(s.analysis.events);
       break;
     case "timeline":
