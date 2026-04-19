@@ -8,7 +8,7 @@ use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
-    pub axis: &'static str,
+    pub axis: Axis,
     pub sample_rate_hz: f64,
     pub frequencies_hz: Vec<f64>,
     pub magnitudes_db: Vec<f64>,
@@ -89,7 +89,7 @@ const THROTTLE_BANDS: [(f64, f64, &str); 4] = [
 pub fn compute_spectrum_from_samples(
     samples: &[f64],
     sample_rate: f64,
-    axis: &'static str,
+    axis: Axis,
 ) -> FrequencySpectrum {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(FFT_WINDOW_SIZE);
@@ -267,17 +267,12 @@ pub fn analyze_vibration_unified(
         _ => 14,
     };
 
-    let axis_names = ["roll", "pitch", "yaw"];
     let mut spectra = Vec::new();
 
-    for (i, axis) in Axis::ALL.iter().enumerate() {
-        let gyro = unified.field(&SensorField::Gyro(*axis));
+    for axis in Axis::ALL {
+        let gyro = unified.field(&SensorField::Gyro(axis));
         if gyro.len() >= FFT_WINDOW_SIZE {
-            spectra.push(compute_spectrum_from_samples(
-                &gyro,
-                sample_rate,
-                axis_names[i],
-            ));
+            spectra.push(compute_spectrum_from_samples(&gyro, sample_rate, axis));
         }
     }
 
@@ -338,7 +333,6 @@ fn compute_throttle_bands_unified(
         .map(|&v| (v - t_min_val) / t_range * 100.0)
         .collect();
 
-    let axis_names: [&str; 3] = ["roll", "pitch", "yaw"];
     let gyro_data: Vec<Vec<f64>> = Axis::ALL
         .iter()
         .map(|a| unified.field(&SensorField::Gyro(*a)))
@@ -378,7 +372,7 @@ fn compute_throttle_bands_unified(
                 band_spectra.push(compute_spectrum_from_samples(
                     &samples,
                     sample_rate,
-                    axis_names[axis_idx],
+                    Axis::ALL[axis_idx],
                 ));
             }
         }
@@ -440,7 +434,6 @@ fn compute_avg_motor_hz(
 }
 
 fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVibration> {
-    let accel_names = ["X", "Y", "Z"];
     let mut rms = [0.0; 3];
     let mut spectra = Vec::new();
     let mut has_data = false;
@@ -462,7 +455,7 @@ fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVib
             spectra.push(compute_spectrum_from_samples(
                 &ac_coupled,
                 sample_rate,
-                accel_names[i],
+                *axis,
             ));
         }
     }
@@ -514,7 +507,6 @@ fn analyze_propwash(
     // Use a power-of-2 FFT size that fits within the window
     let fft_size = window_samples.next_power_of_two().min(FFT_WINDOW_SIZE);
 
-    let axis_names = ["roll", "pitch", "yaw"];
     let gyro_data: Vec<Vec<f64>> = Axis::ALL
         .iter()
         .map(|a| session.field(&SensorField::Gyro(*a)))
@@ -582,7 +574,7 @@ fn analyze_propwash(
         let peaks = find_peaks(&frequencies_hz, &magnitudes_db);
 
         spectra.push(FrequencySpectrum {
-            axis: axis_names[axis_idx],
+            axis: Axis::ALL[axis_idx],
             sample_rate_hz: sample_rate,
             frequencies_hz: frequencies_hz.clone(),
             magnitudes_db,
@@ -734,7 +726,7 @@ mod tests {
     #[test]
     fn spectrum_detects_single_sine() {
         let samples = sine_wave(200.0, 1000.0, 4096);
-        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, Axis::Roll);
 
         assert!(!spectrum.peaks.is_empty(), "should detect a peak");
         let peak = &spectrum.peaks[0];
@@ -753,7 +745,7 @@ mod tests {
         for (i, v) in second.iter().enumerate() {
             samples[i] += v;
         }
-        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, Axis::Roll);
 
         assert!(
             spectrum.peaks.len() >= 2,
@@ -781,7 +773,7 @@ mod tests {
     #[test]
     fn noise_floor_of_sine() {
         let samples = sine_wave(200.0, 1000.0, 4096);
-        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, Axis::Roll);
         let floor = compute_noise_floor(&spectrum.magnitudes_db);
 
         // Noise floor should be well below the peak
@@ -808,7 +800,7 @@ mod tests {
                 (h.finish() as f64 / u64::MAX as f64 - 0.5) * 100.0
             })
             .collect();
-        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, Axis::Roll);
         let floor = compute_noise_floor(&spectrum.magnitudes_db);
         // White noise has a relatively flat spectrum — floor should be near peak
         let max_db = spectrum
@@ -836,7 +828,7 @@ mod tests {
     #[test]
     fn find_peaks_returns_sorted_by_magnitude() {
         let samples = sine_wave(200.0, 1000.0, 4096);
-        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, "test");
+        let spectrum = compute_spectrum_from_samples(&samples, 1000.0, Axis::Roll);
 
         for pair in spectrum.peaks.windows(2) {
             assert!(

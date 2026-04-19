@@ -1,5 +1,7 @@
 use serde::Serialize;
 
+use crate::types::Axis;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FlightEvent {
     pub frame_index: usize,
@@ -26,11 +28,11 @@ pub enum EventKind {
         duration_frames: usize,
     },
     GyroSpike {
-        axis: &'static str,
+        axis: Axis,
         magnitude: f64,
     },
     Overshoot {
-        axis: &'static str,
+        axis: Axis,
         setpoint: f64,
         actual: f64,
         overshoot_percent: f64,

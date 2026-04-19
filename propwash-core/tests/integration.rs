@@ -1994,7 +1994,7 @@ fn pid_step_response_overshooting_flight() {
     assert!(sr.axes.len() >= 2, "should detect steps on at least 2 axes");
 
     // Roll: ~13 steps, ~41% overshoot
-    let roll = sr.axes.iter().find(|a| a.axis == "roll").expect("roll");
+    let roll = sr.axes.iter().find(|a| a.axis == Axis::Roll).expect("roll");
     assert!(
         roll.step_count >= 5,
         "roll should have ≥5 steps, got {}",
@@ -2007,7 +2007,11 @@ fn pid_step_response_overshooting_flight() {
     );
 
     // Pitch: ~15 steps, ~47% overshoot
-    let pitch = sr.axes.iter().find(|a| a.axis == "pitch").expect("pitch");
+    let pitch = sr
+        .axes
+        .iter()
+        .find(|a| a.axis == Axis::Pitch)
+        .expect("pitch");
     assert!(pitch.step_count >= 3, "pitch should have ≥3 steps");
     assert!(
         pitch.overshoot_percent > 20.0,
@@ -2070,7 +2074,7 @@ fn pid_good_tuning_flight() {
     let a = analysis::analyze(session);
 
     let sr = a.step_response.expect("should detect step response");
-    let roll = sr.axes.iter().find(|a| a.axis == "roll").expect("roll");
+    let roll = sr.axes.iter().find(|a| a.axis == Axis::Roll).expect("roll");
     assert!(roll.step_count >= 5, "should have enough roll steps");
     assert!(
         roll.overshoot_percent < 25.0,

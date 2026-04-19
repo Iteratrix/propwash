@@ -31,10 +31,9 @@ fn detect_gyro_spikes(
     events: &mut Vec<FlightEvent>,
 ) {
     let spike_threshold = 500.0; // deg/s
-    let axis_names = ["roll", "pitch", "yaw"];
 
-    for (i, axis) in Axis::ALL.iter().enumerate() {
-        let gyro = unified.field(&SensorField::Gyro(*axis));
+    for axis in Axis::ALL {
+        let gyro = unified.field(&SensorField::Gyro(axis));
         for (j, &val) in gyro.iter().enumerate() {
             if val.abs() > spike_threshold {
                 let t = timestamps.get(j).copied().unwrap_or(0.0);
@@ -43,7 +42,7 @@ fn detect_gyro_spikes(
                     time_us: t.az::<i64>(),
                     time_seconds: (t - first_t) / 1_000_000.0,
                     kind: EventKind::GyroSpike {
-                        axis: axis_names[i],
+                        axis,
                         magnitude: val,
                     },
                 });
@@ -170,12 +169,11 @@ fn detect_overshoot(
     first_t: f64,
     events: &mut Vec<FlightEvent>,
 ) {
-    let axis_names = ["roll", "pitch", "yaw"];
     let overshoot_threshold = 15.0;
 
-    for (i, axis) in Axis::ALL.iter().enumerate() {
-        let gyro = unified.field(&SensorField::Gyro(*axis));
-        let setpoint = unified.field(&SensorField::Setpoint(*axis));
+    for axis in Axis::ALL {
+        let gyro = unified.field(&SensorField::Gyro(axis));
+        let setpoint = unified.field(&SensorField::Setpoint(axis));
         if gyro.is_empty() || setpoint.is_empty() {
             continue;
         }
@@ -205,7 +203,7 @@ fn detect_overshoot(
                     time_us: t.az::<i64>(),
                     time_seconds: (t - first_t) / 1_000_000.0,
                     kind: EventKind::Overshoot {
-                        axis: axis_names[i],
+                        axis,
                         setpoint: sp,
                         actual,
                         overshoot_percent: overshoot_pct,

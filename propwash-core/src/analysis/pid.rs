@@ -133,11 +133,10 @@ fn compute_tuning(
         return Vec::new();
     };
 
-    let axis_names = ["roll", "pitch", "yaw"];
     let mut results = Vec::new();
 
-    for (i, axis) in Axis::ALL.iter().enumerate() {
-        let Some(axis_sr) = sr.axes.iter().find(|a| a.axis == axis_names[i]) else {
+    for axis in &Axis::ALL {
+        let Some(axis_sr) = sr.axes.iter().find(|a| a.axis == *axis) else {
             continue;
         };
         if axis_sr.step_count < 3 {
@@ -290,11 +289,10 @@ fn analyze_oscillation(
         return Vec::new();
     }
 
-    let axis_names = ["roll", "pitch", "yaw"];
     let mut results = Vec::new();
 
-    for (i, axis) in Axis::ALL.iter().enumerate() {
-        let Some(axis_sr) = sr.axes.iter().find(|a| a.axis == axis_names[i]) else {
+    for axis in &Axis::ALL {
+        let Some(axis_sr) = sr.axes.iter().find(|a| a.axis == *axis) else {
             continue;
         };
 
