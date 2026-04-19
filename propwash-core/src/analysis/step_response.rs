@@ -23,17 +23,12 @@ pub struct StepResponseAnalysis {
     pub axes: Vec<AxisStepResponse>,
 }
 
-/// Minimum setpoint change (deg/s) to qualify as a "step."
-const MIN_STEP_SIZE: f64 = 50.0;
-/// Lookback window for step detection (samples).
-/// At 1kHz with RC smoothing, a stick input ramps over ~50ms.
-const STEP_LOOKBACK: usize = 50;
+use super::util;
+
 /// Window before the step to establish the baseline (samples).
 const PRE_SAMPLES: usize = 5;
 /// Window after the step to measure the response (samples).
 const POST_SAMPLES: usize = 200;
-/// Minimum gap between detected steps (samples) to avoid duplicates.
-const STEP_COOLDOWN: usize = 100;
 
 /// Analyze step response quality from setpoint and gyro data.
 #[allow(clippy::too_many_lines)]
@@ -56,7 +51,7 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
         let len = setpoint.len().min(gyro.len());
 
         // Detect step events: significant setpoint changes
-        let steps = detect_steps(&setpoint[..len]);
+        let steps = util::detect_steps(&setpoint[..len]);
         if steps.is_empty() {
             continue;
         }
@@ -71,20 +66,20 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
             }
 
             // Baseline: setpoint before the lookback window (stable before ramp)
-            let pre_start = step_idx.saturating_sub(STEP_LOOKBACK + PRE_SAMPLES);
-            let pre_end = step_idx.saturating_sub(STEP_LOOKBACK);
+            let pre_start = step_idx.saturating_sub(util::step_lookback() + PRE_SAMPLES);
+            let pre_end = step_idx.saturating_sub(util::step_lookback());
             let sp_before = if pre_end > pre_start {
                 mean(&setpoint[pre_start..pre_end])
             } else {
                 setpoint[step_idx.saturating_sub(1)]
             };
             // Target: setpoint well after the ramp settles (50-100 samples after detection)
-            let settle_start = (step_idx + STEP_LOOKBACK).min(step_idx + POST_SAMPLES - 10);
+            let settle_start = (step_idx + util::step_lookback()).min(step_idx + POST_SAMPLES - 10);
             let settle_end = (settle_start + 20).min(step_idx + POST_SAMPLES);
             let sp_after = mean(&setpoint[settle_start..settle_end]);
             let step_size = sp_after - sp_before;
 
-            if step_size.abs() < MIN_STEP_SIZE {
+            if step_size.abs() < util::min_step_size() {
                 continue;
             }
 
@@ -210,30 +205,6 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
     }
 }
 
-/// Detect indices where the setpoint makes a significant step change.
-///
-/// Uses a lookback window to catch RC-smoothed ramps at high sample rates
-/// (e.g., 1kHz with BF rate limiting produces ~1 deg/s per sample deltas).
-fn detect_steps(setpoint: &[f64]) -> Vec<usize> {
-    let mut steps = Vec::new();
-    // Allow detection from the start by setting last_step far in the past
-    let mut last_step = 0usize;
-    let start = STEP_LOOKBACK;
-
-    for i in start..setpoint.len() {
-        if i > last_step && i - last_step < STEP_COOLDOWN && last_step >= start {
-            continue;
-        }
-        // Compare current value vs value LOOKBACK samples ago
-        let delta = (setpoint[i] - setpoint[i - STEP_LOOKBACK]).abs();
-        if delta >= MIN_STEP_SIZE {
-            steps.push(i);
-            last_step = i;
-        }
-    }
-    steps
-}
-
 // ---------------------------------------------------------------------------
 // Step overlay — aligned step windows for visualization
 // ---------------------------------------------------------------------------
@@ -281,13 +252,13 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
             continue;
         }
         let len = setpoint.len().min(gyro.len());
-        let steps = detect_steps(&setpoint[..len]);
+        let steps = util::detect_steps(&setpoint[..len]);
 
         let mut sp_windows: Vec<Vec<f64>> = Vec::new();
         let mut gyro_windows: Vec<Vec<f64>> = Vec::new();
 
         for &step_idx in &steps {
-            if step_idx < OVERLAY_PRE + STEP_LOOKBACK {
+            if step_idx < OVERLAY_PRE + util::step_lookback() {
                 continue;
             }
             let win_start = step_idx - OVERLAY_PRE;
@@ -297,8 +268,8 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
             }
 
             // Baseline: setpoint before the ramp
-            let pre_start = step_idx.saturating_sub(STEP_LOOKBACK + PRE_SAMPLES);
-            let pre_end = step_idx.saturating_sub(STEP_LOOKBACK);
+            let pre_start = step_idx.saturating_sub(util::step_lookback() + PRE_SAMPLES);
+            let pre_end = step_idx.saturating_sub(util::step_lookback());
             let sp_before = if pre_end > pre_start {
                 mean(&setpoint[pre_start..pre_end])
             } else {
@@ -306,12 +277,12 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
             };
 
             // Target: settled setpoint after the ramp
-            let settle_start = (step_idx + STEP_LOOKBACK).min(win_end - 10);
+            let settle_start = (step_idx + util::step_lookback()).min(win_end - 10);
             let settle_end = (settle_start + 20).min(win_end);
             let sp_after = mean(&setpoint[settle_start..settle_end]);
             let step_size = sp_after - sp_before;
 
-            if step_size.abs() < MIN_STEP_SIZE {
+            if step_size.abs() < util::min_step_size() {
                 continue;
             }
 
@@ -391,87 +362,6 @@ fn mean(values: &[f64]) -> f64 {
 mod tests {
     use super::*;
 
-    // -- detect_steps tests --
-
-    #[test]
-    fn detect_steps_instant_jump() {
-        // Setpoint at 0 for 100 samples, then jumps to 200 instantly
-        let mut sp = vec![0.0; 200];
-        for i in 100..200 {
-            sp[i] = 200.0;
-        }
-        let steps = detect_steps(&sp);
-        assert!(!steps.is_empty(), "should detect the step");
-        // Step detected when lookback window spans the transition
-        let first = steps[0];
-        assert!(
-            (100..=150).contains(&first),
-            "step should be near the transition, got {first}"
-        );
-    }
-
-    #[test]
-    fn detect_steps_smooth_ramp() {
-        // Ramp from 0 to 200 over 40 samples (simulates RC smoothing at 1kHz)
-        let mut sp = vec![0.0; 300];
-        for i in 100..140 {
-            sp[i] = (i - 100) as f64 * (200.0 / 40.0);
-        }
-        for i in 140..300 {
-            sp[i] = 200.0;
-        }
-        let steps = detect_steps(&sp);
-        assert!(!steps.is_empty(), "should detect ramped step");
-    }
-
-    #[test]
-    fn detect_steps_below_threshold() {
-        // Small change (30 deg/s) should not trigger (threshold is 50)
-        let mut sp = vec![0.0; 200];
-        for i in 100..200 {
-            sp[i] = 30.0;
-        }
-        let steps = detect_steps(&sp);
-        assert!(steps.is_empty(), "30 deg/s change should not trigger");
-    }
-
-    #[test]
-    fn detect_steps_negative_direction() {
-        // Step from 200 down to 0
-        let mut sp = vec![200.0; 200];
-        for i in 100..200 {
-            sp[i] = 0.0;
-        }
-        let steps = detect_steps(&sp);
-        assert!(!steps.is_empty(), "negative step should be detected");
-    }
-
-    #[test]
-    fn detect_steps_multiple_with_cooldown() {
-        // Two steps separated by more than COOLDOWN
-        let mut sp = vec![0.0; 500];
-        for i in 100..250 {
-            sp[i] = 200.0;
-        }
-        // Second step at 250 (back to 0) — 150 samples after first
-        for i in 250..500 {
-            sp[i] = 0.0;
-        }
-        let steps = detect_steps(&sp);
-        assert!(
-            steps.len() >= 2,
-            "should detect both steps, got {}",
-            steps.len()
-        );
-    }
-
-    #[test]
-    fn detect_steps_too_short_data() {
-        let sp = vec![0.0; 10]; // shorter than STEP_LOOKBACK
-        let steps = detect_steps(&sp);
-        assert!(steps.is_empty());
-    }
-
     // -- Overshoot / rise time computation tests --
     // These test the analysis logic using synthetic gyro responses.
     // Since analyze_step_response takes a Session (hard to mock), we test
@@ -491,15 +381,15 @@ mod tests {
     fn constants_are_consistent() {
         // Verify key relationships between constants
         assert!(
-            STEP_COOLDOWN > STEP_LOOKBACK,
+            util::step_cooldown() > util::step_lookback(),
             "cooldown must exceed lookback to avoid detecting the same ramp twice"
         );
         assert!(
-            POST_SAMPLES > STEP_LOOKBACK,
+            POST_SAMPLES > util::step_lookback(),
             "response window must be larger than lookback"
         );
         assert!(
-            OVERLAY_PRE + OVERLAY_POST <= POST_SAMPLES + STEP_LOOKBACK + PRE_SAMPLES,
+            OVERLAY_PRE + OVERLAY_POST <= POST_SAMPLES + util::step_lookback() + PRE_SAMPLES,
             "overlay window should fit within available data"
         );
     }
