@@ -53,6 +53,26 @@ pub(crate) fn session(
             s.gyro.values.pitch = p.iter().map(|v| DegPerSec(v * RAD_TO_DEG)).collect();
             s.gyro.values.yaw = y.iter().map(|v| DegPerSec(v * RAD_TO_DEG)).collect();
         }
+        // Attitude (airframe orientation) from the same ATTITUDE message,
+        // radians → degrees. Falls back to VFR_HUD.heading for yaw if
+        // ATTITUDE.{roll,pitch,yaw} aren't present.
+        if let (Some(r), Some(p), Some(y)) = (t.column("roll"), t.column("pitch"), t.column("yaw"))
+        {
+            s.attitude.time_us = t.timestamps.clone();
+            s.attitude.values.roll = r.iter().map(|v| (v * RAD_TO_DEG).az::<f32>()).collect();
+            s.attitude.values.pitch = p.iter().map(|v| (v * RAD_TO_DEG).az::<f32>()).collect();
+            s.attitude.values.yaw = y.iter().map(|v| (v * RAD_TO_DEG).az::<f32>()).collect();
+        }
+    }
+    // VFR_HUD.heading (degrees) as a yaw-only fallback when ATTITUDE
+    // lacks the absolute angles.
+    if s.attitude.values.yaw.is_empty() {
+        if let Some(t) = topic("VFR_HUD") {
+            if let Some(hd) = t.column("heading") {
+                s.attitude.time_us = t.timestamps.clone();
+                s.attitude.values.yaw = hd.iter().map(|&v| v.az::<f32>()).collect();
+            }
+        }
     }
 
     // ── Accel: RAW_IMU then SCALED_IMU (mG → m/s²) ──────────────────────────

@@ -257,6 +257,10 @@ pub struct Gps {
     pub lng: Vec<DecimalDegrees>,
     pub alt: Vec<Meters>,
     pub speed: Vec<MetersPerSec>,
+    /// **GPS course over ground**, degrees. This is the direction of
+    /// horizontal motion — it differs from airframe heading whenever
+    /// the vehicle yaws without translating (hover-and-rotate, crab in
+    /// wind). For airframe heading, see [`Session::attitude`].
     pub heading: Vec<f32>,
     pub sats: Vec<u8>,
 }
@@ -417,6 +421,12 @@ pub struct Session {
     pub accel: TriaxialSeries<MetersPerSec2>,
     pub setpoint: TriaxialSeries<DegPerSec>,
     pub pid_err: TriaxialSeries<DegPerSec>,
+    /// Vehicle attitude (roll/pitch/yaw) in **degrees**. This is the
+    /// firmware-reported airframe orientation — distinct from
+    /// [`Gps::heading`] which is GPS course-over-ground (direction of
+    /// motion, can differ from heading during hover/crab).
+    /// Empty when the source format has no attitude topic.
+    pub attitude: TriaxialSeries<f32>,
 
     // Inputs / outputs
     pub rc_command: RcCommand,
@@ -559,11 +569,26 @@ impl Session {
                 .map(|&v| f64::from(v))
                 .collect(),
             SensorField::Rssi => self.rssi.values.iter().map(|&v| f64::from(v)).collect(),
-            SensorField::Heading => self
-                .gps
-                .as_ref()
-                .map(|g| g.heading.iter().map(|&v| f64::from(v)).collect())
-                .unwrap_or_default(),
+            SensorField::Heading => {
+                // Prefer airframe heading (attitude.yaw), fall back to GPS
+                // course-over-ground when attitude isn't available. The two
+                // semantically differ during hover/crab; the airframe value
+                // is what the legacy `field(Heading)` returned for AP/PX4/
+                // MAVLink before the typed-Session refactor.
+                if self.attitude.values.yaw.is_empty() {
+                    self.gps
+                        .as_ref()
+                        .map(|g| g.heading.iter().map(|&v| f64::from(v)).collect())
+                        .unwrap_or_default()
+                } else {
+                    self.attitude
+                        .values
+                        .yaw
+                        .iter()
+                        .map(|&v| f64::from(v))
+                        .collect()
+                }
+            }
             SensorField::GpsLat => self
                 .gps
                 .as_ref()

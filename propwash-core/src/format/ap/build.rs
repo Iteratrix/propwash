@@ -99,6 +99,23 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
         }
     }
 
+    // ── Attitude (airframe orientation, degrees) ──────────────────────────
+    // AP ATT message stores Roll/Pitch/Yaw with FMT type `c` = i16 in
+    // centidegrees. The parser decodes these as raw i16 → f64 without
+    // scaling, so we divide by 100 here to get degrees.
+    if let Some(t) = topic_by_name("ATT") {
+        let centi_to_deg = |col: Option<&[f64]>| -> Vec<f32> {
+            col.unwrap_or(&[])
+                .iter()
+                .map(|&v| (v * 0.01).az::<f32>())
+                .collect()
+        };
+        s.attitude.time_us = t.timestamps.clone();
+        s.attitude.values.roll = centi_to_deg(t.column("Roll"));
+        s.attitude.values.pitch = centi_to_deg(t.column("Pitch"));
+        s.attitude.values.yaw = centi_to_deg(t.column("Yaw"));
+    }
+
     // ── Motor outputs: RCOU.C1..C8 PWM 1000-2000 → Normalized01 ───────────
     let (motor_min, motor_max) = ap_motor_range(&parsed.params);
     let pwm_span = (motor_max - motor_min).max(1.0);

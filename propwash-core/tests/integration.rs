@@ -181,6 +181,42 @@ fn mavlink_gyro_in_realistic_deg_per_sec_range() {
     assert!(max < 5000.0, "gyro roll magnitude {max} too large");
 }
 
+// ── Heading regression (bug_006) ──────────────────────────────────────────
+
+#[test]
+fn ap_heading_uses_airframe_attitude_not_gps_cog() {
+    let sessions = decode("ardupilot/dronekit-copter-log171.bin");
+    let s = &sessions[0];
+    // ATT.Yaw should populate session.attitude.yaw for AP logs.
+    assert!(
+        !s.attitude.values.yaw.is_empty(),
+        "expected airframe yaw from AP ATT message"
+    );
+    // Heading values should be in degrees, well-bounded.
+    let max = s
+        .attitude
+        .values
+        .yaw
+        .iter()
+        .map(|v| v.abs())
+        .fold(0.0_f32, f32::max);
+    assert!(max <= 360.0, "yaw {max} not in plausible degree range");
+}
+
+#[test]
+#[allow(deprecated)]
+fn field_heading_prefers_attitude_over_gps_cog() {
+    use propwash_core::types::SensorField;
+    let sessions = decode("ardupilot/dronekit-copter-log171.bin");
+    let s = &sessions[0];
+    let heading = s.field(&SensorField::Heading);
+    assert_eq!(
+        heading.len(),
+        s.attitude.values.yaw.len(),
+        "field(Heading) should source from attitude.yaw, not gps.heading"
+    );
+}
+
 // ── Format dispatch ────────────────────────────────────────────────────────
 
 #[test]

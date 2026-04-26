@@ -102,6 +102,38 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
         }
     }
 
+    // ── Attitude (airframe orientation, degrees) ──────────────────────────
+    // Prefer vehicle_attitude.q (quaternion → Euler), fall back to
+    // vehicle_global_position.yaw (already EKF-filtered, but only yaw).
+    if let Some(t) = topic("vehicle_attitude") {
+        if let (Some(qw), Some(qx), Some(qy), Some(qz)) = (
+            t.column("q[0]"),
+            t.column("q[1]"),
+            t.column("q[2]"),
+            t.column("q[3]"),
+        ) {
+            s.attitude.time_us = t.timestamps.clone();
+            s.attitude.values.roll = Vec::with_capacity(qw.len());
+            s.attitude.values.pitch = Vec::with_capacity(qw.len());
+            s.attitude.values.yaw = Vec::with_capacity(qw.len());
+            for (((&w, &x), &y), &z) in qw.iter().zip(qx.iter()).zip(qy.iter()).zip(qz.iter()) {
+                let (roll, pitch, yaw) = quat_to_euler_deg(w, x, y, z);
+                s.attitude.values.roll.push(roll);
+                s.attitude.values.pitch.push(pitch);
+                s.attitude.values.yaw.push(yaw);
+            }
+        }
+    }
+    if s.attitude.is_empty() {
+        if let Some(t) = topic("vehicle_global_position") {
+            if let Some(yaw) = t.column("yaw") {
+                s.attitude.time_us = t.timestamps.clone();
+                s.attitude.values.yaw = yaw.iter().map(|&v| (v * RAD_TO_DEG).az::<f32>()).collect();
+                // roll/pitch left empty; only yaw is fused into the global pos topic.
+            }
+        }
+    }
+
     // ── Motor outputs ─────────────────────────────────────────────────────
     // PX4's `actuator_outputs.output[0..15]` is a fixed-width array; not
     // every channel is wired. Stop only on schema absence (`column` →
@@ -320,6 +352,36 @@ fn normalize_output(raw: f64) -> f32 {
 
 fn stick_norm(pwm: f64) -> f32 {
     (((pwm - 1500.0) / 500.0).az::<f32>()).clamp(-1.0, 1.0)
+}
+
+/// Convert a unit quaternion (PX4 `vehicle_attitude.q[0..3]` = w, x, y, z)
+/// into Euler angles (roll, pitch, yaw) in degrees using the standard
+/// aerospace ZYX convention.
+#[allow(
+    clippy::similar_names,   // canonical sin*_cos*_ pair names from the literature
+    clippy::suboptimal_flops // mul_add rewrites would obscure the formula
+)]
+fn quat_to_euler_deg(w: f64, x: f64, y: f64, z: f64) -> (f32, f32, f32) {
+    let sinr_cosp = 2.0 * (w * x + y * z);
+    let cosr_cosp = 1.0 - 2.0 * (x * x + y * y);
+    let roll = sinr_cosp.atan2(cosr_cosp);
+
+    let sinp = 2.0 * (w * y - z * x);
+    let pitch = if sinp.abs() >= 1.0 {
+        sinp.signum() * std::f64::consts::FRAC_PI_2
+    } else {
+        sinp.asin()
+    };
+
+    let siny_cosp = 2.0 * (w * z + x * y);
+    let cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
+    let yaw = siny_cosp.atan2(cosy_cosp);
+
+    (
+        (roll * RAD_TO_DEG).az::<f32>(),
+        (pitch * RAD_TO_DEG).az::<f32>(),
+        (yaw * RAD_TO_DEG).az::<f32>(),
+    )
 }
 
 /// PX4 `vehicle_status.nav_state` (`NAVIGATION_STATE_*`) → common `FlightMode`.
