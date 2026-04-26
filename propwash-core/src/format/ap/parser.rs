@@ -4,7 +4,18 @@ use az::Az;
 
 use crate::types::Warning;
 
-use super::types::{ApMsgDef, ApParseStats, ApSession, FieldType, MsgColumns};
+use super::types::{ApMsgDef, ApParseStats, FieldType, MsgColumns};
+
+/// Output of the AP parser: just the columnar intermediate that
+/// [`super::build`] folds into a typed Session.
+pub(crate) struct ApParsed {
+    pub msg_defs: HashMap<u8, ApMsgDef>,
+    pub topics: HashMap<u8, MsgColumns>,
+    pub firmware_version: String,
+    pub vehicle_name: String,
+    pub params: HashMap<String, f64>,
+    pub stats: ApParseStats,
+}
 
 const HEAD1: u8 = 0xA3;
 const HEAD2: u8 = 0x95;
@@ -74,9 +85,11 @@ impl MsgLayout {
 // Main parse entry point
 // ---------------------------------------------------------------------------
 
-/// Parse an `ArduPilot` `DataFlash` binary log.
+/// Parse an `ArduPilot` `DataFlash` binary log into the columnar
+/// intermediate. The build step in `super::build` translates this into
+/// a typed Session.
 #[allow(clippy::too_many_lines)]
-pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
+pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApParsed {
     let mut msg_defs: HashMap<u8, ApMsgDef> = HashMap::new();
     let mut topics: HashMap<u8, MsgColumns> = HashMap::new();
     let mut layouts: HashMap<u8, MsgLayout> = HashMap::new();
@@ -189,15 +202,13 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApSession {
         });
     }
 
-    ApSession {
+    ApParsed {
         msg_defs,
         topics,
         firmware_version,
         vehicle_name,
         params,
         stats,
-        warnings: Vec::new(),
-        session_index: 0,
     }
 }
 
