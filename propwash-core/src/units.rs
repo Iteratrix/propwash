@@ -219,6 +219,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)] // exactly-representable integer-valued floats
     fn arithmetic_compiles() {
         let a = DegPerSec(10.0);
         let b = DegPerSec(3.0);
