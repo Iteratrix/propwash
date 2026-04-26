@@ -5,7 +5,7 @@ use az::Az;
 use crate::types::Warning;
 
 use super::types::{
-    Px4ParseStats, Px4Session, TopicData, ULogField, ULogFormat, ULogLogMessage, ULogSubscription,
+    Px4ParseStats, TopicData, ULogField, ULogFormat, ULogLogMessage, ULogSubscription,
     ULogType,
 };
 
@@ -156,8 +156,22 @@ impl FieldLayout {
 // Main parse entry point
 // ---------------------------------------------------------------------------
 
+/// Output of the PX4 ULog parser: the columnar intermediate that
+/// [`super::build`] folds into a typed Session.
+pub(crate) struct Px4Parsed {
+    pub formats: HashMap<String, ULogFormat>,
+    pub subscriptions: HashMap<u16, ULogSubscription>,
+    pub topics: HashMap<u16, TopicData>,
+    pub info: HashMap<String, String>,
+    pub params: HashMap<String, f64>,
+    pub log_messages: Vec<ULogLogMessage>,
+    pub firmware_version: String,
+    pub hardware_name: String,
+    pub stats: Px4ParseStats,
+}
+
 /// Parse a PX4 `ULog` binary file.
-pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4Session {
+pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4Parsed {
     let mut formats: HashMap<String, ULogFormat> = HashMap::new();
     let mut subscriptions: HashMap<u16, ULogSubscription> = HashMap::new();
     let mut topics: HashMap<u16, TopicData> = HashMap::new();
@@ -237,7 +251,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4Session {
         .cloned()
         .unwrap_or_default();
 
-    Px4Session {
+    Px4Parsed {
         formats,
         subscriptions,
         topics,
@@ -247,8 +261,6 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> Px4Session {
         firmware_version,
         hardware_name,
         stats,
-        warnings: Vec::new(),
-        session_index: 0,
     }
 }
 
@@ -718,8 +730,8 @@ fn validate_nested_types(formats: &HashMap<String, ULogFormat>, warnings: &mut V
     }
 }
 
-fn empty_session(stats: Px4ParseStats) -> Px4Session {
-    Px4Session {
+fn empty_session(stats: Px4ParseStats) -> Px4Parsed {
+    Px4Parsed {
         formats: HashMap::new(),
         subscriptions: HashMap::new(),
         topics: HashMap::new(),
@@ -729,7 +741,5 @@ fn empty_session(stats: Px4ParseStats) -> Px4Session {
         firmware_version: String::new(),
         hardware_name: String::new(),
         stats,
-        warnings: Vec::new(),
-        session_index: 0,
     }
 }
