@@ -5,6 +5,41 @@ use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
 use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session};
+use crate::units::{DegPerSec, MetersPerSec2, Normalized01};
+
+/// Local helper for `compute_spectrogram` — pulls a numeric trace from
+/// the typed Session by `SensorField`. Only the variants actually requested
+/// by the spectrogram caller are handled; others return empty.
+fn field_as_f64(s: &Session, f: &SensorField) -> Vec<f64> {
+    match f {
+        SensorField::Time => s.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
+        SensorField::Gyro(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
+            s.gyro.values.get(*axis).as_slice(),
+        )
+        .to_vec(),
+        SensorField::Setpoint(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
+            s.setpoint.values.get(*axis).as_slice(),
+        )
+        .to_vec(),
+        SensorField::Accel(axis) => bytemuck::cast_slice::<MetersPerSec2, f64>(
+            s.accel.values.get(*axis).as_slice(),
+        )
+        .to_vec(),
+        SensorField::Motor(MotorIndex(i)) => s
+            .motors
+            .commands
+            .get(*i)
+            .map(|c| c.iter().map(|n| f64::from(n.0)).collect())
+            .unwrap_or_default(),
+        SensorField::Rc(RcChannel::Throttle) => bytemuck::cast_slice::<Normalized01, f32>(
+            s.rc_command.throttle.as_slice(),
+        )
+        .iter()
+        .map(|&v| f64::from(v))
+        .collect(),
+        _ => Vec::new(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
@@ -262,9 +297,9 @@ pub fn analyze_vibration_unified(
     let mut spectra = Vec::new();
 
     for axis in Axis::ALL {
-        let gyro = unified.field(&SensorField::Gyro(axis));
+        let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
         if gyro.len() >= FFT_WINDOW_SIZE {
-            spectra.push(compute_spectrum_from_samples(&gyro, sample_rate, axis));
+            spectra.push(compute_spectrum_from_samples(gyro, sample_rate, axis));
         }
     }
 
@@ -288,7 +323,15 @@ pub fn analyze_vibration_unified(
     // Compute overall average motor RPM from all eRPM data
     let all_indices: Vec<usize> = (0..unified.frame_count()).collect();
     let erpm_data: Vec<Vec<f64>> = (0..4)
-        .map(|i| unified.field(&SensorField::ERpm(MotorIndex(i))))
+        .map(|i| {
+            unified
+                .motors
+                .esc
+                .as_ref()
+                .and_then(|e| e.erpm.get(i))
+                .map(|c| c.iter().map(|r| f64::from(r.0)).collect())
+                .unwrap_or_default()
+        })
         .collect();
     let avg_motor_hz = if erpm_data.iter().any(|e| !e.is_empty()) {
         compute_avg_motor_hz(&erpm_data, &all_indices, motor_poles)
@@ -311,7 +354,12 @@ fn compute_throttle_bands_unified(
     sample_rate: f64,
     motor_poles: u32,
 ) -> Vec<ThrottleBand> {
-    let throttle = unified.field(&SensorField::Rc(RcChannel::Throttle));
+    let throttle: Vec<f64> = unified
+        .rc_command
+        .throttle
+        .iter()
+        .map(|n| f64::from(n.0))
+        .collect();
     if throttle.is_empty() {
         return Vec::new();
     }
@@ -327,12 +375,22 @@ fn compute_throttle_bands_unified(
 
     let gyro_data: Vec<Vec<f64>> = Axis::ALL
         .iter()
-        .map(|a| unified.field(&SensorField::Gyro(*a)))
+        .map(|a| {
+            bytemuck::cast_slice::<DegPerSec, f64>(unified.gyro.values.get(*a).as_slice()).to_vec()
+        })
         .collect();
 
     // Collect eRPM data for all motors (average across motors for RPM frequency)
     let erpm_data: Vec<Vec<f64>> = (0..4)
-        .map(|i| unified.field(&SensorField::ERpm(MotorIndex(i))))
+        .map(|i| {
+            unified
+                .motors
+                .esc
+                .as_ref()
+                .and_then(|e| e.erpm.get(i))
+                .map(|c| c.iter().map(|r| f64::from(r.0)).collect())
+                .unwrap_or_default()
+        })
         .collect();
     let has_erpm = erpm_data.iter().any(|e| !e.is_empty());
 
@@ -430,7 +488,8 @@ fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVib
     let mut has_data = false;
 
     for (i, axis) in Axis::ALL.iter().enumerate() {
-        let samples = unified.field(&SensorField::Accel(*axis));
+        let samples: &[f64] =
+            bytemuck::cast_slice(unified.accel.values.get(*axis).as_slice());
         if samples.is_empty() {
             continue;
         }
@@ -485,7 +544,12 @@ fn analyze_propwash(
         return None;
     }
 
-    let time = session.field(&SensorField::Time);
+    let time: Vec<f64> = session
+        .gyro
+        .time_us
+        .iter()
+        .map(|&t| t.az::<f64>())
+        .collect();
     if time.is_empty() {
         return None;
     }
@@ -500,7 +564,9 @@ fn analyze_propwash(
 
     let gyro_data: Vec<Vec<f64>> = Axis::ALL
         .iter()
-        .map(|a| session.field(&SensorField::Gyro(*a)))
+        .map(|a| {
+            bytemuck::cast_slice::<DegPerSec, f64>(session.gyro.values.get(*a).as_slice()).to_vec()
+        })
         .collect();
 
     if gyro_data.iter().all(Vec::is_empty) {
@@ -633,7 +699,12 @@ pub fn compute_spectrogram(
         .min(SPEC_WINDOW / 2);
     let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i.az::<f64>() * freq_res).collect();
 
-    let time_raw = session.field(&SensorField::Time);
+    let time_raw: Vec<f64> = session
+        .gyro
+        .time_us
+        .iter()
+        .map(|&t| t.az::<f64>())
+        .collect();
     let t0 = time_raw.first().copied().unwrap_or(0.0);
 
     let hann = hann_window(SPEC_WINDOW);
@@ -644,7 +715,7 @@ pub fn compute_spectrogram(
     let mut result_axes = Vec::new();
 
     for &(axis_name, field) in axes {
-        let raw = session.field(field);
+        let raw = field_as_f64(session, field);
         if raw.len() < SPEC_WINDOW {
             continue;
         }

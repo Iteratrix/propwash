@@ -1,12 +1,17 @@
 use az::Az;
 
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session};
+use crate::types::{Axis, Session};
 
 use super::events::{EventKind, FlightEvent};
 
-/// Run all format-agnostic event detectors using the `Unified` trait.
+/// Run all format-agnostic event detectors over the typed Session.
 pub fn detect_all(unified: &Session) -> Vec<FlightEvent> {
-    let timestamps = unified.field(&SensorField::Time);
+    let timestamps: Vec<f64> = unified
+        .gyro
+        .time_us
+        .iter()
+        .map(|&t| t.az::<f64>())
+        .collect();
     if timestamps.len() < 2 {
         return Vec::new();
     }
@@ -33,7 +38,7 @@ fn detect_gyro_spikes(
     let spike_threshold = 500.0; // deg/s
 
     for axis in Axis::ALL {
-        let gyro = unified.field(&SensorField::Gyro(axis));
+        let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
         for (j, &val) in gyro.iter().enumerate() {
             if val.abs() > spike_threshold {
                 let t = timestamps.get(j).copied().unwrap_or(0.0);
@@ -65,7 +70,14 @@ fn detect_throttle_events(
     first_t: f64,
     events: &mut Vec<FlightEvent>,
 ) {
-    let throttle = unified.field(&SensorField::Rc(RcChannel::Throttle));
+    // Throttle is Normalized01 (f32, 0..1). Convert to Vec<f64> for the
+    // existing arithmetic; the events module compares as percentages anyway.
+    let throttle: Vec<f64> = unified
+        .rc_command
+        .throttle
+        .iter()
+        .map(|n| f64::from(n.0))
+        .collect();
     if throttle.len() < 2 {
         return;
     }
@@ -134,10 +146,13 @@ fn detect_motor_saturation(
     let threshold = motor_max - (motor_max / 50.0);
 
     for mi in 0..unified.motor_count() {
-        let motor = unified.field(&SensorField::Motor(MotorIndex(mi)));
+        let Some(motor_col) = unified.motors.commands.get(mi) else {
+            continue;
+        };
         let mut saturated_start: Option<usize> = None;
 
-        for (i, &val) in motor.iter().enumerate() {
+        for (i, n) in motor_col.iter().enumerate() {
+            let val = f64::from(n.0);
             let is_saturated = val >= threshold;
             match (is_saturated, saturated_start) {
                 (true, None) => saturated_start = Some(i),
@@ -172,8 +187,8 @@ fn detect_overshoot(
     let overshoot_threshold = 15.0;
 
     for axis in Axis::ALL {
-        let gyro = unified.field(&SensorField::Gyro(axis));
-        let setpoint = unified.field(&SensorField::Setpoint(axis));
+        let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
+        let setpoint: &[f64] = bytemuck::cast_slice(unified.setpoint.values.get(axis).as_slice());
         if gyro.is_empty() || setpoint.is_empty() {
             continue;
         }
@@ -230,7 +245,14 @@ fn detect_desync(
     let spike_threshold = motor_max * 0.95;
 
     let motors: Vec<Vec<f64>> = (0..n_motors)
-        .map(|i| unified.field(&SensorField::Motor(MotorIndex(i))))
+        .map(|i| {
+            unified
+                .motors
+                .commands
+                .get(i)
+                .map(|col| col.iter().map(|n| f64::from(n.0)).collect())
+                .unwrap_or_default()
+        })
         .collect();
 
     let len = motors
