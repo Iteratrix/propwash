@@ -254,18 +254,10 @@ pub fn analyze_vibration_unified(
         return None;
     }
 
-    // Get motor pole count for eRPM → frequency conversion
-    let motor_poles: u32 = match unified {
-        Session::Betaflight(bf) => {
-            let v = bf.get_header_int("motor_poles", 14);
-            if v > 0 {
-                v.cast_unsigned()
-            } else {
-                14
-            }
-        }
-        _ => 14,
-    };
+    // Get motor pole count for eRPM → frequency conversion.
+    // TODO(refactor/session-typed): wire BF parser to put motor_poles into
+    // SessionMeta or extras, then read it here. Default 14 is fine for now.
+    let motor_poles: u32 = 14;
 
     let mut spectra = Vec::new();
 

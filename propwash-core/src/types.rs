@@ -2,10 +2,9 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::format::ap::types::ApSession;
-use crate::format::bf::types::BfSession;
-use crate::format::mavlink::types::MavlinkSession;
-use crate::format::px4::types::Px4Session;
+// Re-export so existing `crate::types::Session` imports keep working during
+// the refactor — Session itself lives in `crate::session`.
+pub use crate::session::Session;
 
 /// Rotational axis: roll, pitch, or yaw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
@@ -423,82 +422,6 @@ pub struct FilterConfig {
     pub dyn_notch_max_hz: Option<f64>,
     pub gyro_notch1_hz: Option<f64>,
     pub gyro_notch2_hz: Option<f64>,
-}
-
-/// A parsed flight session. The primary type consumers work with.
-///
-/// Call methods directly for format-agnostic sensor data access.
-/// Pattern match on the enum variants when you need format-specific data.
-///
-/// Adding a variant is a breaking change — consumers should handle every format.
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-pub enum Session {
-    Betaflight(BfSession),
-    ArduPilot(ApSession),
-    Px4(Px4Session),
-    Mavlink(MavlinkSession),
-}
-
-/// Dispatches a method call to the inner format-specific type.
-macro_rules! dispatch {
-    ($self:ident, $method:ident $(, $arg:expr)*) => {
-        match $self {
-            Self::Betaflight(s) => s.$method($($arg),*),
-            Self::ArduPilot(s) => s.$method($($arg),*),
-            Self::Px4(s) => s.$method($($arg),*),
-            Self::Mavlink(s) => s.$method($($arg),*),
-        }
-    };
-}
-
-impl Session {
-    pub fn frame_count(&self) -> usize {
-        dispatch!(self, frame_count)
-    }
-    pub fn field_names(&self) -> Vec<String> {
-        dispatch!(self, field_names)
-    }
-    pub fn firmware_version(&self) -> &str {
-        dispatch!(self, firmware_version)
-    }
-    pub fn craft_name(&self) -> &str {
-        dispatch!(self, craft_name)
-    }
-    pub fn sample_rate_hz(&self) -> f64 {
-        dispatch!(self, sample_rate_hz)
-    }
-    pub fn duration_seconds(&self) -> f64 {
-        dispatch!(self, duration_seconds)
-    }
-    pub fn field(&self, field: &SensorField) -> Vec<f64> {
-        dispatch!(self, field, field)
-    }
-    pub fn motor_count(&self) -> usize {
-        dispatch!(self, motor_count)
-    }
-    pub fn motor_range(&self) -> (f64, f64) {
-        dispatch!(self, motor_range)
-    }
-    pub fn warnings(&self) -> &[Warning] {
-        dispatch!(self, warnings)
-    }
-    pub fn index(&self) -> usize {
-        dispatch!(self, index)
-    }
-
-    pub fn filter_config(&self) -> FilterConfig {
-        dispatch!(self, filter_config)
-    }
-    pub fn pid_gains(&self) -> PidGains {
-        dispatch!(self, pid_gains)
-    }
-    pub fn is_truncated(&self) -> bool {
-        dispatch!(self, is_truncated)
-    }
-    pub fn corrupt_bytes(&self) -> usize {
-        dispatch!(self, corrupt_bytes)
-    }
 }
 
 /// Complete parsed log file.

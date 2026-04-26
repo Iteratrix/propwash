@@ -15,7 +15,8 @@ pub mod session;
 pub mod types;
 pub mod units;
 
-pub use types::{FilterConfig, Log, ParseError, Session, Warning};
+pub use session::Session;
+pub use types::{FilterConfig, Log, ParseError, Warning};
 
 /// Decodes a blackbox log from raw bytes.
 /// Never panics on corrupt data. Collects warnings instead.

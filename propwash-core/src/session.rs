@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use az::Az;
 use serde::Serialize;
 
-use crate::types::{Axis, FilterConfig, PidGains, Warning};
+use crate::types::{Axis, FilterConfig, MotorIndex, PidGains, RcChannel, SensorField, Warning};
 use crate::units::{
     Amps, Celsius, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2,
     Normalized01, Volts,
@@ -440,6 +440,178 @@ pub struct Session {
 }
 
 impl Session {
+    /// Convenience: 1-based session index from `meta`.
+    pub fn index(&self) -> usize {
+        self.meta.session_index
+    }
+
+    /// Convenience: PID gains from `meta`. Returns the default (empty) gains
+    /// if the format didn't surface any.
+    pub fn pid_gains(&self) -> PidGains {
+        self.meta.pid_gains.clone().unwrap_or_default()
+    }
+
+    /// Convenience: filter config from `meta`. Returns a config with all
+    /// `None`s if the format didn't surface filter parameters.
+    pub fn filter_config(&self) -> FilterConfig {
+        self.meta
+            .filter_config
+            .clone()
+            .unwrap_or_else(empty_filter_config)
+    }
+
+    /// Motor command range. Always `(0.0, 1.0)` because motor commands
+    /// are normalised to that range on the new Session.
+    pub fn motor_range(&self) -> (f64, f64) {
+        (0.0, 1.0)
+    }
+
+    /// Returns the names of all populated streams.
+    /// TODO(refactor/session-typed): replace with typed iteration once
+    /// consumers no longer ask for fields by name.
+    pub fn field_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if !self.gyro.is_empty() {
+            names.push("time".into());
+            for axis in [Axis::Roll, Axis::Pitch, Axis::Yaw] {
+                names.push(format!("gyro[{axis}]"));
+            }
+        }
+        names.extend(self.extras.keys().cloned());
+        names
+    }
+
+    /// Bridge: legacy stringly-typed field accessor.
+    ///
+    /// TODO(refactor/session-typed): callers should be migrated to
+    /// typed accessors (`session.gyro.values.roll`, `session.motors.commands[i]`,
+    /// etc.) and this method deleted. Bytemuck-cast unit-typed slices to
+    /// `&[f64]` / `&[f32]` for FFT input.
+    pub fn field(&self, field: &SensorField) -> Vec<f64> {
+        match field {
+            SensorField::Time => self.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
+            SensorField::Gyro(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
+                self.gyro.values.get(*axis).as_slice(),
+            )
+            .to_vec(),
+            SensorField::GyroUnfilt(_) => Vec::new(), // not modelled yet
+            SensorField::Setpoint(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
+                self.setpoint.values.get(*axis).as_slice(),
+            )
+            .to_vec(),
+            SensorField::Accel(axis) => bytemuck::cast_slice::<MetersPerSec2, f64>(
+                self.accel.values.get(*axis).as_slice(),
+            )
+            .to_vec(),
+            SensorField::Motor(MotorIndex(i)) => self
+                .motors
+                .commands
+                .get(*i)
+                .map(|col| bytemuck::cast_slice::<Normalized01, f32>(col).iter().map(|&v| f64::from(v)).collect())
+                .unwrap_or_default(),
+            SensorField::ERpm(MotorIndex(i)) => self
+                .motors
+                .esc
+                .as_ref()
+                .and_then(|e| e.erpm.get(*i))
+                .map(|col| bytemuck::cast_slice::<Erpm, u32>(col).iter().map(|&v| f64::from(v)).collect())
+                .unwrap_or_default(),
+            SensorField::Rc(RcChannel::Roll) => {
+                self.rc_command.sticks.roll.iter().map(|&v| f64::from(v)).collect()
+            }
+            SensorField::Rc(RcChannel::Pitch) => {
+                self.rc_command.sticks.pitch.iter().map(|&v| f64::from(v)).collect()
+            }
+            SensorField::Rc(RcChannel::Yaw) => {
+                self.rc_command.sticks.yaw.iter().map(|&v| f64::from(v)).collect()
+            }
+            SensorField::Rc(RcChannel::Throttle) => bytemuck::cast_slice::<Normalized01, f32>(
+                &self.rc_command.throttle,
+            )
+            .iter()
+            .map(|&v| f64::from(v))
+            .collect(),
+            SensorField::Vbat => bytemuck::cast_slice::<Volts, f32>(&self.vbat.values)
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
+            SensorField::Rssi => self.rssi.values.iter().map(|&v| f64::from(v)).collect(),
+            SensorField::Heading => self
+                .gps
+                .as_ref()
+                .map(|g| g.heading.iter().map(|&v| f64::from(v)).collect())
+                .unwrap_or_default(),
+            SensorField::GpsLat => self
+                .gps
+                .as_ref()
+                .map(|g| bytemuck::cast_slice::<DecimalDegrees, f64>(&g.lat).to_vec())
+                .unwrap_or_default(),
+            SensorField::GpsLng => self
+                .gps
+                .as_ref()
+                .map(|g| bytemuck::cast_slice::<DecimalDegrees, f64>(&g.lng).to_vec())
+                .unwrap_or_default(),
+            SensorField::Altitude => self
+                .gps
+                .as_ref()
+                .map(|g| bytemuck::cast_slice::<Meters, f32>(&g.alt).iter().map(|&v| f64::from(v)).collect())
+                .unwrap_or_default(),
+            SensorField::GpsSpeed => self
+                .gps
+                .as_ref()
+                .map(|g| bytemuck::cast_slice::<MetersPerSec, f32>(&g.speed).iter().map(|&v| f64::from(v)).collect())
+                .unwrap_or_default(),
+            SensorField::PidP(_) | SensorField::PidI(_) | SensorField::PidD(_) | SensorField::Feedforward(_) => {
+                Vec::new() // PID terms not modelled directly yet
+            }
+            SensorField::Unknown(name) => self
+                .extras
+                .get(name)
+                .map(|ts| ts.values.clone())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Convenience: firmware string from `meta`.
+    pub fn firmware_version(&self) -> &str {
+        &self.meta.firmware
+    }
+
+    /// Convenience: craft name from `meta`, or empty string if absent.
+    pub fn craft_name(&self) -> &str {
+        self.meta.craft_name.as_deref().unwrap_or("")
+    }
+
+    /// Convenience: motor count from `meta`.
+    pub fn motor_count(&self) -> usize {
+        self.meta.motor_count
+    }
+
+    /// Convenience: truncated flag from `meta`.
+    pub fn is_truncated(&self) -> bool {
+        self.meta.truncated
+    }
+
+    /// Convenience: corrupt-byte count from `meta`.
+    pub fn corrupt_bytes(&self) -> usize {
+        self.meta.corrupt_bytes
+    }
+
+    /// Convenience: warning slice from `meta`.
+    pub fn warnings(&self) -> &[Warning] {
+        &self.meta.warnings
+    }
+
+    /// Number of gyro samples — the canonical "frame count" for the session.
+    pub fn frame_count(&self) -> usize {
+        self.gyro.len()
+    }
+
+    /// Sample rate of the gyro stream in Hz. Alias for [`Self::gyro_rate_hz`].
+    pub fn sample_rate_hz(&self) -> f64 {
+        self.gyro_rate_hz()
+    }
+
     /// Total flight duration in seconds, computed from the longest-spanning
     /// stream (typically gyro).
     pub fn duration_seconds(&self) -> f64 {
@@ -462,6 +634,18 @@ impl Session {
     /// Sample rate of the gyro stream in Hz, or 0.0 if no gyro data.
     pub fn gyro_rate_hz(&self) -> f64 {
         rate_hz(&self.gyro.time_us)
+    }
+}
+
+fn empty_filter_config() -> FilterConfig {
+    FilterConfig {
+        gyro_lpf_hz: None,
+        gyro_lpf2_hz: None,
+        dterm_lpf_hz: None,
+        dyn_notch_min_hz: None,
+        dyn_notch_max_hz: None,
+        gyro_notch1_hz: None,
+        gyro_notch2_hz: None,
     }
 }
 
