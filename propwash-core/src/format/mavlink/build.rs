@@ -20,7 +20,9 @@ use az::{Az, SaturatingAs};
 
 use super::parser::MavlinkParsed;
 use super::types::{MavType, MsgColumns};
-use crate::format::common::{ardupilot_filter_config, ardupilot_pid_gains};
+use crate::format::common::{
+    ardupilot_filter_config, ardupilot_pid_gains, px4_filter_config, px4_pid_gains, AutopilotFamily,
+};
 use crate::session::{
     Event, EventKind, FlightMode, Format, Gps, LogSeverity, Session, SessionMeta, TimeSeries,
 };
@@ -280,6 +282,28 @@ pub(crate) fn session(
         });
     }
 
+    // ── Detect autopilot family from HEARTBEAT.autopilot ──────────────────
+    // MAVLink is the wire protocol for both ArduPilot and PX4. Parameter
+    // naming differs (ATC_RAT_RLL_P vs MC_ROLLRATE_P), so the right
+    // dispatch is chosen by the autopilot byte in HEARTBEAT. Mode = the
+    // most-frequent value across the log to be robust against stray
+    // GCS-sourced HEARTBEATs (autopilot=8 = MAV_AUTOPILOT_INVALID).
+    let autopilot = detect_autopilot(&parsed);
+    let (pid_gains, filter_config) = match autopilot {
+        AutopilotFamily::ArduPilot => (
+            Some(ardupilot_pid_gains(&parsed.params)),
+            Some(ardupilot_filter_config(&parsed.params)),
+        ),
+        AutopilotFamily::Px4 => (
+            Some(px4_pid_gains(&parsed.params)),
+            Some(px4_filter_config(&parsed.params)),
+        ),
+        // Unknown / Generic / Other — return None instead of "Some(empty)"
+        // so consumers can distinguish "no PID info" from "all gains
+        // happened to be zero".
+        AutopilotFamily::Generic | AutopilotFamily::Other(_) => (None, None),
+    };
+
     // ── Metadata ──────────────────────────────────────────────────────────
     s.meta = SessionMeta {
         format: Format::Mavlink,
@@ -287,8 +311,8 @@ pub(crate) fn session(
         craft_name: Some(parsed.vehicle_type.as_str().to_string()),
         board: None,
         motor_count: s.meta.motor_count,
-        pid_gains: Some(ardupilot_pid_gains(&parsed.params)),
-        filter_config: Some(ardupilot_filter_config(&parsed.params)),
+        pid_gains,
+        filter_config,
         session_index,
         truncated: parsed.stats.truncated,
         corrupt_bytes: parsed.stats.corrupt_bytes,
@@ -298,6 +322,34 @@ pub(crate) fn session(
     let _erpm: Vec<Erpm> = Vec::new(); // suppress unused-import if MAVLink doesn't have ESC RPM yet
 
     s
+}
+
+/// Pick the most common `HEARTBEAT.autopilot` value from the parsed log
+/// and translate to [`AutopilotFamily`]. Mode-of-many is robust against
+/// stray HEARTBEATs sent by the GCS itself (`MAV_AUTOPILOT_INVALID = 8`).
+/// Returns [`AutopilotFamily::Generic`] when no HEARTBEATs were seen.
+fn detect_autopilot(parsed: &MavlinkParsed) -> AutopilotFamily {
+    let Some(t) = parsed.topics.get("HEARTBEAT") else {
+        return AutopilotFamily::Generic;
+    };
+    let Some(col) = t.column("autopilot") else {
+        return AutopilotFamily::Generic;
+    };
+    if col.is_empty() {
+        return AutopilotFamily::Generic;
+    }
+    // Tally mode of u8 values (256 buckets).
+    let mut counts = [0u32; 256];
+    for &v in col {
+        let id = v.saturating_as::<u8>();
+        counts[id as usize] = counts[id as usize].saturating_add(1);
+    }
+    let (best, _) = counts
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, &n)| n)
+        .unwrap_or((0, &0));
+    AutopilotFamily::from_id(best.saturating_as::<u8>())
 }
 
 fn stick_norm(pwm: f64) -> f32 {
