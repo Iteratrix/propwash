@@ -1,10 +1,37 @@
 use az::WrappingAs;
 
-use super::types::{BfFieldSign, BfSession, Predictor};
+use super::types::{BfFieldSign, BfFrameDefs, BfHeaderValue, Predictor};
 use crate::types::{MotorIndex, SensorField};
+use std::collections::HashMap;
+
+/// Read-only context for predictor application — the small handful of
+/// header-derived values that the I-frame and P-frame predictors need.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PredictorRefs {
+    pub min_throttle: i32,
+    pub min_motor: i32,
+    pub vbat_ref: i32,
+    pub motor0_idx: Option<usize>,
+    pub time_idx: Option<usize>,
+}
+
+impl PredictorRefs {
+    pub fn from_headers(
+        headers: &HashMap<String, BfHeaderValue>,
+        main_defs: &BfFrameDefs,
+        min_motor_override: i32,
+    ) -> Self {
+        Self {
+            min_throttle: BfHeaderValue::int(headers, "minthrottle", 0),
+            min_motor: min_motor_override,
+            vbat_ref: BfHeaderValue::int(headers, "vbatref", 0),
+            motor0_idx: main_defs.index_of(&SensorField::Motor(MotorIndex(0))),
+            time_idx: main_defs.index_of(&SensorField::Time),
+        }
+    }
+}
 
 /// Frame scheduling: determines which PID loop iterations are logged.
-/// Mirrors the firmware's `shouldHaveFrame()` logic.
 #[derive(Debug, Clone)]
 pub(crate) struct FrameSchedule {
     i_interval: u32,
@@ -13,17 +40,15 @@ pub(crate) struct FrameSchedule {
 }
 
 impl FrameSchedule {
-    pub fn from_headers(session: &BfSession) -> Self {
+    pub fn from_headers(headers: &HashMap<String, BfHeaderValue>) -> Self {
         Self {
-            i_interval: session
-                .get_header_int("I interval", 1)
+            i_interval: BfHeaderValue::int(headers, "I interval", 1)
                 .max(1)
                 .cast_unsigned(),
-            p_num: session
-                .get_header_int("P interval", 1)
+            p_num: BfHeaderValue::int(headers, "P interval", 1)
                 .max(1)
                 .cast_unsigned(),
-            p_denom: session.get_header_int("P ratio", 1).max(1).cast_unsigned(),
+            p_denom: BfHeaderValue::int(headers, "P ratio", 1).max(1).cast_unsigned(),
         }
     }
 
@@ -31,9 +56,7 @@ impl FrameSchedule {
         (iteration % self.i_interval + self.p_num - 1) % self.p_denom < self.p_num
     }
 
-    /// Counts iterations skipped between `last_iteration` and the next
-    /// frame that should be logged.
-    fn skipped_after(&self, last_iteration: u32) -> u32 {
+    pub fn skipped_after(&self, last_iteration: u32) -> u32 {
         let mut count = 0;
         let mut idx = last_iteration.wrapping_add(1);
         while !self.should_have_frame(idx) {
@@ -48,8 +71,6 @@ impl FrameSchedule {
 }
 
 /// Decode context: frame history + iteration tracking.
-/// Encodes the invariant that I-frames reset everything,
-/// P-frames advance, and corruption invalidates.
 pub(crate) enum DecodeContext {
     Empty {
         schedule: FrameSchedule,
@@ -63,13 +84,10 @@ pub(crate) enum DecodeContext {
 }
 
 impl DecodeContext {
-    pub fn new(session: &BfSession) -> Self {
-        Self::Empty {
-            schedule: FrameSchedule::from_headers(session),
-        }
+    pub fn new(schedule: FrameSchedule) -> Self {
+        Self::Empty { schedule }
     }
 
-    /// Resets from an I-frame. Sets both history slots and the iteration counter.
     pub fn reset_from_i_frame(&mut self, values: &[i64], loop_iteration: u32) {
         let schedule = self.take_schedule();
         *self = Self::Ready {
@@ -80,8 +98,6 @@ impl DecodeContext {
         };
     }
 
-    /// Advances from a P-frame. Shifts history and increments iteration.
-    /// Returns the number of skipped frames (for the INCREMENT predictor).
     pub fn advance_from_p_frame(&mut self, values: &[i64]) -> u32 {
         match self {
             Self::Empty { .. } => panic!("advance_from_p_frame called without I-frame"),
@@ -100,21 +116,15 @@ impl DecodeContext {
         }
     }
 
-    /// Returns whether the context is ready for P-frame decoding.
     pub fn is_ready(&self) -> bool {
-        match self {
-            Self::Empty { .. } => false,
-            Self::Ready { .. } => true,
-        }
+        matches!(self, Self::Ready { .. })
     }
 
-    /// Invalidates after corruption.
     pub fn invalidate(&mut self) {
         let schedule = self.take_schedule();
         *self = Self::Empty { schedule };
     }
 
-    /// Borrows prev1 and prev2 for prediction.
     pub fn slices(&self) -> (&[i64], &[i64]) {
         match self {
             Self::Empty { .. } => panic!("slices() called on empty context"),
@@ -122,7 +132,6 @@ impl DecodeContext {
         }
     }
 
-    /// Returns the number of intentionally skipped iterations since the last frame.
     pub fn skipped_frames(&self) -> u32 {
         match self {
             Self::Empty { .. } => 0,
@@ -151,21 +160,21 @@ pub(crate) fn apply_i_predictor(
     decoded: i32,
     sign: BfFieldSign,
     current_values: &[i64],
-    motor0_idx: Option<usize>,
-    session: &BfSession,
+    refs: &PredictorRefs,
 ) -> i64 {
     let predicted: i32 = match predictor {
-        Predictor::MinThrottle => decoded.wrapping_add(session.min_throttle()),
+        Predictor::MinThrottle => decoded.wrapping_add(refs.min_throttle),
         Predictor::Motor0 => {
-            let motor0 = motor0_idx
+            let motor0 = refs
+                .motor0_idx
                 .and_then(|idx| current_values.get(idx))
                 .copied()
                 .map_or(0, WrappingAs::wrapping_as);
             decoded.wrapping_add(motor0)
         }
         Predictor::FifteenHundred => decoded.wrapping_add(1500),
-        Predictor::VbatRef => decoded.wrapping_add(session.vbat_ref()),
-        Predictor::MinMotor => decoded.wrapping_add(session.min_motor()),
+        Predictor::VbatRef => decoded.wrapping_add(refs.vbat_ref),
+        Predictor::MinMotor => decoded.wrapping_add(refs.min_motor),
         _ => decoded,
     };
     to_i64(predicted, sign)
@@ -180,8 +189,7 @@ pub(crate) fn apply_p_predictor(
     sign: BfFieldSign,
     prev1: &[i64],
     prev2: &[i64],
-    session: &BfSession,
-    time_idx: Option<usize>,
+    refs: &PredictorRefs,
     skipped_frames: u32,
 ) -> i64 {
     let p1 = to_i32(prev1.get(field_idx).copied().unwrap_or(0));
@@ -202,21 +210,20 @@ pub(crate) fn apply_p_predictor(
             p1.wrapping_add(skip + 1).wrapping_add(decoded)
         }
         Predictor::Motor0 => {
-            let motor0_idx = session
-                .main_field_defs
-                .index_of(&SensorField::Motor(MotorIndex(0)));
-            let motor0 = motor0_idx
+            let motor0 = refs
+                .motor0_idx
                 .and_then(|idx| prev1.get(idx))
                 .copied()
                 .map_or(0, to_i32);
             decoded.wrapping_add(motor0)
         }
-        Predictor::MinThrottle => decoded.wrapping_add(session.min_throttle()),
-        Predictor::MinMotor => decoded.wrapping_add(session.min_motor()),
-        Predictor::VbatRef => decoded.wrapping_add(session.vbat_ref()),
+        Predictor::MinThrottle => decoded.wrapping_add(refs.min_throttle),
+        Predictor::MinMotor => decoded.wrapping_add(refs.min_motor),
+        Predictor::VbatRef => decoded.wrapping_add(refs.vbat_ref),
         Predictor::FifteenHundred => decoded.wrapping_add(1500),
         Predictor::LastMainFrameTime => {
-            let t = time_idx
+            let t = refs
+                .time_idx
                 .and_then(|idx| prev1.get(idx))
                 .copied()
                 .map_or(0, to_i32);
@@ -257,14 +264,20 @@ mod tests {
         assert_eq!(to_i64(-1, BfFieldSign::Unsigned), 0xFFFF_FFFF);
     }
 
+    fn make_test_schedule() -> FrameSchedule {
+        FrameSchedule {
+            i_interval: 256,
+            p_num: 16,
+            p_denom: 16,
+        }
+    }
+
     #[test]
     fn context_reset_sets_both_slots() {
-        let mut ctx = make_test_context();
+        let mut ctx = DecodeContext::new(make_test_schedule());
         assert!(!ctx.is_ready());
-
         ctx.reset_from_i_frame(&[10, 20, 30], 0);
         assert!(ctx.is_ready());
-
         let (p1, p2) = ctx.slices();
         assert_eq!(p1, &[10, 20, 30]);
         assert_eq!(p2, &[10, 20, 30]);
@@ -272,10 +285,9 @@ mod tests {
 
     #[test]
     fn context_advance_shifts() {
-        let mut ctx = make_test_context();
+        let mut ctx = DecodeContext::new(make_test_schedule());
         ctx.reset_from_i_frame(&[100, 200], 0);
         let _skipped = ctx.advance_from_p_frame(&[110, 210]);
-
         let (p1, p2) = ctx.slices();
         assert_eq!(p1, &[110, 210]);
         assert_eq!(p2, &[100, 200]);
@@ -283,7 +295,7 @@ mod tests {
 
     #[test]
     fn context_invalidate() {
-        let mut ctx = make_test_context();
+        let mut ctx = DecodeContext::new(make_test_schedule());
         ctx.reset_from_i_frame(&[1, 2], 0);
         assert!(ctx.is_ready());
         ctx.invalidate();
@@ -332,15 +344,5 @@ mod tests {
         }
         assert!(schedule.should_have_frame(8));
         assert_eq!(schedule.skipped_after(0), 7);
-    }
-
-    fn make_test_context() -> DecodeContext {
-        DecodeContext::Empty {
-            schedule: FrameSchedule {
-                i_interval: 256,
-                p_num: 16,
-                p_denom: 16,
-            },
-        }
     }
 }
