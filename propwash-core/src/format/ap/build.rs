@@ -218,14 +218,25 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     // ── Mode + armed events from MODE message ──────────────────────────────
     if let Some(t) = topic_by_name("MODE") {
         if let Some(mode_col) = t.column("Mode") {
+            // Dedup consecutive identical mode IDs (matches PX4/MAVLink/BF
+            // builds). ArduPilot mainline only writes MODE on transitions,
+            // but legacy/forked firmware and replay tools can emit
+            // duplicates; without the guard those cascade into double
+            // ModeChange events through the analysis layer.
+            let mut last_mode_id = u8::MAX;
             for (&time, &mode_id) in t.timestamps.iter().zip(mode_col.iter()) {
-                let mode = ap_flight_mode(mode_id.az::<u8>());
+                let id = mode_id.az::<u8>();
+                if id == last_mode_id {
+                    continue;
+                }
+                let mode = ap_flight_mode(id);
                 s.flight_mode.push(time, mode.clone());
                 s.events.push(Event {
                     time_us: time,
                     kind: EventKind::ModeChange { to: mode },
                     message: None,
                 });
+                last_mode_id = id;
             }
         }
     }

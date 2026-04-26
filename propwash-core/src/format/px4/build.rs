@@ -103,25 +103,25 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
     }
 
     // ── Motor outputs ─────────────────────────────────────────────────────
+    // PX4's `actuator_outputs.output[0..15]` is a fixed-width array; not
+    // every channel is wired. Stop only on schema absence (`column` →
+    // None) — never on runtime values, since pre-arm logs and
+    // VTOL/quadplane mixers can legitimately leave low-index channels at
+    // 0.0 throughout the recording while the actual motors live at
+    // higher indices. Empty (all-zero) channels still get pushed so
+    // motor indices stay aligned with the source schema.
     if let Some(t) = topic("actuator_outputs") {
         s.motors.time_us = t.timestamps.clone();
         let mut motor_count = 0;
         for i in 0..16 {
             let name = format!("output[{i}]");
-            if let Some(col) = t.column(&name) {
-                let normalized: Vec<Normalized01> = col
-                    .iter()
-                    .map(|&v| Normalized01(normalize_output(v)))
-                    .collect();
-                if normalized.iter().all(|n| n.0 == 0.0) {
-                    // Empty channel — probably not wired.
-                    break;
-                }
-                s.motors.commands.push(normalized);
-                motor_count += 1;
-            } else {
-                break;
-            }
+            let Some(col) = t.column(&name) else { break };
+            let normalized: Vec<Normalized01> = col
+                .iter()
+                .map(|&v| Normalized01(normalize_output(v)))
+                .collect();
+            s.motors.commands.push(normalized);
+            motor_count += 1;
         }
         s.meta.motor_count = motor_count;
     }
@@ -322,8 +322,10 @@ fn stick_norm(pwm: f64) -> f32 {
     (((pwm - 1500.0) / 500.0).az::<f32>()).clamp(-1.0, 1.0)
 }
 
-/// PX4 `vehicle_status.nav_state` (`NAVIGATION_STATE`_*) → common `FlightMode`.
-/// Identical-body arms (`0`/`17` → Manual, `7`/`8` → Failsafe) are kept
+/// PX4 `vehicle_status.nav_state` (`NAVIGATION_STATE_*`) → common `FlightMode`.
+///
+/// Mapped against canonical PX4 `msg/vehicle_status.msg` constants stable
+/// across PX4 v1.10+. Identical-body arms (`8`/`13` → Failsafe) are kept
 /// separate to document the underlying PX4 nav state IDs.
 #[allow(clippy::match_same_arms)]
 fn px4_flight_mode(state: u8) -> FlightMode {
@@ -331,19 +333,48 @@ fn px4_flight_mode(state: u8) -> FlightMode {
         0 => FlightMode::Manual,
         1 => FlightMode::AltHold,
         2 => FlightMode::PosHold,
-        3 => FlightMode::Auto, // MISSION
+        3 => FlightMode::Auto, // AUTO_MISSION
         4 => FlightMode::Loiter,
-        5 => FlightMode::ReturnToHome,
-        6 => FlightMode::Other("AUTO_RCRECOVER".into()),
-        7 => FlightMode::Failsafe, // RTGS
-        8 => FlightMode::Failsafe, // LANDENGFAIL
-        9 => FlightMode::Land,     // AUTO_LAND
-        10 => FlightMode::Other("AUTO_TAKEOFF".into()),
-        11 => FlightMode::Other("AUTO_FOLLOW_TARGET".into()),
-        12 => FlightMode::Other("AUTO_PRECLAND".into()),
-        14 => FlightMode::Stabilize,
-        15 => FlightMode::Acro,
-        17 => FlightMode::Manual, // RATTITUDE
+        5 => FlightMode::ReturnToHome, // AUTO_RTL
+        6 => FlightMode::Other("POSITION_SLOW".into()),
+        7 => FlightMode::Other("FREE5".into()), // legacy AUTO_RTGS, removed
+        8 => FlightMode::Failsafe,              // AUTO_LANDENGFAIL
+        9 => FlightMode::Other("FREE3".into()), // legacy AUTO_LANDGPSFAIL, removed
+        10 => FlightMode::Acro,
+        11 => FlightMode::Other("FREE2".into()), // unused
+        12 => FlightMode::Other("DESCEND".into()),
+        13 => FlightMode::Failsafe, // TERMINATION
+        14 => FlightMode::Other("OFFBOARD".into()),
+        15 => FlightMode::Stabilize,
+        16 => FlightMode::Other("RATTITUDE_LEGACY".into()), // removed in modern PX4
+        17 => FlightMode::Other("AUTO_TAKEOFF".into()),
+        18 => FlightMode::Land, // AUTO_LAND
+        19 => FlightMode::Other("AUTO_FOLLOW_TARGET".into()),
+        20 => FlightMode::Other("AUTO_PRECLAND".into()),
+        21 => FlightMode::Other("ORBIT".into()),
+        22 => FlightMode::Other("AUTO_VTOL_TAKEOFF".into()),
         other => FlightMode::Other(format!("NAV_{other}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::px4_flight_mode;
+    use crate::session::FlightMode;
+
+    #[test]
+    fn px4_canonical_modes() {
+        assert_eq!(px4_flight_mode(0), FlightMode::Manual);
+        assert_eq!(px4_flight_mode(1), FlightMode::AltHold);
+        assert_eq!(px4_flight_mode(2), FlightMode::PosHold);
+        assert_eq!(px4_flight_mode(3), FlightMode::Auto);
+        assert_eq!(px4_flight_mode(4), FlightMode::Loiter);
+        assert_eq!(px4_flight_mode(5), FlightMode::ReturnToHome);
+        assert_eq!(px4_flight_mode(10), FlightMode::Acro);
+        assert_eq!(px4_flight_mode(15), FlightMode::Stabilize);
+        assert_eq!(px4_flight_mode(18), FlightMode::Land);
+        // Acro/Stabilize must NOT be swapped:
+        assert_ne!(px4_flight_mode(10), FlightMode::Stabilize);
+        assert_ne!(px4_flight_mode(15), FlightMode::Acro);
     }
 }

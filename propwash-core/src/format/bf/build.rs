@@ -208,64 +208,39 @@ pub(crate) fn session(
                 }
                 gps.time_us.push(frame_time);
 
-                let mut got_lat = false;
-                let mut got_lng = false;
-                let mut got_alt = false;
-                let mut got_speed = false;
-                let mut got_heading = false;
-                let mut got_sats = false;
-
+                // Push only fields whose schema is present in this BF
+                // variant's GPS frame. Synthetic 0.0 padding would
+                // violate the Session contract ("Empty Vec means absent
+                // — not zero") and produce Null Island coordinates if
+                // GpsLat/Lng were missing from the schema. Columns may
+                // therefore have length < gps.time_us.len() (or 0)
+                // when the field isn't reported by this firmware.
                 for (def, &raw) in gps_defs.fields.iter().zip(values.iter()) {
                     match &def.name {
                         SensorField::Time => {}
                         SensorField::GpsLat => {
                             gps.lat.push(DecimalDegrees(raw.az::<f64>() * 1e-7));
-                            got_lat = true;
                         }
                         SensorField::GpsLng => {
                             gps.lng.push(DecimalDegrees(raw.az::<f64>() * 1e-7));
-                            got_lng = true;
                         }
                         SensorField::Altitude => {
                             // BF altitude in cm
                             gps.alt.push(Meters(raw.az::<f32>() / 100.0));
-                            got_alt = true;
                         }
                         SensorField::GpsSpeed => {
                             // BF speed in cm/s
                             gps.speed.push(MetersPerSec(raw.az::<f32>() / 100.0));
-                            got_speed = true;
                         }
                         SensorField::Heading => {
                             // BF heading in 0.1 deg
                             gps.heading.push(raw.az::<f32>() / 10.0);
-                            got_heading = true;
                         }
                         SensorField::Unknown(name) if name == "GPS_numSat" => {
                             gps.sats.push(raw.saturating_as::<u8>());
-                            got_sats = true;
                         }
                         _ => {}
                     }
-                }
-                // Pad missing fields to keep all gps vecs the same length as time_us
-                if !got_lat {
-                    gps.lat.push(DecimalDegrees(0.0));
-                }
-                if !got_lng {
-                    gps.lng.push(DecimalDegrees(0.0));
-                }
-                if !got_alt {
-                    gps.alt.push(Meters(0.0));
-                }
-                if !got_speed {
-                    gps.speed.push(MetersPerSec(0.0));
-                }
-                if !got_heading {
-                    gps.heading.push(0.0);
-                }
-                if !got_sats {
-                    gps.sats.push(0);
                 }
             }
 
