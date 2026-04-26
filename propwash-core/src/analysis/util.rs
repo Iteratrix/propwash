@@ -63,6 +63,25 @@ impl_lerp_via_inner!(Volts, f32);
 impl_lerp_via_inner!(Amps, f32);
 impl_lerp_via_inner!(MetersPerSec, f32);
 
+/// Read-only view over a time-stamped stream — slices instead of an
+/// owned `TimeSeries`, so callers with non-`TimeSeries`-shaped storage
+/// (e.g. `TriaxialSeries` axes, foreign columns) can resample without
+/// allocating.
+#[derive(Debug, Clone, Copy)]
+pub struct TimeSeriesView<'a, T> {
+    pub time_us: &'a [u64],
+    pub values: &'a [T],
+}
+
+impl<'a, T> From<&'a TimeSeries<T>> for TimeSeriesView<'a, T> {
+    fn from(ts: &'a TimeSeries<T>) -> Self {
+        Self {
+            time_us: &ts.time_us,
+            values: &ts.values,
+        }
+    }
+}
+
 /// Resample a time series onto a target timestamp axis.
 ///
 /// `target` must be sorted ascending. The returned `Vec` has the same
@@ -72,45 +91,65 @@ impl_lerp_via_inner!(MetersPerSec, f32);
 /// For target timestamps before the first source sample, all strategies
 /// return the first sample value. For target timestamps after the last
 /// source sample, all strategies return the last sample value.
-#[allow(dead_code)]
+#[allow(dead_code)] // thin TimeSeries-taking wrapper; analysis call sites use resample_view directly
 pub fn resample<T: Lerp>(src: &TimeSeries<T>, target: &[u64], strategy: Strategy) -> Vec<T> {
-    if src.is_empty() {
+    resample_view(src.into(), target, strategy)
+}
+
+/// Same as [`resample`] but takes a [`TimeSeriesView`] (separate
+/// `time_us` and `values` slices). Useful when the stream isn't stored
+/// as a `TimeSeries` (e.g. one axis of a `TriaxialSeries`).
+pub fn resample_view<T: Lerp>(
+    src: TimeSeriesView<'_, T>,
+    target: &[u64],
+    strategy: Strategy,
+) -> Vec<T> {
+    let n = src.time_us.len();
+    if n == 0 || src.values.is_empty() {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(target.len());
     let mut cursor = 0usize;
-    let n = src.time_us.len();
 
     for &t in target {
-        // Advance cursor so src.time_us[cursor] <= t < src.time_us[cursor+1]
         while cursor + 1 < n && src.time_us[cursor + 1] <= t {
             cursor += 1;
         }
 
-        out.push(if t <= src.time_us[0] {
+        // Saturating subtractions: defensive against the rare case where
+        // a target axis isn't strictly monotonic (corrupt-frame recovery
+        // in BF, occasional out-of-order vehicle_status in PX4) so the
+        // forward-only cursor outruns t. Result clamps to the last valid
+        // sample, matching the boundary clamp at either end.
+        let n_values = src.values.len().min(n);
+        out.push(if n_values == 0 {
+            return Vec::new();
+        } else if t <= src.time_us[0] {
             src.values[0]
-        } else if cursor + 1 >= n || t >= src.time_us[n - 1] {
-            src.values[n - 1]
+        } else if cursor + 1 >= n_values || t >= src.time_us[n_values - 1] {
+            src.values[n_values - 1]
         } else {
             let t0 = src.time_us[cursor];
             let t1 = src.time_us[cursor + 1];
             let v0 = src.values[cursor];
             let v1 = src.values[cursor + 1];
+            let dt_left = t.saturating_sub(t0);
+            let dt_right = t1.saturating_sub(t);
             match strategy {
                 Strategy::StepFill => v0,
                 Strategy::Nearest => {
-                    if t - t0 <= t1 - t {
+                    if dt_left <= dt_right {
                         v0
                     } else {
                         v1
                     }
                 }
                 Strategy::Linear => {
-                    let span = t1 - t0;
+                    let span = t1.saturating_sub(t0);
                     if span == 0 {
                         v0
                     } else {
-                        let frac = (t - t0).az::<f64>() / span.az::<f64>();
+                        let frac = dt_left.az::<f64>() / span.az::<f64>();
                         T::lerp(v0, v1, frac)
                     }
                 }
@@ -124,12 +163,17 @@ pub fn resample<T: Lerp>(src: &TimeSeries<T>, target: &[u64], strategy: Strategy
 /// for bool, enum, and other non-interpolatable streams.
 #[allow(dead_code)]
 pub fn resample_zoh<T: Copy>(src: &TimeSeries<T>, target: &[u64]) -> Vec<T> {
-    if src.is_empty() {
+    resample_zoh_view(src.into(), target)
+}
+
+#[allow(dead_code)]
+pub fn resample_zoh_view<T: Copy>(src: TimeSeriesView<'_, T>, target: &[u64]) -> Vec<T> {
+    let n = src.time_us.len();
+    if n == 0 || src.values.is_empty() {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(target.len());
     let mut cursor = 0usize;
-    let n = src.time_us.len();
 
     for &t in target {
         while cursor + 1 < n && src.time_us[cursor + 1] <= t {

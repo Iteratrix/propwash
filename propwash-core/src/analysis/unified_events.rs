@@ -1,41 +1,52 @@
+//! Format-agnostic event detectors.
+//!
+//! **Per-stream time axes**: each detector takes its own stream's
+//! `time_us` for indexing — earlier versions paired (e.g.) throttle
+//! samples with gyro timestamps, which silently produced wrong event
+//! times on AP/PX4/MAVLink where streams sample at different rates.
+//! [`detect_overshoot`] is the only detector that genuinely needs to
+//! cross-correlate two streams (gyro vs setpoint); it resamples
+//! setpoint onto the gyro time axis via [`super::util::resample`].
+
 use az::Az;
 
 use crate::types::{Axis, Session};
+use crate::units::DegPerSec;
 
 use super::events::{EventKind, FlightEvent};
+use super::util;
 
 /// Run all format-agnostic event detectors over the typed Session.
 pub fn detect_all(unified: &Session) -> Vec<FlightEvent> {
-    let timestamps: Vec<f64> = unified
-        .gyro
-        .time_us
-        .iter()
-        .map(|&t| t.az::<f64>())
-        .collect();
-    if timestamps.len() < 2 {
+    if unified.gyro.time_us.len() < 2 {
         return Vec::new();
     }
-    let first_t = timestamps[0];
 
     let mut events = Vec::new();
-
-    detect_gyro_spikes(unified, &timestamps, first_t, &mut events);
-    detect_throttle_events(unified, &timestamps, first_t, &mut events);
-    detect_motor_saturation(unified, &timestamps, first_t, &mut events);
-    detect_overshoot(unified, &timestamps, first_t, &mut events);
-    detect_desync(unified, &timestamps, first_t, &mut events);
+    detect_gyro_spikes(unified, &mut events);
+    detect_throttle_events(unified, &mut events);
+    detect_motor_saturation(unified, &mut events);
+    detect_overshoot(unified, &mut events);
+    detect_desync(unified, &mut events);
 
     events.sort_by(|a, b| a.time_seconds.total_cmp(&b.time_seconds));
     events
 }
 
-fn detect_gyro_spikes(
-    unified: &Session,
-    timestamps: &[f64],
-    first_t: f64,
-    events: &mut Vec<FlightEvent>,
-) {
+/// `(time_us as f64, first_t)` from a u64 axis. Returns `(_, 0.0)` for
+/// an empty axis; callers gate on `len() < 2` separately.
+fn axis_f64(time_us: &[u64]) -> (Vec<f64>, f64) {
+    let v: Vec<f64> = time_us.iter().map(|&t| t.az::<f64>()).collect();
+    let first = v.first().copied().unwrap_or(0.0);
+    (v, first)
+}
+
+fn detect_gyro_spikes(unified: &Session, events: &mut Vec<FlightEvent>) {
     let spike_threshold = 500.0; // deg/s
+    let (timestamps, first_t) = axis_f64(&unified.gyro.time_us);
+    if timestamps.is_empty() {
+        return;
+    }
 
     for axis in Axis::ALL {
         let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
@@ -64,14 +75,7 @@ const THROTTLE_MIN_CHANGE_PCT: f64 = 30.0;
 /// Minimum cooldown between events (microseconds) to avoid duplicates.
 const THROTTLE_COOLDOWN_US: f64 = 500_000.0;
 
-fn detect_throttle_events(
-    unified: &Session,
-    timestamps: &[f64],
-    first_t: f64,
-    events: &mut Vec<FlightEvent>,
-) {
-    // Throttle is Normalized01 (f32, 0..1). Convert to Vec<f64> for the
-    // existing arithmetic; the events module compares as percentages anyway.
+fn detect_throttle_events(unified: &Session, events: &mut Vec<FlightEvent>) {
     let throttle: Vec<f64> = unified
         .rc_command
         .throttle
@@ -79,6 +83,12 @@ fn detect_throttle_events(
         .map(|n| f64::from(n.0))
         .collect();
     if throttle.len() < 2 {
+        return;
+    }
+    // Use rc_command's own time axis — pairing throttle samples with
+    // gyro timestamps was the AP/PX4/MAVLink-silent-bug.
+    let (timestamps, first_t) = axis_f64(&unified.rc_command.time_us);
+    if timestamps.len() < 2 {
         return;
     }
 
@@ -95,7 +105,6 @@ fn detect_throttle_events(
     for i in 1..len {
         let curr_t = timestamps[i];
 
-        // Advance lookback pointer to maintain ~100ms window
         while lookback_idx < i && timestamps[lookback_idx] < curr_t - THROTTLE_LOOKBACK_US {
             lookback_idx += 1;
         }
@@ -136,14 +145,13 @@ fn detect_throttle_events(
     }
 }
 
-fn detect_motor_saturation(
-    unified: &Session,
-    timestamps: &[f64],
-    first_t: f64,
-    events: &mut Vec<FlightEvent>,
-) {
+fn detect_motor_saturation(unified: &Session, events: &mut Vec<FlightEvent>) {
     let (_, motor_max) = unified.motor_range();
     let threshold = motor_max - (motor_max / 50.0);
+    let (timestamps, first_t) = axis_f64(&unified.motors.time_us);
+    if timestamps.is_empty() {
+        return;
+    }
 
     for mi in 0..unified.motor_count() {
         let Some(motor_col) = unified.motors.commands.get(mi) else {
@@ -178,24 +186,36 @@ fn detect_motor_saturation(
     }
 }
 
-fn detect_overshoot(
-    unified: &Session,
-    timestamps: &[f64],
-    first_t: f64,
-    events: &mut Vec<FlightEvent>,
-) {
+fn detect_overshoot(unified: &Session, events: &mut Vec<FlightEvent>) {
     let overshoot_threshold = 15.0;
+    let (timestamps, first_t) = axis_f64(&unified.gyro.time_us);
+    if timestamps.is_empty() || unified.setpoint.is_empty() {
+        return;
+    }
 
     for axis in Axis::ALL {
         let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
-        let setpoint: &[f64] = bytemuck::cast_slice(unified.setpoint.values.get(axis).as_slice());
-        if gyro.is_empty() || setpoint.is_empty() {
+        if gyro.is_empty() {
             continue;
         }
+        // Resample setpoint onto the gyro time axis. Setpoint and gyro
+        // share an axis on BF (parser populates both with main-frame
+        // time) but not on AP/PX4/MAVLink, where setpoint comes from a
+        // controller topic at a different rate than the IMU.
+        let setpoint_axis_us: super::util::TimeSeriesView<DegPerSec> =
+            super::util::TimeSeriesView {
+                time_us: &unified.setpoint.time_us,
+                values: unified.setpoint.values.get(axis),
+            };
+        let setpoint = util::resample_view(
+            setpoint_axis_us,
+            &unified.gyro.time_us,
+            util::Strategy::Linear,
+        );
 
         let len = gyro.len().min(setpoint.len()).min(timestamps.len());
         for j in 0..len {
-            let sp = setpoint[j];
+            let sp = setpoint[j].0;
             let actual = gyro[j];
 
             if sp.abs() < 50.0 {
@@ -212,7 +232,7 @@ fn detect_overshoot(
                 && actual.signum() == sp.signum()
                 && actual.abs() > sp.abs()
             {
-                let t = timestamps.get(j).copied().unwrap_or(0.0);
+                let t = timestamps[j];
                 events.push(FlightEvent {
                     frame_index: j,
                     time_us: t.az::<i64>(),
@@ -229,19 +249,17 @@ fn detect_overshoot(
     }
 }
 
-fn detect_desync(
-    unified: &Session,
-    timestamps: &[f64],
-    first_t: f64,
-    events: &mut Vec<FlightEvent>,
-) {
+fn detect_desync(unified: &Session, events: &mut Vec<FlightEvent>) {
     let n_motors = unified.motor_count();
     if n_motors < 2 {
         return;
     }
+    let (timestamps, first_t) = axis_f64(&unified.motors.time_us);
+    if timestamps.is_empty() {
+        return;
+    }
 
     let (_, motor_max) = unified.motor_range();
-    // Motor must be near absolute max (top 5%)
     let spike_threshold = motor_max * 0.95;
 
     let motors: Vec<Vec<f64>> = (0..n_motors)
@@ -266,7 +284,6 @@ fn detect_desync(
         let vals: Vec<f64> = motors.iter().map(|m| m[j]).collect();
 
         for (mi, &val) in vals.iter().enumerate() {
-            // Motor must be near max output
             if val < spike_threshold {
                 continue;
             }
@@ -279,15 +296,8 @@ fn detect_desync(
             let others_avg = others.iter().sum::<f64>() / others.len().az::<f64>();
             let others_max = others.iter().copied().fold(0.0_f64, f64::max);
 
-            // True desync: one motor at max while ALL others are well below max.
-            // During normal cornering/PID correction, at least one other motor
-            // is also elevated. A desync is one motor spiking alone.
-            // Requirements:
-            //   1. The spiking motor is near max (>95%)
-            //   2. No other motor is above 60% of max
-            //   3. The spiking motor is >3x the others average
             if others_max < motor_max * 0.60 && val > others_avg * 3.0 && others_avg > 0.0 {
-                let t = timestamps.get(j).copied().unwrap_or(0.0);
+                let t = timestamps[j];
                 events.push(FlightEvent {
                     frame_index: j,
                     time_us: t.az::<i64>(),
@@ -359,7 +369,6 @@ mod tests {
 
     #[test]
     fn desync_motor_below_spike_threshold() {
-        // 1842/2047 = 90% — below the 95% spike threshold
         let vals = [1842.0, 400.0, 500.0, 450.0];
         assert!(
             !is_desync(&vals, 0, MOTOR_MAX),
@@ -378,7 +387,6 @@ mod tests {
 
     #[test]
     fn desync_ratio_too_low() {
-        // Others at 59% of max — below 60% threshold, but ratio is only ~1.7x
         let others_val = MOTOR_MAX * 0.59;
         let vals = [2000.0, others_val, others_val, others_val];
         assert!(
@@ -389,7 +397,6 @@ mod tests {
 
     #[test]
     fn desync_all_conditions_met() {
-        // Spike at 98%, others at ~24%, ratio = 4x
         let vals = [2000.0, 500.0, 500.0, 500.0];
         assert!(is_desync(&vals, 0, MOTOR_MAX));
     }

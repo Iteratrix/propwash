@@ -318,19 +318,32 @@ pub fn analyze_vibration_unified(
 
     let propwash = analyze_propwash(unified, events, sample_rate);
 
-    // Compute overall average motor RPM from all eRPM data
+    // Compute overall average motor RPM from all eRPM data, resampled
+    // onto the gyro time axis so that `all_indices` (gyro frame count)
+    // refer to corresponding ESC samples — without this, BF "works"
+    // because main+esc share an axis but AP/PX4 silently misindex.
     let all_indices: Vec<usize> = (0..unified.frame_count()).collect();
-    let erpm_data: Vec<Vec<f64>> = (0..4)
-        .map(|i| {
-            unified
-                .motors
-                .esc
-                .as_ref()
-                .and_then(|e| e.erpm.get(i))
-                .map(|c| c.iter().map(|r| f64::from(r.0)).collect())
-                .unwrap_or_default()
-        })
-        .collect();
+    let erpm_data: Vec<Vec<f64>> = if let Some(esc) = unified.motors.esc.as_ref() {
+        let target_axis = &unified.gyro.time_us;
+        (0..esc.erpm.len())
+            .map(|i| {
+                let col = &esc.erpm[i];
+                if col.is_empty() {
+                    return Vec::new();
+                }
+                let view = super::util::TimeSeriesView {
+                    time_us: &esc.time_us,
+                    values: col.as_slice(),
+                };
+                super::util::resample_zoh_view(view, target_axis)
+                    .into_iter()
+                    .map(|r| f64::from(r.0))
+                    .collect()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let avg_motor_hz = if erpm_data.iter().any(|e| !e.is_empty()) {
         compute_avg_motor_hz(&erpm_data, &all_indices, motor_poles)
     } else {
@@ -352,17 +365,27 @@ fn compute_throttle_bands_unified(
     sample_rate: f64,
     motor_poles: u32,
 ) -> Vec<ThrottleBand> {
-    let throttle: Vec<f64> = unified
-        .rc_command
-        .throttle
-        .iter()
-        .map(|n| f64::from(n.0))
-        .collect();
-    if throttle.is_empty() {
+    if unified.rc_command.throttle.is_empty() {
+        return Vec::new();
+    }
+    let target_axis = &unified.gyro.time_us;
+    if target_axis.is_empty() {
         return Vec::new();
     }
 
-    // Normalize throttle to percentage using data range
+    // Resample raw throttle (Normalized01 on rc_command.time_us) onto
+    // the gyro time axis so band-membership indices and gyro/ERPM
+    // sample lookups all refer to the same moments.
+    let throttle_view = super::util::TimeSeriesView {
+        time_us: &unified.rc_command.time_us,
+        values: unified.rc_command.throttle.as_slice(),
+    };
+    let throttle: Vec<f64> = super::util::resample_zoh_view(throttle_view, target_axis)
+        .into_iter()
+        .map(|n| f64::from(n.0))
+        .collect();
+
+    // Normalize throttle to percentage using its own data range
     let t_min_val = throttle.iter().copied().fold(f64::MAX, f64::min);
     let t_max_val = throttle.iter().copied().fold(f64::MIN, f64::max);
     let t_range = (t_max_val - t_min_val).max(1.0);
@@ -378,18 +401,27 @@ fn compute_throttle_bands_unified(
         })
         .collect();
 
-    // Collect eRPM data for all motors (average across motors for RPM frequency)
-    let erpm_data: Vec<Vec<f64>> = (0..4)
-        .map(|i| {
-            unified
-                .motors
-                .esc
-                .as_ref()
-                .and_then(|e| e.erpm.get(i))
-                .map(|c| c.iter().map(|r| f64::from(r.0)).collect())
-                .unwrap_or_default()
-        })
-        .collect();
+    // eRPM resampled onto the gyro axis too.
+    let erpm_data: Vec<Vec<f64>> = if let Some(esc) = unified.motors.esc.as_ref() {
+        (0..esc.erpm.len())
+            .map(|i| {
+                let col = &esc.erpm[i];
+                if col.is_empty() {
+                    return Vec::new();
+                }
+                let view = super::util::TimeSeriesView {
+                    time_us: &esc.time_us,
+                    values: col.as_slice(),
+                };
+                super::util::resample_zoh_view(view, target_axis)
+                    .into_iter()
+                    .map(|r| f64::from(r.0))
+                    .collect()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let has_erpm = erpm_data.iter().any(|e| !e.is_empty());
 
     let mut bands = Vec::new();
@@ -682,6 +714,14 @@ pub struct Spectrogram {
 ///
 /// Each entry in `axes` is `(axis_name, sensor_field)`. Returns `None` if the
 /// session has no valid sample rate or no axis produced output.
+///
+/// **Caveat (multi-rate sources):** the per-window timestamps are
+/// derived from `session.gyro.time_us`. For non-gyro fields (motor,
+/// throttle, accel) on AP/PX4/MAVLink — where each stream has its own
+/// rate — the FFT magnitudes themselves are correct (each window is
+/// contiguous samples of the source field), but the x-axis labels
+/// linearly project onto the gyro time axis, so they're approximate.
+/// Spec accuracy is tracked separately; `bug_005` follow-up.
 pub fn compute_spectrogram(
     session: &Session,
     axes: &[(&str, &SensorField)],
