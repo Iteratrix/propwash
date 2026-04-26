@@ -48,7 +48,9 @@ impl FrameSchedule {
             p_num: BfHeaderValue::int(headers, "P interval", 1)
                 .max(1)
                 .cast_unsigned(),
-            p_denom: BfHeaderValue::int(headers, "P ratio", 1).max(1).cast_unsigned(),
+            p_denom: BfHeaderValue::int(headers, "P ratio", 1)
+                .max(1)
+                .cast_unsigned(),
         }
     }
 

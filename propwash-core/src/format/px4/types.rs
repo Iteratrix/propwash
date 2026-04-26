@@ -1,8 +1,9 @@
-//! PX4 parser-internal data types: ULog field types, format definitions,
+//! PX4 parser-internal data types: `ULog` field types, format definitions,
 //! subscriptions, log messages, parse stats.
 //!
 //! No `Px4Session` here — the parser writes directly into
 //! [`crate::session::Session`] via [`super::build`].
+#![allow(dead_code)]
 
 /// Primitive types in the `ULog` type system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

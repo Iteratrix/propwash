@@ -1,6 +1,7 @@
-//! MAVLink parser-internal data types: MAV_TYPE, severity, status messages,
+//! `MAVLink` parser-internal data types: `MAV_TYPE`, severity, status messages,
 //! parse stats. No `MavlinkSession` — parser writes into
 //! [`crate::session::Session`] via [`super::build`].
+#![allow(dead_code)]
 
 pub use crate::format::common::MsgColumns;
 
@@ -84,7 +85,7 @@ impl MavType {
     }
 }
 
-/// MAVLink message severity from STATUSTEXT.
+/// `MAVLink` message severity from STATUSTEXT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
     Emergency = 0,

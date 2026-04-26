@@ -4,9 +4,7 @@ use az::Az;
 
 use crate::types::Warning;
 
-use super::types::{
-    MavType, MavlinkParseStats, MsgColumns, Severity, StatusMessage,
-};
+use super::types::{MavType, MavlinkParseStats, MsgColumns, Severity, StatusMessage};
 
 const MARKER_V1: u8 = 0xFE;
 const MARKER_V2: u8 = 0xFD;
@@ -426,7 +424,7 @@ fn decode_param_value(payload: &[u8]) -> Option<(String, f64)> {
 
 /// Parse a `MAVLink` telemetry log (.tlog) file.
 #[allow(clippy::too_many_lines)]
-/// Output of the MAVLink parser: columnar intermediate that
+/// Output of the `MAVLink` parser: columnar intermediate that
 /// [`super::build`] folds into a typed Session.
 pub(crate) struct MavlinkParsed {
     pub topics: HashMap<String, MsgColumns>,
@@ -437,6 +435,7 @@ pub(crate) struct MavlinkParsed {
     pub stats: MavlinkParseStats,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> MavlinkParsed {
     let mut topics: HashMap<String, MsgColumns> = HashMap::new();
     let mut params: HashMap<String, f64> = HashMap::new();

@@ -6,12 +6,6 @@ description = "Lenient parser for flight controller blackbox logs"
 repository = "https://github.com/Iteratrix/propwash"
 license = "MIT"
 
-[features]
-default = []
-## Expose format-specific raw types (BfRawSession, etc.).
-## These types may change between minor versions.
-raw = []
-
 [dependencies]
 az = "1"
 bytemuck = { version = "1", features = ["derive"] }

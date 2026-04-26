@@ -16,8 +16,7 @@ use super::predictor::{
     apply_i_predictor, apply_p_predictor, DecodeContext, FrameSchedule, PredictorRefs,
 };
 use super::types::{
-    BfEvent, BfFieldDef, BfFrameDefs, BfFrameKind, BfHeaderValue, BfParseStats, Encoding,
-    Predictor,
+    BfEvent, BfFieldDef, BfFrameDefs, BfFrameKind, BfHeaderValue, BfParseStats, Encoding, Predictor,
 };
 use crate::reader::{InternalError, Reader};
 use crate::types::{SensorField, Warning};
@@ -27,6 +26,7 @@ use crate::types::{SensorField, Warning};
 pub(crate) enum BfFrame {
     /// I-frame (keyframe) or P-frame (delta) — `values` parallel to main field defs.
     Main {
+        #[allow(dead_code)] // available for build-step debug, not currently consumed
         kind: BfFrameKind,
         values: Vec<i64>,
     },
@@ -112,12 +112,12 @@ impl<'a> BfFrames<'a> {
         min_motor_override: i32,
     ) -> Self {
         let i_encodings: Vec<Encoding> = main_defs.fields.iter().map(|f| f.encoding).collect();
-        let slow_encodings: Vec<Encoding> = slow_defs
-            .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
-        let gps_encodings: Vec<Encoding> = gps_defs
-            .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
-        let gps_home_encodings: Vec<Encoding> = gps_home_defs
-            .map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+        let slow_encodings: Vec<Encoding> =
+            slow_defs.map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+        let gps_encodings: Vec<Encoding> =
+            gps_defs.map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
+        let gps_home_encodings: Vec<Encoding> =
+            gps_home_defs.map_or_else(Vec::new, |d| d.fields.iter().map(|f| f.encoding).collect());
 
         let iter_idx = main_defs.index_of(&SensorField::Unknown("loopIteration".to_string()));
         let refs = PredictorRefs::from_headers(headers, main_defs, min_motor_override);
@@ -289,12 +289,14 @@ impl Iterator for BfFrames<'_> {
                                 if let Some(home) = self.gps_home.as_deref() {
                                     if let Some(idx) = gps_defs.index_of_str("GPS_coord[0]") {
                                         if let Some(val) = values.get_mut(idx) {
-                                            *val = val.wrapping_add(home.first().copied().unwrap_or(0));
+                                            *val = val
+                                                .wrapping_add(home.first().copied().unwrap_or(0));
                                         }
                                     }
                                     if let Some(idx) = gps_defs.index_of_str("GPS_coord[1]") {
                                         if let Some(val) = values.get_mut(idx) {
-                                            *val = val.wrapping_add(home.get(1).copied().unwrap_or(0));
+                                            *val =
+                                                val.wrapping_add(home.get(1).copied().unwrap_or(0));
                                         }
                                     }
                                 }

@@ -1,4 +1,8 @@
 //! Translate a [`Px4Parsed`] into a typed [`Session`].
+#![allow(
+    clippy::assigning_clones,        // Session fields start empty; clone_from buys nothing
+    clippy::needless_pass_by_value,  // signature symmetry across format build()s
+)]
 //!
 //! All PX4-specific unit conversions live here:
 //!  - `vehicle_angular_velocity.xyz[i]` rad/s → `DegPerSec`
@@ -8,7 +12,7 @@
 //!  - `actuator_outputs.output[i]` already 0–1 (or 1000–2000 PWM in some configs)
 //!  - `input_rc.values[i]` PWM 1000–2000 → sticks/throttle Normalized01
 //!  - `battery_status.voltage_v / current_a` → typed
-//!  - `vehicle_gps_position.{lat,lon}` int×10⁷ → DecimalDegrees
+//!  - `vehicle_gps_position.{lat,lon}` int×10⁷ → `DecimalDegrees`
 
 use az::{Az, SaturatingAs};
 
@@ -19,12 +23,12 @@ use crate::session::{
 };
 use crate::types::Warning;
 use crate::units::{
-    Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01,
-    Volts,
+    Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01, Volts,
 };
 
 const RAD_TO_DEG: f64 = 57.295_779_513_082_32;
 
+#[allow(clippy::too_many_lines)] // declarative topic-to-Session mapping
 pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: usize) -> Session {
     let mut s = Session::default();
 
@@ -78,9 +82,7 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
     }
     if s.accel.is_empty() {
         if let Some(t) = topic("sensor_accel") {
-            if let (Some(x), Some(y), Some(z)) =
-                (t.column("x"), t.column("y"), t.column("z"))
-            {
+            if let (Some(x), Some(y), Some(z)) = (t.column("x"), t.column("y"), t.column("z")) {
                 s.accel.time_us = t.timestamps.clone();
                 s.accel.values.roll = x.iter().copied().map(MetersPerSec2).collect();
                 s.accel.values.pitch = y.iter().copied().map(MetersPerSec2).collect();
@@ -91,8 +93,7 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
 
     // ── Setpoint ──────────────────────────────────────────────────────────
     if let Some(t) = topic("vehicle_rates_setpoint") {
-        if let (Some(r), Some(p), Some(y)) =
-            (t.column("roll"), t.column("pitch"), t.column("yaw"))
+        if let (Some(r), Some(p), Some(y)) = (t.column("roll"), t.column("pitch"), t.column("yaw"))
         {
             s.setpoint.time_us = t.timestamps.clone();
             s.setpoint.values.roll = r.iter().map(|v| DegPerSec(v * RAD_TO_DEG)).collect();
@@ -181,7 +182,10 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
         }
         if let Some(col) = t.column("alt") {
             // alt in mm
-            gps.alt = col.iter().map(|&v| Meters((v / 1000.0).az::<f32>())).collect();
+            gps.alt = col
+                .iter()
+                .map(|&v| Meters((v / 1000.0).az::<f32>()))
+                .collect();
         }
         if let Some(col) = t.column("vel_m_s") {
             gps.speed = col.iter().map(|&v| MetersPerSec(v.az::<f32>())).collect();
@@ -318,25 +322,28 @@ fn stick_norm(pwm: f64) -> f32 {
     (((pwm - 1500.0) / 500.0).az::<f32>()).clamp(-1.0, 1.0)
 }
 
-/// PX4 `vehicle_status.nav_state` (NAVIGATION_STATE_*) → common FlightMode.
+/// PX4 `vehicle_status.nav_state` (`NAVIGATION_STATE`_*) → common `FlightMode`.
+/// Identical-body arms (`0`/`17` → Manual, `7`/`8` → Failsafe) are kept
+/// separate to document the underlying PX4 nav state IDs.
+#[allow(clippy::match_same_arms)]
 fn px4_flight_mode(state: u8) -> FlightMode {
     match state {
         0 => FlightMode::Manual,
         1 => FlightMode::AltHold,
         2 => FlightMode::PosHold,
-        3 => FlightMode::Auto,            // MISSION
+        3 => FlightMode::Auto, // MISSION
         4 => FlightMode::Loiter,
         5 => FlightMode::ReturnToHome,
         6 => FlightMode::Other("AUTO_RCRECOVER".into()),
-        7 => FlightMode::Failsafe,        // RTGS
-        8 => FlightMode::Failsafe,        // LANDENGFAIL
-        9 => FlightMode::Land,            // AUTO_LAND
+        7 => FlightMode::Failsafe, // RTGS
+        8 => FlightMode::Failsafe, // LANDENGFAIL
+        9 => FlightMode::Land,     // AUTO_LAND
         10 => FlightMode::Other("AUTO_TAKEOFF".into()),
         11 => FlightMode::Other("AUTO_FOLLOW_TARGET".into()),
         12 => FlightMode::Other("AUTO_PRECLAND".into()),
         14 => FlightMode::Stabilize,
         15 => FlightMode::Acro,
-        17 => FlightMode::Manual,         // RATTITUDE
+        17 => FlightMode::Manual, // RATTITUDE
         other => FlightMode::Other(format!("NAV_{other}")),
     }
 }

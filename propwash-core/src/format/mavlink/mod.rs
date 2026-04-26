@@ -1,4 +1,4 @@
-//! MAVLink telemetry log decoder.
+//! `MAVLink` telemetry log decoder.
 //!
 //! Pipeline:
 //! 1. [`parser::parse`] decodes the .tlog stream into per-message-name

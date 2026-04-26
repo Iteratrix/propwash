@@ -2,7 +2,7 @@ use az::Az;
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
-use crate::types::{MotorIndex, SensorField, Session};
+use crate::types::Session;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FlightSummary {

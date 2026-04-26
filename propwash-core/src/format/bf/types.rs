@@ -3,6 +3,10 @@
 //!
 //! No `BfSession` here — the parser writes directly into
 //! [`crate::session::Session`] via [`super::build`].
+//!
+//! Some fields exist for round-trip fidelity (e.g. `BfEvent::FlightMode`'s
+//! `last_flags`) even when build doesn't consume them today.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 

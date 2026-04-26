@@ -2,6 +2,7 @@
 //!
 //! No `ApSession` here — the parser writes directly into
 //! [`crate::session::Session`] via [`super::build`].
+#![allow(dead_code)]
 
 /// Format character from FMT message — determines wire size and interpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

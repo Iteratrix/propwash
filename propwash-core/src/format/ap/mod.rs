@@ -1,4 +1,4 @@
-//! ArduPilot DataFlash decoder.
+//! `ArduPilot` `DataFlash` decoder.
 //!
 //! Pipeline:
 //! 1. [`parser::parse`] decodes the binary stream into per-message-type

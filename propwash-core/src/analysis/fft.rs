@@ -13,30 +13,28 @@ use crate::units::{DegPerSec, MetersPerSec2, Normalized01};
 fn field_as_f64(s: &Session, f: &SensorField) -> Vec<f64> {
     match f {
         SensorField::Time => s.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
-        SensorField::Gyro(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
-            s.gyro.values.get(*axis).as_slice(),
-        )
-        .to_vec(),
-        SensorField::Setpoint(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
-            s.setpoint.values.get(*axis).as_slice(),
-        )
-        .to_vec(),
-        SensorField::Accel(axis) => bytemuck::cast_slice::<MetersPerSec2, f64>(
-            s.accel.values.get(*axis).as_slice(),
-        )
-        .to_vec(),
+        SensorField::Gyro(axis) => {
+            bytemuck::cast_slice::<DegPerSec, f64>(s.gyro.values.get(*axis).as_slice()).to_vec()
+        }
+        SensorField::Setpoint(axis) => {
+            bytemuck::cast_slice::<DegPerSec, f64>(s.setpoint.values.get(*axis).as_slice()).to_vec()
+        }
+        SensorField::Accel(axis) => {
+            bytemuck::cast_slice::<MetersPerSec2, f64>(s.accel.values.get(*axis).as_slice())
+                .to_vec()
+        }
         SensorField::Motor(MotorIndex(i)) => s
             .motors
             .commands
             .get(*i)
             .map(|c| c.iter().map(|n| f64::from(n.0)).collect())
             .unwrap_or_default(),
-        SensorField::Rc(RcChannel::Throttle) => bytemuck::cast_slice::<Normalized01, f32>(
-            s.rc_command.throttle.as_slice(),
-        )
-        .iter()
-        .map(|&v| f64::from(v))
-        .collect(),
+        SensorField::Rc(RcChannel::Throttle) => {
+            bytemuck::cast_slice::<Normalized01, f32>(s.rc_command.throttle.as_slice())
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -488,8 +486,7 @@ fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVib
     let mut has_data = false;
 
     for (i, axis) in Axis::ALL.iter().enumerate() {
-        let samples: &[f64] =
-            bytemuck::cast_slice(unified.accel.values.get(*axis).as_slice());
+        let samples: &[f64] = bytemuck::cast_slice(unified.accel.values.get(*axis).as_slice());
         if samples.is_empty() {
             continue;
         }
@@ -527,6 +524,7 @@ const PROPWASH_WINDOW_SECS: f64 = 0.75;
 const PROPWASH_MIN_HZ: f64 = 20.0;
 const PROPWASH_MAX_HZ: f64 = 100.0;
 
+#[allow(clippy::too_many_lines)]
 fn analyze_propwash(
     session: &Session,
     events: &[FlightEvent],

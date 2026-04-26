@@ -1,7 +1,7 @@
-//! PX4 ULog decoder.
+//! PX4 `ULog` decoder.
 //!
 //! Pipeline:
-//! 1. [`parser::parse`] decodes the binary ULog into per-msg-id columnar
+//! 1. [`parser::parse`] decodes the binary `ULog` into per-msg-id columnar
 //!    intermediate ([`parser::Px4Parsed`]).
 //! 2. [`build::session`] folds the intermediate into a typed
 //!    [`crate::session::Session`], applying all unit conversions.

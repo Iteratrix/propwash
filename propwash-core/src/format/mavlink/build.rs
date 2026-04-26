@@ -1,4 +1,8 @@
 //! Translate a [`MavlinkParsed`] into a typed [`Session`].
+#![allow(
+    clippy::assigning_clones,        // Session fields start empty; clone_from buys nothing
+    clippy::needless_pass_by_value,  // signature symmetry across format build()s
+)]
 //!
 //! All MAVLink-specific unit conversions:
 //!  - `ATTITUDE.{rollspeed,pitchspeed,yawspeed}` rad/s → `DegPerSec`
@@ -9,8 +13,8 @@
 //!  - `VFR_HUD` doesn't carry vbat directly, but `BATTERY_STATUS` /
 //!    `SYS_STATUS.voltage_battery` (mV) does
 //!  - `GPS_RAW_INT.{lat,lon}` int×10⁷ → `DecimalDegrees`
-//!  - `HEARTBEAT.base_mode` MAV_MODE_FLAG_SAFETY_ARMED bit → armed
-//!  - `HEARTBEAT.custom_mode` → FlightMode (vehicle-type-aware)
+//!  - `HEARTBEAT.base_mode` `MAV_MODE_FLAG_SAFETY_ARMED` bit → armed
+//!  - `HEARTBEAT.custom_mode` → `FlightMode` (vehicle-type-aware)
 
 use az::{Az, SaturatingAs};
 
@@ -22,12 +26,12 @@ use crate::session::{
 };
 use crate::types::Warning;
 use crate::units::{
-    Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01,
-    Volts,
+    Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01, Volts,
 };
 
 const RAD_TO_DEG: f64 = 57.295_779_513_082_32;
 
+#[allow(clippy::too_many_lines)] // declarative message-to-Session mapping
 pub(crate) fn session(
     parsed: MavlinkParsed,
     warnings: Vec<Warning>,
@@ -54,11 +58,8 @@ pub(crate) fn session(
     // ── Accel: RAW_IMU then SCALED_IMU (mG → m/s²) ──────────────────────────
     let imu_source = topic("RAW_IMU").or_else(|| topic("SCALED_IMU"));
     if let Some(t) = imu_source {
-        if let (Some(x), Some(y), Some(z)) = (
-            t.column("xacc"),
-            t.column("yacc"),
-            t.column("zacc"),
-        ) {
+        if let (Some(x), Some(y), Some(z)) = (t.column("xacc"), t.column("yacc"), t.column("zacc"))
+        {
             s.accel.time_us = t.timestamps.clone();
             s.accel.values.roll = x
                 .iter()
@@ -75,15 +76,22 @@ pub(crate) fn session(
         }
         // Fallback gyro from RAW_IMU if no ATTITUDE:
         if s.gyro.is_empty() {
-            if let (Some(x), Some(y), Some(z)) = (
-                t.column("xgyro"),
-                t.column("ygyro"),
-                t.column("zgyro"),
-            ) {
+            if let (Some(x), Some(y), Some(z)) =
+                (t.column("xgyro"), t.column("ygyro"), t.column("zgyro"))
+            {
                 s.gyro.time_us = t.timestamps.clone();
-                s.gyro.values.roll = x.iter().map(|v| DegPerSec(v * 0.001 * RAD_TO_DEG)).collect();
-                s.gyro.values.pitch = y.iter().map(|v| DegPerSec(v * 0.001 * RAD_TO_DEG)).collect();
-                s.gyro.values.yaw = z.iter().map(|v| DegPerSec(v * 0.001 * RAD_TO_DEG)).collect();
+                s.gyro.values.roll = x
+                    .iter()
+                    .map(|v| DegPerSec(v * 0.001 * RAD_TO_DEG))
+                    .collect();
+                s.gyro.values.pitch = y
+                    .iter()
+                    .map(|v| DegPerSec(v * 0.001 * RAD_TO_DEG))
+                    .collect();
+                s.gyro.values.yaw = z
+                    .iter()
+                    .map(|v| DegPerSec(v * 0.001 * RAD_TO_DEG))
+                    .collect();
             }
         }
     }
@@ -140,7 +148,9 @@ pub(crate) fn session(
         if let Some(col) = t.column("voltage_battery") {
             s.vbat = TimeSeries::from_parts(
                 t.timestamps.clone(),
-                col.iter().map(|&v| Volts((v * 0.001).az::<f32>())).collect(),
+                col.iter()
+                    .map(|&v| Volts((v * 0.001).az::<f32>()))
+                    .collect(),
             );
         }
         if let Some(col) = t.column("current_battery") {
@@ -166,11 +176,17 @@ pub(crate) fn session(
         }
         if let Some(col) = t.column("alt") {
             // alt mm
-            gps.alt = col.iter().map(|&v| Meters((v * 0.001).az::<f32>())).collect();
+            gps.alt = col
+                .iter()
+                .map(|&v| Meters((v * 0.001).az::<f32>()))
+                .collect();
         }
         if let Some(col) = t.column("vel") {
             // cm/s
-            gps.speed = col.iter().map(|&v| MetersPerSec((v * 0.01).az::<f32>())).collect();
+            gps.speed = col
+                .iter()
+                .map(|&v| MetersPerSec((v * 0.01).az::<f32>()))
+                .collect();
         }
         if let Some(col) = t.column("cog") {
             // 0.01 deg
@@ -268,8 +284,8 @@ fn stick_norm(pwm: f64) -> f32 {
     (((pwm - 1500.0) / 500.0).az::<f32>()).clamp(-1.0, 1.0)
 }
 
-/// MAVLink HEARTBEAT.custom_mode interpretation depends on the vehicle's
-/// firmware family. ArduPilot Copter custom_mode IDs ≈ MODE message IDs
+/// `MAVLink` `HEARTBEAT.custom_mode` interpretation depends on the vehicle's
+/// firmware family. `ArduPilot` Copter `custom_mode` IDs ≈ MODE message IDs
 /// from the AP build pass, so we reuse that mapping for Quadrotor/Hexarotor/etc.
 /// PX4 / Plane / Rover use different IDs — fall back to Other.
 fn mavlink_flight_mode(custom_mode: u32, vehicle: MavType) -> FlightMode {

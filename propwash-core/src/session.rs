@@ -483,54 +483,77 @@ impl Session {
 
     /// Bridge: legacy stringly-typed field accessor.
     ///
-    /// TODO(refactor/session-typed): callers should be migrated to
-    /// typed accessors (`session.gyro.values.roll`, `session.motors.commands[i]`,
-    /// etc.) and this method deleted. Bytemuck-cast unit-typed slices to
-    /// `&[f64]` / `&[f32]` for FFT input.
+    /// Used by the CLI `dump` command and the WASM raw-data tab where
+    /// the user supplies a field name (e.g. `gyro[roll]`) at runtime —
+    /// stringly-typed lookup is the right shape there. Internal analysis
+    /// code uses typed accessors directly.
+    #[allow(clippy::too_many_lines)] // declarative variant-to-typed-field routing
     pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => self.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
-            SensorField::Gyro(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
-                self.gyro.values.get(*axis).as_slice(),
-            )
-            .to_vec(),
+            SensorField::Gyro(axis) => {
+                bytemuck::cast_slice::<DegPerSec, f64>(self.gyro.values.get(*axis).as_slice())
+                    .to_vec()
+            }
             SensorField::GyroUnfilt(_) => Vec::new(), // not modelled yet
-            SensorField::Setpoint(axis) => bytemuck::cast_slice::<DegPerSec, f64>(
-                self.setpoint.values.get(*axis).as_slice(),
-            )
-            .to_vec(),
-            SensorField::Accel(axis) => bytemuck::cast_slice::<MetersPerSec2, f64>(
-                self.accel.values.get(*axis).as_slice(),
-            )
-            .to_vec(),
+            SensorField::Setpoint(axis) => {
+                bytemuck::cast_slice::<DegPerSec, f64>(self.setpoint.values.get(*axis).as_slice())
+                    .to_vec()
+            }
+            SensorField::Accel(axis) => {
+                bytemuck::cast_slice::<MetersPerSec2, f64>(self.accel.values.get(*axis).as_slice())
+                    .to_vec()
+            }
             SensorField::Motor(MotorIndex(i)) => self
                 .motors
                 .commands
                 .get(*i)
-                .map(|col| bytemuck::cast_slice::<Normalized01, f32>(col).iter().map(|&v| f64::from(v)).collect())
+                .map(|col| {
+                    bytemuck::cast_slice::<Normalized01, f32>(col)
+                        .iter()
+                        .map(|&v| f64::from(v))
+                        .collect()
+                })
                 .unwrap_or_default(),
             SensorField::ERpm(MotorIndex(i)) => self
                 .motors
                 .esc
                 .as_ref()
                 .and_then(|e| e.erpm.get(*i))
-                .map(|col| bytemuck::cast_slice::<Erpm, u32>(col).iter().map(|&v| f64::from(v)).collect())
+                .map(|col| {
+                    bytemuck::cast_slice::<Erpm, u32>(col)
+                        .iter()
+                        .map(|&v| f64::from(v))
+                        .collect()
+                })
                 .unwrap_or_default(),
-            SensorField::Rc(RcChannel::Roll) => {
-                self.rc_command.sticks.roll.iter().map(|&v| f64::from(v)).collect()
+            SensorField::Rc(RcChannel::Roll) => self
+                .rc_command
+                .sticks
+                .roll
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
+            SensorField::Rc(RcChannel::Pitch) => self
+                .rc_command
+                .sticks
+                .pitch
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
+            SensorField::Rc(RcChannel::Yaw) => self
+                .rc_command
+                .sticks
+                .yaw
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
+            SensorField::Rc(RcChannel::Throttle) => {
+                bytemuck::cast_slice::<Normalized01, f32>(&self.rc_command.throttle)
+                    .iter()
+                    .map(|&v| f64::from(v))
+                    .collect()
             }
-            SensorField::Rc(RcChannel::Pitch) => {
-                self.rc_command.sticks.pitch.iter().map(|&v| f64::from(v)).collect()
-            }
-            SensorField::Rc(RcChannel::Yaw) => {
-                self.rc_command.sticks.yaw.iter().map(|&v| f64::from(v)).collect()
-            }
-            SensorField::Rc(RcChannel::Throttle) => bytemuck::cast_slice::<Normalized01, f32>(
-                &self.rc_command.throttle,
-            )
-            .iter()
-            .map(|&v| f64::from(v))
-            .collect(),
             SensorField::Vbat => bytemuck::cast_slice::<Volts, f32>(&self.vbat.values)
                 .iter()
                 .map(|&v| f64::from(v))
@@ -554,14 +577,27 @@ impl Session {
             SensorField::Altitude => self
                 .gps
                 .as_ref()
-                .map(|g| bytemuck::cast_slice::<Meters, f32>(&g.alt).iter().map(|&v| f64::from(v)).collect())
+                .map(|g| {
+                    bytemuck::cast_slice::<Meters, f32>(&g.alt)
+                        .iter()
+                        .map(|&v| f64::from(v))
+                        .collect()
+                })
                 .unwrap_or_default(),
             SensorField::GpsSpeed => self
                 .gps
                 .as_ref()
-                .map(|g| bytemuck::cast_slice::<MetersPerSec, f32>(&g.speed).iter().map(|&v| f64::from(v)).collect())
+                .map(|g| {
+                    bytemuck::cast_slice::<MetersPerSec, f32>(&g.speed)
+                        .iter()
+                        .map(|&v| f64::from(v))
+                        .collect()
+                })
                 .unwrap_or_default(),
-            SensorField::PidP(_) | SensorField::PidI(_) | SensorField::PidD(_) | SensorField::Feedforward(_) => {
+            SensorField::PidP(_)
+            | SensorField::PidI(_)
+            | SensorField::PidD(_)
+            | SensorField::Feedforward(_) => {
                 Vec::new() // PID terms not modelled directly yet
             }
             SensorField::Unknown(name) => self

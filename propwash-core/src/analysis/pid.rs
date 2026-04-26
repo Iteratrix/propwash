@@ -81,6 +81,9 @@ pub struct AxisOscillation {
 }
 
 /// Minimum frames for windup analysis to be meaningful.
+/// (Currently unused — see `analyze_windup` TODO. Restore when typed
+/// PID-term traces land on Session.)
+#[allow(dead_code)]
 const MIN_FRAMES_WINDUP: usize = 500;
 
 /// Minimum step count for oscillation frequency detection.
@@ -259,8 +262,7 @@ fn analyze_oscillation(
             continue;
         }
 
-        let setpoint: &[f64] =
-            bytemuck::cast_slice(session.setpoint.values.get(*axis).as_slice());
+        let setpoint: &[f64] = bytemuck::cast_slice(session.setpoint.values.get(*axis).as_slice());
         let gyro: &[f64] = bytemuck::cast_slice(session.gyro.values.get(*axis).as_slice());
 
         if setpoint.len() < OSC_POST_SAMPLES || gyro.len() < OSC_POST_SAMPLES {

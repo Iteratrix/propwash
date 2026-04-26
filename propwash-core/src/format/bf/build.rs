@@ -1,7 +1,14 @@
 //! Translate a stream of [`BfFrame`]s into a typed [`Session`].
+#![allow(
+    clippy::assigning_clones,             // empty-on-init Session fields
+    clippy::needless_pass_by_value,       // signature symmetry
+    clippy::match_same_arms,              // explicit Time arm documents intent vs `_` catch-all
+    clippy::unnecessary_wraps,            // map_bf_event returns Option for future variants
+    clippy::doc_lazy_continuation,        // multi-line doc continuations
+)]
 //!
 //! This is the only place BF-specific knowledge meets Session-shaped
-//! data: unit conversions (vbat × 0.01 → Volts; GPS × 1e-7 → DecimalDegrees;
+//! data: unit conversions (vbat × 0.01 → Volts; GPS × 1e-7 → `DecimalDegrees`;
 //! eRPM × 100 → Erpm), motor command normalisation against the header-
 //! reported PWM range, FlightMode-event translation to typed
 //! `FlightMode` + armed transitions.
@@ -12,19 +19,16 @@ use az::{Az, SaturatingAs, WrappingAs};
 
 use super::frames::{BfFrame, BfFrames};
 use super::types::{BfEvent, BfFrameDefs, BfHeaderValue};
-use crate::session::{
-    Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries,
-};
+use crate::session::{Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries};
 use crate::types::{
     AxisGains, FilterConfig, MotorIndex, PidGains, RcChannel, SensorField, Warning,
 };
 use crate::units::{
-    Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01,
-    Volts,
+    DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01, Volts,
 };
 
 /// Build a `Session` by streaming frames from the iterator.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) fn session(
     mut frames: BfFrames<'_>,
     headers: &HashMap<String, BfHeaderValue>,
@@ -96,7 +100,9 @@ pub(crate) fn session(
                             .values
                             .get_mut(*axis)
                             // BF stores acc as raw sensor counts; divide by acc_1G to get g, ×9.80665 for m/s²
-                            .push(MetersPerSec2(raw.az::<f64>() / acc_1g.az::<f64>() * 9.80665)),
+                            .push(MetersPerSec2(
+                                raw.az::<f64>() / acc_1g.az::<f64>() * 9.80665,
+                            )),
                         SensorField::Motor(MotorIndex(i)) => {
                             if let Some(col) = s.motors.commands.get_mut(*i) {
                                 col.push(normalize_motor(raw.az::<i32>(), motor_min, pwm_span));
@@ -112,13 +118,13 @@ pub(crate) fn session(
                         }
                         SensorField::Rc(ch) => match ch {
                             RcChannel::Roll => {
-                                s.rc_command.sticks.roll.push(normalize_stick(raw))
+                                s.rc_command.sticks.roll.push(normalize_stick(raw));
                             }
                             RcChannel::Pitch => {
-                                s.rc_command.sticks.pitch.push(normalize_stick(raw))
+                                s.rc_command.sticks.pitch.push(normalize_stick(raw));
                             }
                             RcChannel::Yaw => {
-                                s.rc_command.sticks.yaw.push(normalize_stick(raw))
+                                s.rc_command.sticks.yaw.push(normalize_stick(raw));
                             }
                             RcChannel::Throttle => s
                                 .rc_command
@@ -143,12 +149,15 @@ pub(crate) fn session(
                     match &def.name {
                         SensorField::Vbat => {
                             // BF stores vbat in centivolts (× 0.01 → V)
-                            s.vbat.push(last_main_time, Volts((raw.az::<f64>() * 0.01).az::<f32>()));
+                            s.vbat
+                                .push(last_main_time, Volts((raw.az::<f64>() * 0.01).az::<f32>()));
                         }
                         SensorField::Rssi => {
                             // 0-1023 → 0-100%
-                            s.rssi
-                                .push(last_main_time, (raw.az::<f64>() / 1023.0 * 100.0).az::<f32>());
+                            s.rssi.push(
+                                last_main_time,
+                                (raw.az::<f64>() / 1023.0 * 100.0).az::<f32>(),
+                            );
                         }
                         SensorField::Unknown(name) if name == "flightModeFlags" => {
                             let flags = raw.wrapping_as::<u32>();

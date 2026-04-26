@@ -14,7 +14,9 @@ pub struct MsgColumns {
     pub timestamps: Vec<u64>,
     /// Parallel column vectors of decoded field values.
     pub columns: Vec<Vec<f64>>,
-    /// Field names, parallel to `columns`.
+    /// Field names, parallel to `columns`. Useful for diagnostics; the build
+    /// step looks up by `column(name)` which uses the index map below.
+    #[allow(dead_code)]
     pub field_names: Vec<String>,
     /// name -> column index for O(1) field lookup.
     field_index: HashMap<String, usize>,

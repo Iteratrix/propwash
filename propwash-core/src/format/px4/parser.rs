@@ -5,8 +5,7 @@ use az::Az;
 use crate::types::Warning;
 
 use super::types::{
-    Px4ParseStats, TopicData, ULogField, ULogFormat, ULogLogMessage, ULogSubscription,
-    ULogType,
+    Px4ParseStats, TopicData, ULogField, ULogFormat, ULogLogMessage, ULogSubscription, ULogType,
 };
 
 const ULOG_MAGIC: &[u8; 7] = b"\x55\x4c\x6f\x67\x01\x12\x35";
@@ -156,8 +155,9 @@ impl FieldLayout {
 // Main parse entry point
 // ---------------------------------------------------------------------------
 
-/// Output of the PX4 ULog parser: the columnar intermediate that
+/// Output of the PX4 `ULog` parser: the columnar intermediate that
 /// [`super::build`] folds into a typed Session.
+#[allow(dead_code)] // some fields preserved for future build-step needs (e.g. params for filter config)
 pub(crate) struct Px4Parsed {
     pub formats: HashMap<String, ULogFormat>,
     pub subscriptions: HashMap<u16, ULogSubscription>,

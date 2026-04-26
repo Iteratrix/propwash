@@ -1,5 +1,9 @@
 //! Translate an `ApParsed` (per-message-type columnar intermediate) into
 //! a typed [`Session`].
+#![allow(
+    clippy::assigning_clones,        // Session fields start empty; clone_from buys nothing
+    clippy::needless_pass_by_value,  // signature symmetry across format build()s
+)]
 //!
 //! All AP-specific unit conversions live here:
 //!  - `IMU.GyrX/Y/Z` rad/s → `DegPerSec`
@@ -19,17 +23,15 @@ use az::{Az, SaturatingAs};
 use super::parser::ApParsed;
 use super::types::MsgColumns;
 use crate::format::common::{ardupilot_filter_config, ardupilot_pid_gains};
-use crate::session::{
-    Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries,
-};
+use crate::session::{Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries};
 use crate::types::Warning;
 use crate::units::{
-    Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01,
-    Volts,
+    Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01, Volts,
 };
 
 const RAD_TO_DEG: f64 = 57.295_779_513_082_32;
 
+#[allow(clippy::too_many_lines)] // declarative topic-to-Session mapping; splitting hides the routing
 pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: usize) -> Session {
     let mut s = Session::default();
 
@@ -108,7 +110,9 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
             if let Some(col) = t.column(&name) {
                 let normalized: Vec<Normalized01> = col
                     .iter()
-                    .map(|&v| Normalized01((((v - motor_min) / pwm_span).az::<f32>()).clamp(0.0, 1.0)))
+                    .map(|&v| {
+                        Normalized01((((v - motor_min) / pwm_span).az::<f32>()).clamp(0.0, 1.0))
+                    })
                     .collect();
                 s.motors.commands.push(normalized);
                 motor_count += 1;
@@ -230,13 +234,9 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     if let Some(t) = topic_by_name("EV") {
         if let Some(id_col) = t.column("Id") {
             for (&time, &id) in t.timestamps.iter().zip(id_col.iter()) {
-                let kind = match id.az::<i64>() {
-                    10 | 11 => EventKind::Custom(format!("EV.Id={id}")),
-                    _ => EventKind::Custom(format!("EV.Id={id}")),
-                };
                 s.events.push(Event {
                     time_us: time,
-                    kind,
+                    kind: EventKind::Custom(format!("EV.Id={id}")),
                     message: None,
                 });
             }
@@ -297,8 +297,8 @@ fn stick_norm(pwm: f64) -> f32 {
     (((pwm - 1500.0) / 500.0).az::<f32>()).clamp(-1.0, 1.0)
 }
 
-/// Best-effort mapping of ArduCopter mode IDs to our common FlightMode.
-/// Plane and Rover use different IDs; falls back to FlightMode::Other for unknowns.
+/// Best-effort mapping of `ArduCopter` mode IDs to our common `FlightMode`.
+/// Plane and Rover use different IDs; falls back to `FlightMode::Other` for unknowns.
 fn ap_flight_mode(id: u8) -> FlightMode {
     match id {
         0 => FlightMode::Stabilize,
