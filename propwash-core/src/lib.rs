@@ -11,7 +11,9 @@ pub mod format;
 #[cfg(not(feature = "raw"))]
 pub(crate) mod format;
 mod reader;
+pub mod session;
 pub mod types;
+pub mod units;
 
 pub use types::{FilterConfig, Log, ParseError, Session, Warning};
 

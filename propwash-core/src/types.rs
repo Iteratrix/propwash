@@ -335,7 +335,7 @@ fn parse_rc_channel_by_name(name: &str) -> Option<RcChannel> {
 
 /// A non-fatal diagnostic collected during parsing.
 /// The parser never panics on corrupt data — it collects these instead.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Warning {
     pub message: String,
     pub byte_offset: Option<usize>,
