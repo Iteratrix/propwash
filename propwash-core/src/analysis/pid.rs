@@ -1,7 +1,7 @@
 use az::{Az, SaturatingAs};
 use serde::Serialize;
 
-use crate::types::{Axis, AxisGains, PidGains, SensorField, Session};
+use crate::types::{Axis, AxisGains, PidGains, Session};
 
 use super::util;
 
@@ -81,6 +81,9 @@ pub struct AxisOscillation {
 }
 
 /// Minimum frames for windup analysis to be meaningful.
+/// (Currently unused — see `analyze_windup` TODO. Restore when typed
+/// PID-term traces land on Session.)
+#[allow(dead_code)]
 const MIN_FRAMES_WINDUP: usize = 500;
 
 /// Minimum step count for oscillation frequency detection.
@@ -220,48 +223,14 @@ fn classify_and_suggest(
 // ---------------------------------------------------------------------------
 
 /// Detect I-term windup: frames where |I-term| exceeds |P-term|.
-fn analyze_windup(session: &Session) -> Vec<AxisWindup> {
-    let mut results = Vec::new();
-
-    for axis in Axis::ALL {
-        let pid_p = session.field(&SensorField::PidP(axis));
-        let pid_i = session.field(&SensorField::PidI(axis));
-
-        if pid_p.len() < MIN_FRAMES_WINDUP || pid_i.len() < MIN_FRAMES_WINDUP {
-            continue;
-        }
-
-        let len = pid_p.len().min(pid_i.len());
-        let mut i_dominant_count = 0usize;
-        let mut peak_ratio: f64 = 0.0;
-
-        for j in 0..len {
-            let p = pid_p[j].abs();
-            let i_val = pid_i[j].abs();
-
-            if p > 1.0 {
-                let ratio = i_val / p;
-                if ratio > 1.0 {
-                    i_dominant_count += 1;
-                }
-                peak_ratio = peak_ratio.max(ratio);
-            } else if i_val > 10.0 {
-                i_dominant_count += 1;
-            }
-        }
-
-        let fraction = i_dominant_count.az::<f64>() / len.az::<f64>();
-
-        if fraction > 0.01 || peak_ratio > 2.0 {
-            results.push(AxisWindup {
-                axis,
-                i_dominant_fraction: fraction,
-                peak_ratio,
-            });
-        }
-    }
-
-    results
+///
+/// TODO(refactor/session-typed): the typed Session doesn't yet carry
+/// per-axis PID-term traces (BF stores them; AP/PX4 don't). When we add
+/// typed `pid_p`/`pid_i`/`pid_d` slots, restore this analysis. The legacy
+/// `field()` bridge already returned empty for PID terms, so windup
+/// detection has been a no-op for some time.
+fn analyze_windup(_session: &Session) -> Vec<AxisWindup> {
+    Vec::new()
 }
 
 // ---------------------------------------------------------------------------
@@ -293,8 +262,8 @@ fn analyze_oscillation(
             continue;
         }
 
-        let setpoint = session.field(&SensorField::Setpoint(*axis));
-        let gyro = session.field(&SensorField::Gyro(*axis));
+        let setpoint: &[f64] = bytemuck::cast_slice(session.setpoint.values.get(*axis).as_slice());
+        let gyro: &[f64] = bytemuck::cast_slice(session.gyro.values.get(*axis).as_slice());
 
         if setpoint.len() < OSC_POST_SAMPLES || gyro.len() < OSC_POST_SAMPLES {
             continue;

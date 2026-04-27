@@ -17,6 +17,7 @@ pub(crate) fn find_sessions(data: &[u8]) -> Vec<usize> {
 /// Result of parsing one session's headers.
 pub(crate) struct ParsedHeaders {
     pub raw: HashMap<String, BfHeaderValue>,
+    #[allow(dead_code)] // useful at parse-time; not consumed by build yet
     pub firmware_type: String,
     pub firmware_version: String,
     pub craft_name: String,

@@ -1,7 +1,7 @@
 use az::Az;
 use serde::Serialize;
 
-use crate::types::{Axis, SensorField, Session};
+use crate::types::{Axis, Session};
 
 /// Step response quality metrics for one axis.
 #[derive(Debug, Clone, Serialize)]
@@ -42,8 +42,8 @@ pub fn analyze_step_response(session: &Session) -> Option<StepResponseAnalysis> 
     let mut axes = Vec::new();
 
     for axis in &Axis::ALL {
-        let setpoint = session.field(&SensorField::Setpoint(*axis));
-        let gyro = session.field(&SensorField::Gyro(*axis));
+        let setpoint: &[f64] = bytemuck::cast_slice(session.setpoint.values.get(*axis).as_slice());
+        let gyro: &[f64] = bytemuck::cast_slice(session.gyro.values.get(*axis).as_slice());
 
         if setpoint.len() < POST_SAMPLES || gyro.len() < POST_SAMPLES {
             continue;
@@ -245,8 +245,8 @@ pub fn extract_step_overlay(session: &Session) -> Option<StepOverlay> {
     let mut axes = Vec::new();
 
     for axis in &Axis::ALL {
-        let setpoint = session.field(&SensorField::Setpoint(*axis));
-        let gyro = session.field(&SensorField::Gyro(*axis));
+        let setpoint: &[f64] = bytemuck::cast_slice(session.setpoint.values.get(*axis).as_slice());
+        let gyro: &[f64] = bytemuck::cast_slice(session.gyro.values.get(*axis).as_slice());
 
         if setpoint.len() < OVERLAY_PRE + OVERLAY_POST || gyro.len() < OVERLAY_PRE + OVERLAY_POST {
             continue;

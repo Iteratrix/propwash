@@ -2,7 +2,7 @@
 set -e
 echo "Running pre-commit checks..."
 cargo fmt --all -- --check
-cargo clippy --workspace --features raw -- -D warnings
-cargo test --workspace --features raw
+cargo clippy --workspace -- -D warnings
+cargo test --workspace
 cd web && npm install --prefer-offline --silent && npx vitest run && cd ..
 echo "Pre-commit checks passed."

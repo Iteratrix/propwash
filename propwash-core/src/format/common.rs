@@ -14,7 +14,9 @@ pub struct MsgColumns {
     pub timestamps: Vec<u64>,
     /// Parallel column vectors of decoded field values.
     pub columns: Vec<Vec<f64>>,
-    /// Field names, parallel to `columns`.
+    /// Field names, parallel to `columns`. Useful for diagnostics; the build
+    /// step looks up by `column(name)` which uses the index map below.
+    #[allow(dead_code)]
     pub field_names: Vec<String>,
     /// name -> column index for O(1) field lookup.
     field_index: HashMap<String, usize>,
@@ -49,6 +51,48 @@ impl MsgColumns {
         for (col, &val) in self.columns.iter_mut().zip(values.iter()) {
             col.push(val);
         }
+    }
+}
+
+/// Identifies the autopilot family that produced a `MAVLink` tlog so the
+/// build step can select the right parameter-name table for PID gains
+/// and filter config. `PX4` and `ArduPilot` both speak `MAVLink` but use
+/// disjoint parameter names (`MC_ROLLRATE_P` vs `ATC_RAT_RLL_P`).
+///
+/// Mirrors the relevant `MAV_AUTOPILOT_*` enum values from the `MAVLink`
+/// `common.xml` schema.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AutopilotFamily {
+    #[default]
+    Generic,
+    /// `MAV_AUTOPILOT_ARDUPILOTMEGA = 3`
+    ArduPilot,
+    /// `MAV_AUTOPILOT_PX4 = 12`
+    Px4,
+    Other(u8),
+}
+
+impl AutopilotFamily {
+    pub fn from_id(id: u8) -> Self {
+        match id {
+            3 => Self::ArduPilot,
+            12 => Self::Px4,
+            0 => Self::Generic,
+            other => Self::Other(other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AutopilotFamily;
+
+    #[test]
+    fn autopilot_family_canonical_ids() {
+        assert_eq!(AutopilotFamily::from_id(3), AutopilotFamily::ArduPilot);
+        assert_eq!(AutopilotFamily::from_id(12), AutopilotFamily::Px4);
+        assert_eq!(AutopilotFamily::from_id(0), AutopilotFamily::Generic);
+        assert_eq!(AutopilotFamily::from_id(8), AutopilotFamily::Other(8));
     }
 }
 
@@ -108,5 +152,52 @@ pub fn ardupilot_filter_config(params: &HashMap<String, f64>) -> FilterConfig {
         } else {
             None
         },
+    }
+}
+
+/// Extract `PX4` PID gains from a parameter map.
+///
+/// Shared by `PX4` `ULog` sessions and PX4-sourced `MAVLink` tlogs, which both
+/// use the `MC_*RATE_{P,I,D}` multicopter rate-controller naming.
+#[allow(clippy::implicit_hasher)]
+pub fn px4_pid_gains(params: &HashMap<String, f64>) -> PidGains {
+    let parse = |p_key: &str, i_key: &str, d_key: &str| -> AxisGains {
+        let get = |k: &str| -> Option<u32> {
+            params
+                .get(k)
+                .copied()
+                .filter(|&v| v > 0.0)
+                .map(|v| (v * 1000.0).saturating_as::<u32>())
+        };
+        AxisGains {
+            p: get(p_key),
+            i: get(i_key),
+            d: get(d_key),
+        }
+    };
+    PidGains::new(
+        parse("MC_ROLLRATE_P", "MC_ROLLRATE_I", "MC_ROLLRATE_D"),
+        parse("MC_PITCHRATE_P", "MC_PITCHRATE_I", "MC_PITCHRATE_D"),
+        parse("MC_YAWRATE_P", "MC_YAWRATE_I", "MC_YAWRATE_D"),
+    )
+}
+
+/// Extract `PX4` filter configuration from a parameter map.
+///
+/// `PX4` tunes filters via `IMU_GYRO_*` / `IMU_DGYRO_*` parameters, distinct
+/// from the `ArduPilot` `INS_*` set.
+#[allow(clippy::implicit_hasher)]
+pub fn px4_filter_config(params: &HashMap<String, f64>) -> FilterConfig {
+    let p = |k: &str| params.get(k).copied().unwrap_or(0.0);
+    let non_zero = |v: f64| if v > 0.0 { Some(v) } else { None };
+
+    FilterConfig {
+        gyro_lpf_hz: non_zero(p("IMU_GYRO_CUTOFF")),
+        gyro_lpf2_hz: None,
+        dterm_lpf_hz: non_zero(p("IMU_DGYRO_CUTOFF")),
+        dyn_notch_min_hz: non_zero(p("IMU_GYRO_DNF_MIN")),
+        dyn_notch_max_hz: non_zero(p("IMU_GYRO_DNF_HMC")), // dynamic notch harmonic / max — PX4 uses different param than min
+        gyro_notch1_hz: non_zero(p("IMU_GYRO_NF0_FRQ")),
+        gyro_notch2_hz: non_zero(p("IMU_GYRO_NF1_FRQ")),
     }
 }

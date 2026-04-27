@@ -2,7 +2,7 @@ use az::Az;
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
-use crate::types::{MotorIndex, SensorField, Session};
+use crate::types::Session;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FlightSummary {
@@ -83,11 +83,11 @@ fn compute_motor_balance(session: &Session) -> Vec<MotorStats> {
 
     let means: Vec<(usize, f64)> = (0..n)
         .filter_map(|i| {
-            let col = session.field(&SensorField::Motor(MotorIndex(i)));
+            let col = session.motors.commands.get(i)?;
             if col.is_empty() {
                 return None;
             }
-            let sum: f64 = col.iter().sum();
+            let sum: f64 = col.iter().map(|n| f64::from(n.0)).sum();
             Some((i, sum / col.len().az::<f64>()))
         })
         .collect();
