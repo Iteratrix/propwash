@@ -351,3 +351,104 @@ fn ap_flight_mode(id: u8) -> FlightMode {
         other => FlightMode::Other(format!("MODE_{other}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::format::ap::types::{ApMsgDef, ApParseStats, FieldType};
+    use std::collections::HashMap;
+
+    /// Construct a minimal `ApParsed` with one custom message type whose
+    /// columns are populated from `(timestamps, columns)`. Convenience
+    /// for build-step regression tests that don't need a real .bin
+    /// fixture.
+    fn synthetic_parsed(
+        msg_name: &str,
+        field_names: Vec<&str>,
+        timestamps: Vec<u64>,
+        columns: Vec<Vec<f64>>,
+    ) -> ApParsed {
+        let mut msg_defs = HashMap::new();
+        let mut topics = HashMap::new();
+        let msg_type = 100u8; // arbitrary non-FMT id
+        let names: Vec<String> = field_names.iter().map(|&s| s.to_string()).collect();
+        msg_defs.insert(
+            msg_type,
+            ApMsgDef {
+                msg_type,
+                name: msg_name.to_string(),
+                field_types: vec![FieldType::U64; field_names.len()],
+                field_names: names.clone(),
+                msg_len: 0,
+                format_str: String::new(),
+            },
+        );
+        let mut mc = MsgColumns::new(names);
+        // push_row takes (timestamp, all_columns_for_one_row); our `columns`
+        // is column-major so transpose for push.
+        for (i, &t) in timestamps.iter().enumerate() {
+            let row: Vec<f64> = columns.iter().map(|c| c[i]).collect();
+            mc.push_row(t, &row);
+        }
+        topics.insert(msg_type, mc);
+        ApParsed {
+            msg_defs,
+            topics,
+            firmware_version: String::new(),
+            vehicle_name: String::new(),
+            params: HashMap::new(),
+            stats: ApParseStats::default(),
+        }
+    }
+
+    /// bug_019: consecutive duplicate MODE samples must collapse to one
+    /// ModeChange event + one flight_mode sample (matches PX4/MAVLink/BF
+    /// dedup pattern).
+    #[test]
+    fn ap_mode_dedup_collapses_consecutive_duplicates() {
+        let parsed = synthetic_parsed(
+            "MODE",
+            vec!["Mode"],
+            vec![1000, 2000, 3000, 4000],
+            vec![vec![0.0, 0.0, 5.0, 5.0]], // Stabilize, Stabilize, Loiter, Loiter
+        );
+        let s = super::session(parsed, vec![], 1);
+        let mode_events: Vec<_> = s
+            .events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::ModeChange { .. }))
+            .collect();
+        assert_eq!(
+            mode_events.len(),
+            2,
+            "expected 2 ModeChange events (Stabilize then Loiter), got {}",
+            mode_events.len()
+        );
+        assert_eq!(s.flight_mode.values.len(), 2);
+        assert_eq!(s.flight_mode.values[0], FlightMode::Stabilize);
+        assert_eq!(s.flight_mode.values[1], FlightMode::Loiter);
+    }
+
+    /// bug_006: ATT message uses centidegree FMT type `c`. The build step
+    /// must divide by 100 so attitude.yaw lands in degrees.
+    #[test]
+    fn ap_attitude_centidegrees_to_degrees() {
+        let parsed = synthetic_parsed(
+            "ATT",
+            vec!["Roll", "Pitch", "Yaw"],
+            vec![1000, 2000],
+            vec![
+                vec![1500.0, -500.0],   // 15.00°, -5.00°
+                vec![-1000.0, 2000.0],  // -10.00°, 20.00°
+                vec![18000.0, 35999.0], // 180.00°, 359.99°
+            ],
+        );
+        let s = super::session(parsed, vec![], 1);
+        assert_eq!(s.attitude.values.roll.len(), 2);
+        // Allow small f32 rounding.
+        assert!((s.attitude.values.roll[0] - 15.0).abs() < 0.01);
+        assert!((s.attitude.values.pitch[0] - (-10.0)).abs() < 0.01);
+        assert!((s.attitude.values.yaw[0] - 180.0).abs() < 0.01);
+        assert!((s.attitude.values.yaw[1] - 359.99).abs() < 0.05);
+    }
+}

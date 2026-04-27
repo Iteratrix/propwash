@@ -380,3 +380,149 @@ fn mavlink_flight_mode(custom_mode: u32, vehicle: MavType) -> FlightMode {
         _ => FlightMode::Other(format!("CUSTOM_{custom_mode}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::format::mavlink::types::MavlinkParseStats;
+    use std::collections::HashMap;
+
+    fn synthetic_parsed(
+        topics: HashMap<String, MsgColumns>,
+        params: HashMap<String, f64>,
+    ) -> MavlinkParsed {
+        MavlinkParsed {
+            topics,
+            firmware_version: String::new(),
+            vehicle_type: MavType::Quadrotor,
+            params,
+            status_messages: Vec::new(),
+            stats: MavlinkParseStats::default(),
+        }
+    }
+
+    fn one_topic(
+        name: &str,
+        fields: Vec<&str>,
+        ts: Vec<u64>,
+        cols: Vec<Vec<f64>>,
+    ) -> HashMap<String, MsgColumns> {
+        let mut topics = HashMap::new();
+        let names: Vec<String> = fields.iter().map(|s| (*s).to_string()).collect();
+        let mut mc = MsgColumns::new(names);
+        for (i, &t) in ts.iter().enumerate() {
+            let row: Vec<f64> = cols.iter().map(|c| c[i]).collect();
+            mc.push_row(t, &row);
+        }
+        topics.insert(name.to_string(), mc);
+        topics
+    }
+
+    /// bug_006: ATTITUDE.{roll,pitch,yaw} radians must convert to
+    /// attitude.values.{roll,pitch,yaw} in degrees.
+    #[test]
+    fn mavlink_attitude_radians_to_degrees() {
+        let topics = one_topic(
+            "ATTITUDE",
+            vec![
+                "rollspeed",
+                "pitchspeed",
+                "yawspeed",
+                "roll",
+                "pitch",
+                "yaw",
+            ],
+            vec![1000, 2000],
+            vec![
+                vec![0.0, 0.0],
+                vec![0.0, 0.0],
+                vec![0.0, 0.0],
+                vec![std::f64::consts::FRAC_PI_2, std::f64::consts::PI], // 90°, 180°
+                vec![0.0, std::f64::consts::FRAC_PI_4],                  // 0°, 45°
+                vec![std::f64::consts::PI, 0.0],                         // 180°, 0°
+            ],
+        );
+        let parsed = synthetic_parsed(topics, HashMap::new());
+        let s = super::session(parsed, vec![], 1);
+        assert!((s.attitude.values.roll[0] - 90.0).abs() < 0.01);
+        assert!((s.attitude.values.roll[1] - 180.0).abs() < 0.01);
+        assert!((s.attitude.values.pitch[1] - 45.0).abs() < 0.01);
+        assert!((s.attitude.values.yaw[0] - 180.0).abs() < 0.01);
+    }
+
+    /// bug_016: a HEARTBEAT.autopilot=12 (PX4) tlog with PX4 parameter
+    /// names must yield populated `pid_gains` from the PX4 parser, not
+    /// an empty `Some` from the AP parser path.
+    #[test]
+    fn mavlink_px4_autopilot_dispatches_to_px4_pid_helper() {
+        let topics = one_topic(
+            "HEARTBEAT",
+            vec!["autopilot"],
+            vec![1000, 2000, 3000],
+            vec![vec![12.0, 12.0, 12.0]], // MAV_AUTOPILOT_PX4
+        );
+        let mut params = HashMap::new();
+        params.insert("MC_ROLLRATE_P".to_string(), 0.15);
+        params.insert("MC_ROLLRATE_I".to_string(), 0.20);
+        params.insert("MC_ROLLRATE_D".to_string(), 0.003);
+        params.insert("MC_PITCHRATE_P".to_string(), 0.16);
+        params.insert("MC_YAWRATE_P".to_string(), 0.30);
+        // AP keys deliberately absent — pre-fix path would have read these
+        // and returned all-None gains.
+        let parsed = synthetic_parsed(topics, params);
+        let s = super::session(parsed, vec![], 1);
+        let pid = s
+            .meta
+            .pid_gains
+            .as_ref()
+            .expect("expected PX4 dispatch to populate pid_gains");
+        assert!(
+            pid.has_data(),
+            "PX4 PID gains should be populated, not empty"
+        );
+        let roll = pid.get(crate::types::Axis::Roll);
+        assert!(
+            roll.p.is_some_and(|p| p > 0),
+            "MC_ROLLRATE_P must populate roll P"
+        );
+    }
+
+    /// And the inverse: HEARTBEAT.autopilot=3 (ArduPilot) must dispatch
+    /// to the AP helper.
+    #[test]
+    fn mavlink_ardupilot_autopilot_dispatches_to_ap_pid_helper() {
+        let topics = one_topic(
+            "HEARTBEAT",
+            vec!["autopilot"],
+            vec![1000, 2000],
+            vec![vec![3.0, 3.0]], // MAV_AUTOPILOT_ARDUPILOTMEGA
+        );
+        let mut params = HashMap::new();
+        params.insert("ATC_RAT_RLL_P".to_string(), 0.25);
+        params.insert("ATC_RAT_RLL_I".to_string(), 0.18);
+        let parsed = synthetic_parsed(topics, params);
+        let s = super::session(parsed, vec![], 1);
+        let pid = s.meta.pid_gains.expect("AP dispatch should populate");
+        let roll = pid.get(crate::types::Axis::Roll);
+        assert!(roll.p.is_some_and(|p| p > 0));
+    }
+
+    /// Generic / unknown autopilot must yield None (not Some(empty)) so
+    /// `Option::is_some` is a reliable "have PID info" signal.
+    #[test]
+    fn mavlink_unknown_autopilot_yields_none_not_empty_some() {
+        let topics = one_topic(
+            "HEARTBEAT",
+            vec!["autopilot"],
+            vec![1000],
+            vec![vec![8.0]], // MAV_AUTOPILOT_INVALID
+        );
+        let parsed = synthetic_parsed(topics, HashMap::new());
+        let s = super::session(parsed, vec![], 1);
+        assert!(
+            s.meta.pid_gains.is_none(),
+            "unknown autopilot must yield None"
+        );
+        assert!(s.meta.filter_config.is_none());
+    }
+}

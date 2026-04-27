@@ -421,8 +421,11 @@ fn px4_flight_mode(state: u8) -> FlightMode {
 
 #[cfg(test)]
 mod tests {
-    use super::px4_flight_mode;
-    use crate::session::FlightMode;
+    use super::*;
+    use crate::format::px4::types::{
+        Px4ParseStats, ULogField, ULogFormat, ULogSubscription, ULogType,
+    };
+    use std::collections::HashMap;
 
     #[test]
     fn px4_canonical_modes() {
@@ -438,5 +441,129 @@ mod tests {
         // Acro/Stabilize must NOT be swapped:
         assert_ne!(px4_flight_mode(10), FlightMode::Stabilize);
         assert_ne!(px4_flight_mode(15), FlightMode::Acro);
+    }
+
+    /// Construct a minimal `Px4Parsed` containing one topic. The topic
+    /// schema is dummy (not used by build's `topic()` lookup beyond
+    /// format_name → msg_id matching).
+    fn synthetic_parsed(
+        topic_name: &str,
+        field_names: Vec<&str>,
+        timestamps: Vec<u64>,
+        columns: Vec<Vec<f64>>,
+    ) -> Px4Parsed {
+        let mut formats = HashMap::new();
+        let mut subscriptions = HashMap::new();
+        let mut topics = HashMap::new();
+        let names: Vec<String> = field_names.iter().map(|&s| s.to_string()).collect();
+
+        formats.insert(
+            topic_name.to_string(),
+            ULogFormat {
+                name: topic_name.to_string(),
+                fields: field_names
+                    .iter()
+                    .map(|n| ULogField {
+                        name: (*n).to_string(),
+                        type_name: "uint64_t".into(),
+                        primitive: Some(ULogType::UInt64),
+                        array_size: None,
+                        byte_size: 8,
+                    })
+                    .collect(),
+                total_size: 8 * field_names.len(),
+            },
+        );
+        let msg_id: u16 = 1;
+        subscriptions.insert(
+            msg_id,
+            ULogSubscription {
+                msg_id,
+                multi_id: 0,
+                format_name: topic_name.to_string(),
+            },
+        );
+        let mut mc = TopicData::new(names);
+        for (i, &t) in timestamps.iter().enumerate() {
+            let row: Vec<f64> = columns.iter().map(|c| c[i]).collect();
+            mc.push_row(t, &row);
+        }
+        topics.insert(msg_id, mc);
+
+        Px4Parsed {
+            formats,
+            subscriptions,
+            topics,
+            info: HashMap::new(),
+            params: HashMap::new(),
+            log_messages: Vec::new(),
+            firmware_version: String::new(),
+            hardware_name: String::new(),
+            stats: Px4ParseStats::default(),
+        }
+    }
+
+    /// bug_008: actuator_outputs schema with output[0] all zeros must NOT
+    /// truncate the motor list. Pre-fix this returned motor_count=0 for
+    /// pre-arm logs and VTOL/quadplane configs with inert low-index
+    /// channels.
+    #[test]
+    fn px4_motor_count_survives_all_zero_low_channel() {
+        // 4 channels: output[0] all zeros (e.g. unused tilt servo),
+        // output[1..3] populated.
+        let parsed = synthetic_parsed(
+            "actuator_outputs",
+            vec!["output[0]", "output[1]", "output[2]", "output[3]"],
+            vec![1000, 2000, 3000],
+            vec![
+                vec![0.0, 0.0, 0.0], // inert
+                vec![0.5, 0.6, 0.7],
+                vec![0.5, 0.6, 0.7],
+                vec![0.5, 0.6, 0.7],
+            ],
+        );
+        let s = super::session(parsed, vec![], 1);
+        assert_eq!(
+            s.meta.motor_count, 4,
+            "all-zero output[0] must not truncate the motor list (got {})",
+            s.meta.motor_count
+        );
+        assert_eq!(s.motors.commands.len(), 4);
+        // Channel 0 still holds zeros — present, not silently dropped.
+        assert!(s.motors.commands[0].iter().all(|n| n.0 == 0.0));
+    }
+
+    /// bug_006: vehicle_attitude.q quaternion must convert to attitude
+    /// roll/pitch/yaw in degrees via the standard ZYX Euler formula.
+    /// Test values: identity quaternion (w=1) → all zeros; 90° yaw
+    /// quaternion (w=cos(45°), z=sin(45°)) → yaw ≈ 90°.
+    #[test]
+    fn px4_quaternion_to_euler_degrees() {
+        let s2 = std::f64::consts::FRAC_1_SQRT_2;
+        let parsed = synthetic_parsed(
+            "vehicle_attitude",
+            vec!["q[0]", "q[1]", "q[2]", "q[3]"],
+            vec![1000, 2000],
+            vec![
+                vec![1.0, s2], // w
+                vec![0.0, 0.0],
+                vec![0.0, 0.0],
+                vec![0.0, s2], // z
+            ],
+        );
+        let s = super::session(parsed, vec![], 1);
+        assert_eq!(s.attitude.values.yaw.len(), 2);
+        // Identity quaternion → 0° yaw.
+        assert!(
+            s.attitude.values.yaw[0].abs() < 0.01,
+            "identity quaternion should yield 0° yaw, got {}",
+            s.attitude.values.yaw[0]
+        );
+        // 90° yaw quaternion.
+        assert!(
+            (s.attitude.values.yaw[1] - 90.0).abs() < 0.1,
+            "90° yaw quaternion should yield ≈90° yaw, got {}",
+            s.attitude.values.yaw[1]
+        );
     }
 }

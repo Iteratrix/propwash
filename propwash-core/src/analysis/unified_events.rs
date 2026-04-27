@@ -412,4 +412,103 @@ mod tests {
         let vals = [2000.0, 400.0];
         assert!(is_desync(&vals, 0, MOTOR_MAX));
     }
+
+    // ── bug_005 regressions: each detector must use its source stream's
+    //    own time axis, not the gyro axis ──────────────────────────────
+
+    use crate::session::{Format, RcCommand, Session, SessionMeta, TriaxialSeries};
+    use crate::units::{DegPerSec, Normalized01};
+
+    /// Build a Session where rc_command and gyro have *different* time axes
+    /// — gyro at 1 kHz, rc_command at 10 Hz — and assert that throttle-chop
+    /// detection times the event from rc_command.time_us, not gyro.time_us.
+    /// Pre-fix, the event would be timestamped near 0 (gyro index of throttle
+    /// index) instead of at the actual throttle-axis time.
+    #[test]
+    fn throttle_chop_event_uses_rc_command_time_axis() {
+        let gyro_time: Vec<u64> = (0..1000).map(|i| i * 1000).collect(); // 0..1s @ 1 kHz
+        let rc_time: Vec<u64> = (0..10).map(|i| i * 100_000).collect(); // 0..0.9s @ 10 Hz
+                                                                        // Throttle: 0.8 for 5 samples then chop to 0.0 starting at index 5
+                                                                        // (rc_time[5] = 500_000 µs = 0.5 s)
+        let throttle: Vec<Normalized01> = (0..10)
+            .map(|i| Normalized01(if i < 5 { 0.8 } else { 0.0 }))
+            .collect();
+
+        let mut s = Session::default();
+        s.meta = SessionMeta {
+            format: Format::ArduPilot,
+            ..SessionMeta::default()
+        };
+        // Gyro axis populated so detect_all doesn't early-out.
+        s.gyro = TriaxialSeries {
+            time_us: gyro_time,
+            values: crate::session::Triaxial::new(
+                vec![DegPerSec(0.0); 1000],
+                vec![DegPerSec(0.0); 1000],
+                vec![DegPerSec(0.0); 1000],
+            ),
+        };
+        s.rc_command = RcCommand {
+            time_us: rc_time,
+            sticks: crate::session::Triaxial::new(vec![], vec![], vec![]),
+            throttle,
+        };
+
+        let events = super::detect_all(&s);
+        let chop = events
+            .iter()
+            .find(|e| matches!(e.kind, EventKind::ThrottleChop { .. }))
+            .expect("expected a ThrottleChop event");
+        // The chop transition is at rc_time[5] = 500_000 µs (0.5 s).
+        assert!(
+            (chop.time_us - 500_000).abs() < 10_000,
+            "chop event time_us = {} (expected ≈500_000 from rc_command axis); \
+             likely regressed to gyro axis",
+            chop.time_us
+        );
+    }
+
+    /// Same shape for motor saturation: motors.time_us must drive the event
+    /// timestamp. Saturation window starts at motors index 25, ends at 40.
+    #[test]
+    fn motor_saturation_event_uses_motors_time_axis() {
+        let gyro_time: Vec<u64> = (0..1000).map(|i| i * 1000).collect(); // 1 kHz
+        let motor_time: Vec<u64> = (0..50).map(|i| i * 20_000).collect(); // 50 Hz
+                                                                          // Saturated 25..40 (need ≥5 samples), then drops to 0.5 to close the window.
+        let motor_col: Vec<Normalized01> = (0..50)
+            .map(|i| {
+                let v = if (25..40).contains(&i) { 1.0 } else { 0.5 };
+                Normalized01(v)
+            })
+            .collect();
+
+        let mut s = Session::default();
+        s.meta = SessionMeta {
+            format: Format::Px4,
+            motor_count: 1,
+            ..SessionMeta::default()
+        };
+        s.gyro = TriaxialSeries {
+            time_us: gyro_time,
+            values: crate::session::Triaxial::new(
+                vec![DegPerSec(0.0); 1000],
+                vec![DegPerSec(0.0); 1000],
+                vec![DegPerSec(0.0); 1000],
+            ),
+        };
+        s.motors.time_us = motor_time;
+        s.motors.commands = vec![motor_col];
+
+        let events = super::detect_all(&s);
+        let sat = events
+            .iter()
+            .find(|e| matches!(e.kind, EventKind::MotorSaturation { .. }))
+            .expect("expected MotorSaturation event");
+        // Window starts at motors index 25 = 500_000 µs.
+        assert!(
+            (sat.time_us - 500_000).abs() < 10_000,
+            "saturation event time_us = {} (expected ≈500_000 from motors axis)",
+            sat.time_us
+        );
+    }
 }
