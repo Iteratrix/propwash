@@ -196,7 +196,11 @@ pub fn px4_filter_config(params: &HashMap<String, f64>) -> FilterConfig {
         gyro_lpf2_hz: None,
         dterm_lpf_hz: non_zero(p("IMU_DGYRO_CUTOFF")),
         dyn_notch_min_hz: non_zero(p("IMU_GYRO_DNF_MIN")),
-        dyn_notch_max_hz: non_zero(p("IMU_GYRO_DNF_HMC")), // dynamic notch harmonic / max — PX4 uses different param than min
+        // PX4 has no upper-bound parameter for the dynamic notch — its
+        // peak detection is data-driven. `IMU_GYRO_DNF_HMC` is the
+        // harmonic count, not a frequency. Leave None until PX4 ships
+        // a real upper bound.
+        dyn_notch_max_hz: None,
         gyro_notch1_hz: non_zero(p("IMU_GYRO_NF0_FRQ")),
         gyro_notch2_hz: non_zero(p("IMU_GYRO_NF1_FRQ")),
     }

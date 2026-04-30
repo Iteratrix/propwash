@@ -976,4 +976,74 @@ mod tests {
             "should be ~14.3 Hz (ignoring zeros), got {hz:.1}"
         );
     }
+
+    /// bug_005 regression: `compute_throttle_bands_unified` must classify
+    /// gyro samples by their *real-time-correlated* throttle, not by
+    /// indexing throttle and gyro at the same array position. A Session
+    /// where throttle is at 50 Hz and gyro is at 4 kHz exercises the
+    /// resample path; if the path regressed to direct indexing, the
+    /// throttle would drive band selection on only the first ~50 of
+    /// the 4000 gyro samples and the rest would all classify as the
+    /// last-known band — yielding wildly skewed `frame_count`s.
+    #[test]
+    fn throttle_bands_use_resampled_throttle_axis() {
+        use crate::session::{Format, RcCommand, Session, SessionMeta, TriaxialSeries};
+        use crate::units::{DegPerSec, Normalized01};
+
+        // 1 second @ 4 kHz gyro, 50 Hz throttle.
+        let gyro_n = 4_000usize;
+        let throttle_n = 50usize;
+        let gyro_time: Vec<u64> = (0..gyro_n).map(|i| (i * 250) as u64).collect();
+        let throttle_time: Vec<u64> = (0..throttle_n).map(|i| (i * 20_000) as u64).collect();
+
+        // Throttle ramp: 0%-50% over the first half, 50%-100% over the
+        // second half. After resample-to-gyro, the first 2000 gyro
+        // samples should fall in 0-25%/25-50% bands and the second 2000
+        // in 50-75%/75-100% bands. Direct-indexing regression would
+        // flatten this to throttle_n=50 samples and leave the remaining
+        // ~3950 gyro samples mis-classified.
+        let throttle: Vec<Normalized01> = (0..throttle_n)
+            .map(|i| Normalized01((i as f32) / (throttle_n as f32 - 1.0)))
+            .collect();
+
+        let mut s = Session::default();
+        s.meta = SessionMeta {
+            format: Format::ArduPilot,
+            ..SessionMeta::default()
+        };
+        // Gyro: a sine wave on roll so the FFT actually has content
+        // (compute_throttle_bands_unified internally calls compute_spectrum
+        // which needs ≥ FFT_WINDOW_SIZE samples and non-zero magnitudes).
+        let sine: Vec<DegPerSec> = (0..gyro_n)
+            .map(|i| {
+                let v = (2.0 * std::f64::consts::PI * 200.0 * i as f64 / 4_000.0).sin() * 100.0;
+                DegPerSec(v)
+            })
+            .collect();
+        s.gyro = TriaxialSeries {
+            time_us: gyro_time,
+            values: crate::session::Triaxial::new(
+                sine.clone(),
+                vec![DegPerSec(0.0); gyro_n],
+                vec![DegPerSec(0.0); gyro_n],
+            ),
+        };
+        s.rc_command = RcCommand {
+            time_us: throttle_time,
+            sticks: crate::session::Triaxial::new(vec![], vec![], vec![]),
+            throttle,
+        };
+
+        let bands = super::compute_throttle_bands_unified(&s, 4_000.0, 14);
+        // Each band's frame_count must reflect membership of gyro
+        // samples (which span the full ~4000), not the raw 50
+        // throttle samples. Sum across bands ≥ FFT_WINDOW_SIZE means
+        // the resample expanded throttle correctly onto gyro time.
+        let total: usize = bands.iter().map(|b| b.frame_count).sum();
+        assert!(
+            total >= 1024,
+            "expected ≥1024 gyro samples binned across throttle bands; \
+             got {total} (likely regressed to direct-index throttle)"
+        );
+    }
 }

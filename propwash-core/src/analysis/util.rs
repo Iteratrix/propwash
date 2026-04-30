@@ -104,8 +104,15 @@ pub fn resample_view<T: Lerp>(
     target: &[u64],
     strategy: Strategy,
 ) -> Vec<T> {
-    let n = src.time_us.len();
-    if n == 0 || src.values.is_empty() {
+    // Defensive length-clamp. The slice-pair view has no compile-time
+    // invariant tying `time_us.len()` to `values.len()`. In practice
+    // callers can produce mismatches when a format's build step
+    // populates `time_us` from a topic's overall timestamp axis but
+    // leaves a per-axis values column empty (e.g. AP RATE.RDes absent
+    // but RATE.timestamps present). We silently clamp to the shorter
+    // length so a partial source returns empty rather than panicking.
+    let n = src.time_us.len().min(src.values.len());
+    if n == 0 {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(target.len());
@@ -121,13 +128,10 @@ pub fn resample_view<T: Lerp>(
         // in BF, occasional out-of-order vehicle_status in PX4) so the
         // forward-only cursor outruns t. Result clamps to the last valid
         // sample, matching the boundary clamp at either end.
-        let n_values = src.values.len().min(n);
-        out.push(if n_values == 0 {
-            return Vec::new();
-        } else if t <= src.time_us[0] {
+        out.push(if t <= src.time_us[0] {
             src.values[0]
-        } else if cursor + 1 >= n_values || t >= src.time_us[n_values - 1] {
-            src.values[n_values - 1]
+        } else if cursor + 1 >= n || t >= src.time_us[n - 1] {
+            src.values[n - 1]
         } else {
             let t0 = src.time_us[cursor];
             let t1 = src.time_us[cursor + 1];

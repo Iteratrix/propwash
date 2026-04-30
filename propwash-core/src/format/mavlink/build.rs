@@ -67,12 +67,16 @@ pub(crate) fn session(
         }
     }
     // VFR_HUD.heading (degrees) as a yaw-only fallback when ATTITUDE
-    // lacks the absolute angles.
+    // lacks the absolute angles. Roll/pitch padded with NaN so all
+    // three axes stay length-aligned with attitude.time_us.
     if s.attitude.values.yaw.is_empty() {
         if let Some(t) = topic("VFR_HUD") {
             if let Some(hd) = t.column("heading") {
+                let n = t.timestamps.len();
                 s.attitude.time_us = t.timestamps.clone();
                 s.attitude.values.yaw = hd.iter().map(|&v| v.az::<f32>()).collect();
+                s.attitude.values.roll = vec![f32::NAN; n];
+                s.attitude.values.pitch = vec![f32::NAN; n];
             }
         }
     }
@@ -217,7 +221,7 @@ pub(crate) fn session(
         if let Some(col) = t.column("satellites_visible") {
             gps.sats = col.iter().map(|&v| v.saturating_as::<u8>()).collect();
         }
-        if !gps.is_empty() {
+        if gps.has_data() {
             s.gps = Some(gps);
         }
     }
@@ -326,7 +330,12 @@ pub(crate) fn session(
 
 /// Pick the most common `HEARTBEAT.autopilot` value from the parsed log
 /// and translate to [`AutopilotFamily`]. Mode-of-many is robust against
-/// stray HEARTBEATs sent by the GCS itself (`MAV_AUTOPILOT_INVALID = 8`).
+/// stray HEARTBEATs sent by the GCS itself.
+///
+/// `MAV_AUTOPILOT_INVALID = 8` is filtered out before tallying — a GCS
+/// emitting an INVALID heartbeat shouldn't outvote the airframe's real
+/// autopilot ID. On a tie between buckets, prefer any non-Generic
+/// family so a single ArduPilot/PX4 heartbeat beats a flood of zeros.
 /// Returns [`AutopilotFamily::Generic`] when no HEARTBEATs were seen.
 fn detect_autopilot(parsed: &MavlinkParsed) -> AutopilotFamily {
     let Some(t) = parsed.topics.get("HEARTBEAT") else {
@@ -338,17 +347,25 @@ fn detect_autopilot(parsed: &MavlinkParsed) -> AutopilotFamily {
     if col.is_empty() {
         return AutopilotFamily::Generic;
     }
-    // Tally mode of u8 values (256 buckets).
     let mut counts = [0u32; 256];
     for &v in col {
         let id = v.saturating_as::<u8>();
+        if id == 8 {
+            continue; // MAV_AUTOPILOT_INVALID — never the airframe's truth
+        }
         counts[id as usize] = counts[id as usize].saturating_add(1);
     }
+    // Pick the bucket with the highest count, preferring non-Generic
+    // (id != 0) on ties. Iterating in id order means id 0 wins ties
+    // by default — flip that with a secondary key.
     let (best, _) = counts
         .iter()
         .enumerate()
-        .max_by_key(|(_, &n)| n)
+        .max_by_key(|(id, &n)| (n, u32::from(*id != 0)))
         .unwrap_or((0, &0));
+    if counts[best] == 0 {
+        return AutopilotFamily::Generic;
+    }
     AutopilotFamily::from_id(best.saturating_as::<u8>())
 }
 

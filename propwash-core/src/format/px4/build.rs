@@ -127,9 +127,15 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
     if s.attitude.is_empty() {
         if let Some(t) = topic("vehicle_global_position") {
             if let Some(yaw) = t.column("yaw") {
+                let n = t.timestamps.len();
                 s.attitude.time_us = t.timestamps.clone();
                 s.attitude.values.yaw = yaw.iter().map(|&v| (v * RAD_TO_DEG).az::<f32>()).collect();
-                // roll/pitch left empty; only yaw is fused into the global pos topic.
+                // vehicle_global_position only fuses yaw; pad roll/pitch
+                // with NaN so all three axes stay length-aligned with
+                // attitude.time_us. Consumers can detect "absent on this
+                // axis" via .is_nan(); zip-walks won't silently truncate.
+                s.attitude.values.roll = vec![f32::NAN; n];
+                s.attitude.values.pitch = vec![f32::NAN; n];
             }
         }
     }
@@ -228,7 +234,7 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
         if let Some(col) = t.column("satellites_used") {
             gps.sats = col.iter().map(|&v| v.saturating_as::<u8>()).collect();
         }
-        if !gps.is_empty() {
+        if gps.has_data() {
             s.gps = Some(gps);
         }
     }
@@ -400,7 +406,11 @@ fn px4_flight_mode(state: u8) -> FlightMode {
         5 => FlightMode::ReturnToHome, // AUTO_RTL
         6 => FlightMode::Other("POSITION_SLOW".into()),
         7 => FlightMode::Other("FREE5".into()), // legacy AUTO_RTGS, removed
-        8 => FlightMode::Failsafe,              // AUTO_LANDENGFAIL
+        // PX4 ≤ v1.12: AUTO_LANDENGFAIL. v1.13+: slot is FREE4 (unused).
+        // Modern logs shouldn't emit nav_state=8; legacy logs should map
+        // to Failsafe. We split the difference with Other so the user
+        // sees the ambiguity rather than a wrong "Failsafe" label.
+        8 => FlightMode::Other("FREE4_or_legacy_LANDENGFAIL".into()),
         9 => FlightMode::Other("FREE3".into()), // legacy AUTO_LANDGPSFAIL, removed
         10 => FlightMode::Acro,
         11 => FlightMode::Other("FREE2".into()), // unused

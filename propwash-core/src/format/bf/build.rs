@@ -257,6 +257,14 @@ pub(crate) fn session(
     let mut warnings = parse_warnings;
     warnings.append(&mut frames.warnings);
 
+    // BF uses `s.gps.get_or_insert_with` mid-loop, which makes
+    // `s.gps == Some` on the first G-frame regardless of whether the
+    // schema yielded any data columns. Mirror the AP/PX4/MAVLink
+    // pattern: drop the Option if no data column was populated.
+    if s.gps.as_ref().is_some_and(|g| !g.has_data()) {
+        s.gps = None;
+    }
+
     // Attach time axes to all main-frame streams.
     s.gyro.time_us = main_time_us.clone();
     s.accel.time_us = main_time_us.clone();

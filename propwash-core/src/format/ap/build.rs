@@ -206,7 +206,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
         if let Some(col) = t.column("NSats") {
             gps.sats = col.iter().map(|&v| v.saturating_as::<u8>()).collect();
         }
-        if !gps.is_empty() {
+        if gps.has_data() {
             s.gps = Some(gps);
         }
     }

@@ -266,8 +266,32 @@ pub struct Gps {
 }
 
 impl Gps {
+    /// True when no GPS frames were observed AND no data column carries
+    /// values. A schema with only timestamps (no lat/lng/alt/etc.)
+    /// should still be considered absent — consumers checking
+    /// `gps.is_empty()` shouldn't see "Some" merely because we logged
+    /// time markers without payload.
     pub fn is_empty(&self) -> bool {
         self.time_us.is_empty()
+            && self.lat.is_empty()
+            && self.lng.is_empty()
+            && self.alt.is_empty()
+            && self.speed.is_empty()
+            && self.heading.is_empty()
+            && self.sats.is_empty()
+    }
+
+    /// True when at least one data column carries values. Strictly
+    /// stronger than `!is_empty()` — a Gps with only `time_us` populated
+    /// (e.g. a BF schema lacking all coord fields) returns false here
+    /// but also returns true from `is_empty()` after the `bug_007` fix.
+    pub fn has_data(&self) -> bool {
+        !self.lat.is_empty()
+            || !self.lng.is_empty()
+            || !self.alt.is_empty()
+            || !self.speed.is_empty()
+            || !self.heading.is_empty()
+            || !self.sats.is_empty()
     }
 }
 
