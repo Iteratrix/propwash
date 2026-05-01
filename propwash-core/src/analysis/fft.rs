@@ -288,9 +288,11 @@ pub fn analyze_vibration_unified(
     }
 
     // Get motor pole count for eRPM → frequency conversion.
-    // TODO(refactor/session-typed): wire BF parser to put motor_poles into
-    // SessionMeta or extras, then read it here. Default 14 is fine for now.
-    let motor_poles: u32 = 14;
+    // BF logs surface motor pole count via the `motor_poles` header.
+    // AP/PX4/MAVLink don't expose it; default to 14 (3-pole-pair 5"
+    // brushless, the common build) so eRPM→Hz still produces a
+    // reasonable number on those formats.
+    let motor_poles: u32 = unified.meta.motor_poles.unwrap_or(14);
 
     let mut spectra = Vec::new();
 
