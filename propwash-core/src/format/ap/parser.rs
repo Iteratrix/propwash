@@ -222,9 +222,20 @@ fn decode_f64(ft: FieldType, data: &[u8]) -> f64 {
         FieldType::I8 => f64::from(data[0].cast_signed()),
         FieldType::U8 | FieldType::FlightMode => f64::from(data[0]),
         FieldType::I16 | FieldType::I16Array32 => f64::from(i16::from_le_bytes([data[0], data[1]])),
+        FieldType::I16Centi => f64::from(i16::from_le_bytes([data[0], data[1]])) * 0.01,
         FieldType::U16 => f64::from(u16::from_le_bytes([data[0], data[1]])),
+        FieldType::U16Centi => f64::from(u16::from_le_bytes([data[0], data[1]])) * 0.01,
         FieldType::I32 => f64::from(i32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
+        FieldType::I32Centi => {
+            f64::from(i32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))) * 0.01
+        }
+        FieldType::I32DegreesE7 => {
+            f64::from(i32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))) * 1e-7
+        }
         FieldType::U32 => f64::from(u32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
+        FieldType::U32Centi => {
+            f64::from(u32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))) * 0.01
+        }
         FieldType::I64 => i64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])).az::<f64>(),
         FieldType::U64 => u64::from_le_bytes(data[..8].try_into().unwrap_or([0; 8])).az::<f64>(),
         FieldType::Float => f64::from(f32::from_le_bytes(data[..4].try_into().unwrap_or([0; 4]))),
@@ -392,5 +403,68 @@ fn decode_f16(bits: u16) -> f32 {
         -val
     } else {
         val
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// F7 red→green: ArduPilot FMT type `c` means "int16 × 100"
+    /// (centidegrees / fixed-point). The parser must apply the ÷100
+    /// scaling so consumers don't see raw centidegrees and compute
+    /// values 100× wrong. Pre-fix, both `h` and `c` collapsed to
+    /// `FieldType::I16` and decode_f64 returned the raw int16 as f64.
+    #[test]
+    fn fmt_c_centidegree_field_scaled() {
+        let centi_type = FieldType::from_format_char(b'c');
+        // 4500 centidegrees = 45.00°
+        let bytes = 4500_i16.to_le_bytes();
+        let v = decode_f64(centi_type, &bytes);
+        assert!(
+            (v - 45.0).abs() < 1e-9,
+            "FMT type 'c' (centidegree) should decode to 45.0°, got {v}"
+        );
+    }
+
+    /// `C` = uint16 × 100 (e.g. RFND.Dist in cm-as-deca-mm? No —
+    /// some AP versions use `C` for cm-scaled distances; semantics
+    /// are "raw / 100").
+    #[test]
+    fn fmt_capital_c_centi_uint_scaled() {
+        let centi_type = FieldType::from_format_char(b'C');
+        let bytes = 12000_u16.to_le_bytes();
+        let v = decode_f64(centi_type, &bytes);
+        assert!((v - 120.0).abs() < 1e-9, "got {v}, expected 120.0");
+    }
+
+    /// `e` = int32 × 100. Used for some altitude / centidegree fields.
+    #[test]
+    fn fmt_e_centi_int32_scaled() {
+        let e_type = FieldType::from_format_char(b'e');
+        let bytes = (-99_999_i32).to_le_bytes();
+        let v = decode_f64(e_type, &bytes);
+        assert!((v - (-999.99)).abs() < 1e-6, "got {v}, expected -999.99");
+    }
+
+    /// `L` = int32 with × 1e7 scale (lat/lng). Parser must divide
+    /// by 1e7 to yield decimal degrees so consumers don't have to
+    /// remember the convention per-field.
+    #[test]
+    fn fmt_capital_l_lat_lng_scaled_to_decimal_degrees() {
+        let l_type = FieldType::from_format_char(b'L');
+        let bytes = 502_075_967_i32.to_le_bytes(); // Sweden, ~50.2076°
+        let v = decode_f64(l_type, &bytes);
+        assert!((v - 50.2_075_967).abs() < 1e-6, "got {v}, expected ~50.21");
+    }
+
+    /// Plain `h` (no scaling) must still decode raw — regression guard
+    /// against accidentally scaling everything.
+    #[test]
+    fn fmt_h_int16_unchanged() {
+        let h_type = FieldType::from_format_char(b'h');
+        let bytes = (-1234_i16).to_le_bytes();
+        let v = decode_f64(h_type, &bytes);
+        assert!((v - (-1234.0)).abs() < 1e-9, "got {v}");
     }
 }

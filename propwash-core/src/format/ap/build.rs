@@ -6,15 +6,16 @@
 )]
 //!
 //! All AP-specific unit conversions live here:
-//!  - `IMU.GyrX/Y/Z` rad/s → `DegPerSec`
+//!  - `IMU.GyrX/Y/Z` rad/s → `DegPerSec` (parser doesn't scale `f` floats)
 //!  - `IMU.AccX/Y/Z` m/s² (already in SI)
 //!  - `RCOU.Cn` motor PWM 1000-2000 → `Normalized01`
 //!  - `RCIN.Cn` stick PWM 1000-2000 → `−1..1` (sticks) / `0..1` (throttle)
 //!  - `BAT.Volt` already in V
-//!  - `GPS.Lat/Lng` already in decimal degrees (AP stores ÷10⁷ pre-scaled by `L` field-type)
 //!
-//! Wait — that's not right. AP `L` is i32 raw degrees×10⁷; `decode_f64`
-//! returns the i32 as f64 unchanged. So we DO scale ×1e-7 here.
+//! AP FMT-type scaling (centidegrees, decimal degrees, etc.) is applied
+//! by the parser via [`FieldType::I16Centi`]/[`FieldType::I32DegreesE7`]
+//! /etc., so values reach this build step already in physical units —
+//! no per-call `× 0.01` or `× 1e-7` needed.
 
 use std::collections::HashMap;
 
@@ -100,20 +101,17 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     }
 
     // ── Attitude (airframe orientation, degrees) ──────────────────────────
-    // AP ATT message stores Roll/Pitch/Yaw with FMT type `c` = i16 in
-    // centidegrees. The parser decodes these as raw i16 → f64 without
-    // scaling, so we divide by 100 here to get degrees.
+    // ATT.{Roll,Pitch,Yaw} use FMT type `c` (centidegrees); the parser's
+    // FieldType::I16Centi scales them to degrees during decode, so build
+    // receives values already in degrees and just casts to f32.
     if let Some(t) = topic_by_name("ATT") {
-        let centi_to_deg = |col: Option<&[f64]>| -> Vec<f32> {
-            col.unwrap_or(&[])
-                .iter()
-                .map(|&v| (v * 0.01).az::<f32>())
-                .collect()
+        let to_f32 = |col: Option<&[f64]>| -> Vec<f32> {
+            col.unwrap_or(&[]).iter().map(|&v| v.az::<f32>()).collect()
         };
         s.attitude.time_us = t.timestamps.clone();
-        s.attitude.values.roll = centi_to_deg(t.column("Roll"));
-        s.attitude.values.pitch = centi_to_deg(t.column("Pitch"));
-        s.attitude.values.yaw = centi_to_deg(t.column("Yaw"));
+        s.attitude.values.roll = to_f32(t.column("Roll"));
+        s.attitude.values.pitch = to_f32(t.column("Pitch"));
+        s.attitude.values.yaw = to_f32(t.column("Yaw"));
     }
 
     // ── Motor outputs: RCOU.C1..C8 PWM 1000-2000 → Normalized01 ───────────
@@ -183,16 +181,19 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     }
 
     // ── GPS ─────────────────────────────────────────────────────────────────
+    // GPS.Lat/Lng use FMT type `L` (int32 × 1e7); the parser's
+    // FieldType::I32DegreesE7 scales to decimal degrees during decode,
+    // so build receives values already in decimal degrees.
     if let Some(t) = topic_by_name("GPS") {
         let mut gps = Gps {
             time_us: t.timestamps.clone(),
             ..Gps::default()
         };
         if let Some(col) = t.column("Lat") {
-            gps.lat = col.iter().map(|&v| DecimalDegrees(v * 1e-7)).collect();
+            gps.lat = col.iter().copied().map(DecimalDegrees).collect();
         }
         if let Some(col) = t.column("Lng") {
-            gps.lng = col.iter().map(|&v| DecimalDegrees(v * 1e-7)).collect();
+            gps.lng = col.iter().copied().map(DecimalDegrees).collect();
         }
         if let Some(col) = t.column("Alt") {
             gps.alt = col.iter().map(|&v| Meters(v.az::<f32>())).collect();
@@ -429,23 +430,25 @@ mod tests {
         assert_eq!(s.flight_mode.values[1], FlightMode::Loiter);
     }
 
-    /// bug_006: ATT message uses centidegree FMT type `c`. The build step
-    /// must divide by 100 so attitude.yaw lands in degrees.
+    /// bug_006 + F7: ATT.{Roll,Pitch,Yaw} use FMT type `c` (centidegrees);
+    /// after F7 the parser scales them at decode time, so the build step
+    /// receives values already in degrees and must just pass them through.
+    /// (Prior to F7, the build step divided by 100 itself; pre-F7 this
+    /// test's synthetic input was in raw centidegrees.)
     #[test]
-    fn ap_attitude_centidegrees_to_degrees() {
+    fn ap_attitude_passes_through_parser_scaled_degrees() {
         let parsed = synthetic_parsed(
             "ATT",
             vec!["Roll", "Pitch", "Yaw"],
             vec![1000, 2000],
             vec![
-                vec![1500.0, -500.0],   // 15.00°, -5.00°
-                vec![-1000.0, 2000.0],  // -10.00°, 20.00°
-                vec![18000.0, 35999.0], // 180.00°, 359.99°
+                vec![15.0, -5.0], // already-scaled degrees
+                vec![-10.0, 20.0],
+                vec![180.0, 359.99],
             ],
         );
         let s = super::session(parsed, vec![], 1);
         assert_eq!(s.attitude.values.roll.len(), 2);
-        // Allow small f32 rounding.
         assert!((s.attitude.values.roll[0] - 15.0).abs() < 0.01);
         assert!((s.attitude.values.pitch[0] - (-10.0)).abs() < 0.01);
         assert!((s.attitude.values.yaw[0] - 180.0).abs() < 0.01);
