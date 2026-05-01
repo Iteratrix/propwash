@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use propwash_core::types::{Axis, SensorField};
-
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -41,16 +39,11 @@ fn main() {
 
     // Benchmark field extraction
     let s = &log.sessions[0];
-    let fields = [
-        SensorField::Time,
-        SensorField::Gyro(Axis::Roll),
-        SensorField::Gyro(Axis::Pitch),
-        SensorField::Gyro(Axis::Yaw),
-    ];
+    let fields = ["time", "gyro[roll]", "gyro[pitch]", "gyro[yaw]"];
     let start = Instant::now();
     for _ in 0..10 {
         for f in &fields {
-            std::hint::black_box(s.field(f));
+            std::hint::black_box(s.field_by_name(f));
         }
     }
     let field_elapsed = start.elapsed();

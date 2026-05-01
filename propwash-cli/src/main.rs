@@ -2,7 +2,6 @@ use std::process;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use propwash_core::analysis::episodes;
-use propwash_core::types::SensorField;
 use serde::Serialize;
 
 #[derive(Clone, Copy, Default, ValueEnum)]
@@ -134,31 +133,20 @@ fn cmd_info(path: &str, json: bool) {
         println!("  Frames:         {}", session.frame_count());
         println!("  Motors:         {}", session.motor_count());
 
-        println!(
-            "  RPM telemetry:  {}",
-            if session
-                .field(&propwash_core::types::SensorField::ERpm(
-                    propwash_core::types::MotorIndex(0),
-                ))
-                .is_empty()
-            {
-                "no"
-            } else {
-                "yes"
-            }
-        );
+        let has_erpm = session
+            .motors
+            .esc
+            .as_ref()
+            .is_some_and(|esc| esc.erpm.iter().any(|c| !c.is_empty()));
+        println!("  RPM telemetry:  {}", if has_erpm { "yes" } else { "no" });
+        // Unfiltered gyro isn't a typed Session slot today — BF is the
+        // only format that exposes it (as a non-canonical field in
+        // `extras`). Detect via the extras key the BF parser uses.
+        let has_unfilt = session.extras.contains_key("gyroUnfilt[0]")
+            || session.extras.contains_key("gyroUnfilt[roll]");
         println!(
             "  Gyro unfilt:    {}",
-            if session
-                .field(&propwash_core::types::SensorField::GyroUnfilt(
-                    propwash_core::types::Axis::Roll,
-                ))
-                .is_empty()
-            {
-                "no"
-            } else {
-                "yes"
-            }
+            if has_unfilt { "yes" } else { "no" }
         );
         println!(
             "  Truncated:      {}",
@@ -714,8 +702,9 @@ fn cmd_dump(
 
         let field_names = session.field_names();
 
-        // Pair field names with their parsed SensorField, dropping unparseable ones
-        let resolved: Vec<(&str, SensorField)> = field_names
+        // Filter by user-supplied prefixes; unresolvable names yield empty
+        // columns from `field_by_name` and are dropped naturally below.
+        let selected_fields: Vec<&str> = field_names
             .iter()
             .filter(|name| {
                 if field_prefixes.is_empty() {
@@ -723,17 +712,16 @@ fn cmd_dump(
                 }
                 field_prefixes.iter().any(|prefix| name.starts_with(prefix))
             })
-            .filter_map(|name| SensorField::parse(name).ok().map(|f| (name.as_str(), f)))
+            .map(String::as_str)
             .collect();
 
-        let selected_fields: Vec<&str> = resolved.iter().map(|(name, _)| *name).collect();
-        let columns: Vec<Vec<f64>> = resolved
+        let columns: Vec<Vec<f64>> = selected_fields
             .iter()
-            .map(|(_, field)| session.field(field))
+            .map(|name| session.field_by_name(name))
             .collect();
 
         let n_frames = session.frame_count();
-        let time_data = session.field(&SensorField::Time);
+        let time_data = session.field_by_name("time");
 
         let frame_range_arg = if frame_start == 0 && frame_end.is_none() {
             None

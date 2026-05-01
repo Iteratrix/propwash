@@ -48,22 +48,11 @@ impl fmt::Display for Axis {
 
 /// RC channel: roll, pitch, yaw, or throttle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RcChannel {
+pub(crate) enum RcChannel {
     Roll,
     Pitch,
     Yaw,
     Throttle,
-}
-
-impl RcChannel {
-    pub fn index(self) -> usize {
-        match self {
-            Self::Roll => 0,
-            Self::Pitch => 1,
-            Self::Yaw => 2,
-            Self::Throttle => 3,
-        }
-    }
 }
 
 impl fmt::Display for RcChannel {
@@ -79,7 +68,7 @@ impl fmt::Display for RcChannel {
 
 /// Typed motor index. Prevents mixing with axis indices or other ordinals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MotorIndex(pub usize);
+pub(crate) struct MotorIndex(pub usize);
 
 impl fmt::Display for MotorIndex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -89,54 +78,16 @@ impl fmt::Display for MotorIndex {
 
 /// Format-agnostic sensor field identifier.
 ///
-/// Canonical unit for a sensor field's values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Unit {
-    /// Microseconds (timestamps).
-    Microseconds,
-    /// Degrees per second (angular rates).
-    DegreesPerSecond,
-    /// Meters per second squared (linear acceleration).
-    MetersPerSecondSquared,
-    /// PWM microseconds (motor/servo/RC outputs).
-    Pwm,
-    /// Revolutions per minute.
-    Rpm,
-    /// Volts.
-    Volts,
-    /// Meters.
-    Meters,
-    /// Meters per second.
-    MetersPerSecond,
-    /// Degrees (angle or coordinate).
-    Degrees,
-    /// No meaningful unit.
-    Dimensionless,
-}
-
-impl fmt::Display for Unit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Microseconds | Self::Pwm => write!(f, "μs"),
-            Self::DegreesPerSecond => write!(f, "deg/s"),
-            Self::MetersPerSecondSquared => write!(f, "m/s²"),
-            Self::Rpm => write!(f, "rpm"),
-            Self::Volts => write!(f, "V"),
-            Self::Meters => write!(f, "m"),
-            Self::MetersPerSecond => write!(f, "m/s"),
-            Self::Degrees => write!(f, "deg"),
-            Self::Dimensionless => write!(f, ""),
-        }
-    }
-}
-
-/// Format-agnostic sensor field identifier.
+/// Crate-internal: external consumers use [`Session::field_by_name`]
+/// to look up fields by string name. Kept inside the crate because
+/// the BF parser uses it as a typed key for field-position lookup
+/// tables.
 ///
 /// Known fields get proper variants with typed indices.
 /// Unknown fields preserve the original header string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
-pub enum SensorField {
+pub(crate) enum SensorField {
     Time,
     Gyro(Axis),
     Motor(MotorIndex),
@@ -160,42 +111,6 @@ pub enum SensorField {
 }
 
 impl SensorField {
-    /// Parses a canonical field name into a `SensorField`.
-    ///
-    /// Canonical names use format-agnostic conventions:
-    /// `"gyro[roll]"`, `"motor[0]"`, `"rc[throttle]"`, `"pid_p[yaw]"`, etc.
-    ///
-    /// Unknown names are returned as `Ok(Self::Unknown(...))`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if an indexed field has an invalid axis or index
-    /// (e.g., `"gyro[invalid]"`).
-    /// Returns the canonical unit for this field's values.
-    ///
-    /// All format implementations must convert to these units in their
-    /// `field()` methods. For example, `Vbat` must return volts regardless
-    /// of whether the format stores millivolts, centivalts, or raw ADC counts.
-    pub fn unit(&self) -> Unit {
-        match self {
-            Self::Time => Unit::Microseconds,
-            Self::Gyro(_) | Self::GyroUnfilt(_) | Self::Setpoint(_) => Unit::DegreesPerSecond,
-            Self::Accel(_) => Unit::MetersPerSecondSquared,
-            Self::Motor(_) | Self::Rc(_) => Unit::Pwm,
-            Self::ERpm(_) => Unit::Rpm,
-            Self::Vbat => Unit::Volts,
-            Self::Altitude => Unit::Meters,
-            Self::GpsSpeed => Unit::MetersPerSecond,
-            Self::GpsLat | Self::GpsLng | Self::Heading => Unit::Degrees,
-            Self::Rssi
-            | Self::PidP(_)
-            | Self::PidI(_)
-            | Self::PidD(_)
-            | Self::Feedforward(_)
-            | Self::Unknown(_) => Unit::Dimensionless,
-        }
-    }
-
     /// Parses a canonical field name into a `SensorField`.
     ///
     /// # Errors

@@ -204,16 +204,14 @@ fn ap_heading_uses_airframe_attitude_not_gps_cog() {
 }
 
 #[test]
-#[allow(deprecated)]
 fn field_heading_prefers_attitude_over_gps_cog() {
-    use propwash_core::types::SensorField;
     let sessions = decode("ardupilot/dronekit-copter-log171.bin");
     let s = &sessions[0];
-    let heading = s.field(&SensorField::Heading);
+    let heading = s.field_by_name("heading");
     assert_eq!(
         heading.len(),
         s.attitude.values.yaw.len(),
-        "field(Heading) should source from attitude.yaw, not gps.heading"
+        "field_by_name(\"heading\") should source from attitude.yaw, not gps.heading"
     );
 }
 
@@ -325,14 +323,12 @@ fn mavlink_unit_sanity() {
 #[test]
 fn spectrogram_smoke_each_format() {
     use propwash_core::analysis::fft::compute_spectrogram;
-    use propwash_core::types::{Axis, SensorField};
 
-    let axes_input = [
-        ("roll", SensorField::Gyro(Axis::Roll)),
-        ("pitch", SensorField::Gyro(Axis::Pitch)),
-        ("yaw", SensorField::Gyro(Axis::Yaw)),
+    let axis_refs: Vec<(&str, &str)> = vec![
+        ("roll", "gyro[roll]"),
+        ("pitch", "gyro[pitch]"),
+        ("yaw", "gyro[yaw]"),
     ];
-    let axis_refs: Vec<(&str, &SensorField)> = axes_input.iter().map(|(n, f)| (*n, f)).collect();
 
     for fixture in [
         "fc-blackbox/btfl_002.bbl",

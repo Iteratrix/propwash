@@ -4,40 +4,11 @@ use rustfft::FftPlanner;
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
-use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session};
-use crate::units::{DegPerSec, MetersPerSec2, Normalized01};
+use crate::types::{Axis, Session};
+use crate::units::DegPerSec;
 
-/// Local helper for `compute_spectrogram` — pulls a numeric trace from
-/// the typed Session by `SensorField`. Only the variants actually requested
-/// by the spectrogram caller are handled; others return empty.
-fn field_as_f64(s: &Session, f: &SensorField) -> Vec<f64> {
-    match f {
-        SensorField::Time => s.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
-        SensorField::Gyro(axis) => {
-            bytemuck::cast_slice::<DegPerSec, f64>(s.gyro.values.get(*axis).as_slice()).to_vec()
-        }
-        SensorField::Setpoint(axis) => {
-            bytemuck::cast_slice::<DegPerSec, f64>(s.setpoint.values.get(*axis).as_slice()).to_vec()
-        }
-        SensorField::Accel(axis) => {
-            bytemuck::cast_slice::<MetersPerSec2, f64>(s.accel.values.get(*axis).as_slice())
-                .to_vec()
-        }
-        SensorField::Motor(MotorIndex(i)) => s
-            .motors
-            .commands
-            .get(*i)
-            .map(|c| c.iter().map(|n| f64::from(n.0)).collect())
-            .unwrap_or_default(),
-        SensorField::Rc(RcChannel::Throttle) => {
-            bytemuck::cast_slice::<Normalized01, f32>(s.rc_command.throttle.as_slice())
-                .iter()
-                .map(|&v| f64::from(v))
-                .collect()
-        }
-        _ => Vec::new(),
-    }
-}
+// `field_as_f64` removed — `compute_spectrogram` now takes field names
+// as `&str` and routes them through `Session::field_by_name`.
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
@@ -724,10 +695,7 @@ pub struct Spectrogram {
 /// contiguous samples of the source field), but the x-axis labels
 /// linearly project onto the gyro time axis, so they're approximate.
 /// Spec accuracy is tracked separately; `bug_005` follow-up.
-pub fn compute_spectrogram(
-    session: &Session,
-    axes: &[(&str, &SensorField)],
-) -> Option<Spectrogram> {
+pub fn compute_spectrogram(session: &Session, axes: &[(&str, &str)]) -> Option<Spectrogram> {
     let sample_rate = session.sample_rate_hz();
     if sample_rate <= 0.0 {
         return None;
@@ -755,7 +723,7 @@ pub fn compute_spectrogram(
     let mut result_axes = Vec::new();
 
     for &(axis_name, field) in axes {
-        let raw = field_as_f64(session, field);
+        let raw = session.field_by_name(field);
         if raw.len() < SPEC_WINDOW {
             continue;
         }

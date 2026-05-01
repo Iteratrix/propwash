@@ -598,14 +598,26 @@ impl Session {
         names
     }
 
-    /// Bridge: legacy stringly-typed field accessor.
+    /// Look up a field by canonical name (e.g. `"gyro[roll]"`,
+    /// `"motor[0]"`, `"vbat"`) and return its values as a `Vec<f64>`.
+    /// Returns an empty `Vec` for names that don't resolve.
     ///
-    /// Used by the CLI `dump` command and the WASM raw-data tab where
-    /// the user supplies a field name (e.g. `gyro[roll]`) at runtime —
-    /// stringly-typed lookup is the right shape there. Internal analysis
-    /// code uses typed accessors directly.
+    /// This is the recommended entry point for tools that take a
+    /// user-supplied field name at runtime (CLI `dump`, WASM raw-data
+    /// tab). Internal analysis code should use the typed accessors
+    /// (`session.gyro.values.roll`, etc.) directly.
+    pub fn field_by_name(&self, name: &str) -> Vec<f64> {
+        match SensorField::parse(name) {
+            Ok(f) => self.field(&f),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Crate-internal: look up a field by typed `SensorField` enum.
+    /// External callers use [`Self::field_by_name`] (which routes
+    /// through `SensorField::parse` then this method).
     #[allow(clippy::too_many_lines)] // declarative variant-to-typed-field routing
-    pub fn field(&self, field: &SensorField) -> Vec<f64> {
+    pub(crate) fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => self.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
             SensorField::Gyro(axis) => {

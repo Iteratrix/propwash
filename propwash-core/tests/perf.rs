@@ -140,14 +140,7 @@ fn perf_mavlink_dronekit() {
 #[test]
 #[ignore]
 fn perf_field_extraction_all_formats() {
-    use propwash_core::types::{Axis, SensorField};
-
-    let fields = [
-        SensorField::Time,
-        SensorField::Gyro(Axis::Roll),
-        SensorField::Gyro(Axis::Pitch),
-        SensorField::Gyro(Axis::Yaw),
-    ];
+    let fields = ["time", "gyro[roll]", "gyro[pitch]", "gyro[yaw]"];
 
     for (name, fixture) in [
         ("BF", "fc-blackbox/btfl_001.bbl"),
@@ -163,7 +156,7 @@ fn perf_field_extraction_all_formats() {
         let start = Instant::now();
         for _ in 0..100 {
             for f in &fields {
-                std::hint::black_box(session.field(f));
+                std::hint::black_box(session.field_by_name(f));
             }
         }
         let elapsed = start.elapsed();
