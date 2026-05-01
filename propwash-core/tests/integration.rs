@@ -217,6 +217,144 @@ fn field_heading_prefers_attitude_over_gps_cog() {
     );
 }
 
+// ── Cross-format unit-sanity ─────────────────────────────────────────────
+//
+// One assert per (format, quantity) that the value range is physically
+// plausible. Catches whole classes of regressions: a build-step that
+// forgets to rad→deg, mV→V, ×0.01, etc. would push values outside
+// these ranges. Skips per-fixture when the underlying field is empty.
+
+fn sanity_check_session(s: &Session, label: &str) {
+    if let Some(v) = s.vbat.values.first().map(|v| v.0) {
+        assert!(
+            (0.0..=80.0).contains(&v),
+            "{label} vbat[0] = {v} V outside plausible 0-80 V range"
+        );
+    }
+    if let Some(c) = s.current.values.first().map(|c| c.0) {
+        // Allow small negative for sensor noise; cap at 500 A (extreme racing).
+        assert!(
+            (-5.0..=500.0).contains(&c),
+            "{label} current[0] = {c} A outside plausible range"
+        );
+    }
+    for (i, motor) in s.motors.commands.iter().enumerate() {
+        if let Some(n) = motor.first() {
+            assert!(
+                (0.0..=1.0).contains(&n.0),
+                "{label} motor[{i}][0] = {} outside [0, 1]",
+                n.0
+            );
+        }
+    }
+    if let Some(gps) = &s.gps {
+        if let Some(lat) = gps.lat.first().map(|d| d.0) {
+            assert!(
+                (-90.0..=90.0).contains(&lat),
+                "{label} gps.lat[0] = {lat} outside [-90, 90]"
+            );
+        }
+        if let Some(lng) = gps.lng.first().map(|d| d.0) {
+            assert!(
+                (-180.0..=180.0).contains(&lng),
+                "{label} gps.lng[0] = {lng} outside [-180, 180]"
+            );
+        }
+    }
+    // Attitude (added by bug_006) — degrees, finite or NaN (NaN-padded
+    // axes from PX4/MAVLink fallback paths are intentional).
+    for (axis_name, axis_vals) in [
+        ("roll", &s.attitude.values.roll),
+        ("pitch", &s.attitude.values.pitch),
+        ("yaw", &s.attitude.values.yaw),
+    ] {
+        for &v in axis_vals.iter().take(50) {
+            if v.is_nan() {
+                continue;
+            }
+            assert!(
+                (-360.0..=360.0).contains(&v),
+                "{label} attitude.{axis_name} = {v} outside [-360, 360]"
+            );
+        }
+    }
+}
+
+#[test]
+fn bf_unit_sanity() {
+    for s in decode("fc-blackbox/btfl_002.bbl") {
+        sanity_check_session(&s, "btfl_002");
+    }
+}
+
+#[test]
+fn ap_unit_sanity() {
+    for s in decode("ardupilot/dronekit-copter-log171.bin") {
+        sanity_check_session(&s, "dronekit-copter");
+    }
+    // bug_006 + F7 cross-check: AP attitude is centidegrees on the wire;
+    // post-F7 the parser scales them, so values should be plausible
+    // degrees, not raw centidegrees (which would be 100× larger).
+    let sessions = decode("ardupilot/dronekit-copter-log171.bin");
+    let yaw = &sessions[0].attitude.values.yaw;
+    if let Some(&v) = yaw.iter().find(|v| !v.is_nan()) {
+        assert!(
+            v.abs() <= 360.0,
+            "AP attitude yaw = {v} not in [-360, 360] — \
+             centidegree scaling likely double-applied or missing"
+        );
+    }
+}
+
+#[test]
+fn px4_unit_sanity() {
+    for s in decode("px4/sample_log_small.ulg") {
+        sanity_check_session(&s, "px4-sample");
+    }
+}
+
+#[test]
+fn mavlink_unit_sanity() {
+    for s in decode("mavlink/dronekit-flight.tlog") {
+        sanity_check_session(&s, "mavlink-dronekit");
+    }
+}
+
+// ── Spectrogram smoke per format ──────────────────────────────────────────
+
+#[test]
+fn spectrogram_smoke_each_format() {
+    use propwash_core::analysis::fft::compute_spectrogram;
+    use propwash_core::types::{Axis, SensorField};
+
+    let axes_input = [
+        ("roll", SensorField::Gyro(Axis::Roll)),
+        ("pitch", SensorField::Gyro(Axis::Pitch)),
+        ("yaw", SensorField::Gyro(Axis::Yaw)),
+    ];
+    let axis_refs: Vec<(&str, &SensorField)> = axes_input.iter().map(|(n, f)| (*n, f)).collect();
+
+    for fixture in [
+        "fc-blackbox/btfl_002.bbl",
+        "ardupilot/dronekit-copter-log171.bin",
+        "px4/sample_log_small.ulg",
+        "mavlink/dronekit-flight.tlog",
+    ] {
+        let sessions = decode(fixture);
+        let spec = compute_spectrogram(&sessions[0], &axis_refs);
+        // Some fixtures may not have enough samples for a full
+        // spectrogram window; require ≥1 axis produced output for
+        // those that do, but skip cleanly for those that don't.
+        if let Some(spec) = spec {
+            assert!(
+                !spec.axes.is_empty(),
+                "{fixture}: spectrogram returned Some but no axes"
+            );
+            assert!(spec.sample_rate_hz > 0.0);
+        }
+    }
+}
+
 // ── Format dispatch ────────────────────────────────────────────────────────
 
 #[test]

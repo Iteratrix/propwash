@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use az::{Az, SaturatingAs, WrappingAs};
 
 use super::frames::{BfFrame, BfFrames};
-use super::types::{BfEvent, BfFrameDefs, BfHeaderValue};
+use super::types::{BfEvent, BfFrameDefs, BfHeaderValue, BfParseStats};
 use crate::session::{Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries};
 use crate::types::{
     AxisGains, FilterConfig, MotorIndex, PidGains, RcChannel, SensorField, Warning,
@@ -27,8 +27,11 @@ use crate::units::{
     DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01, Volts,
 };
 
-/// Build a `Session` by streaming frames from the iterator.
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+/// Build a `Session` by streaming frames from a `BfFrames` iterator.
+/// Thin wrapper around [`session_from_frames`] that drains the
+/// iterator's post-iteration state (stats + warnings) and folds it
+/// into the result.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn session(
     mut frames: BfFrames<'_>,
     headers: &HashMap<String, BfHeaderValue>,
@@ -39,6 +42,47 @@ pub(crate) fn session(
     craft_name: String,
     session_index: usize,
     parse_warnings: Vec<Warning>,
+) -> Session {
+    // Drain the iterator + collect its post-iteration state. Done
+    // up-front so `session_from_frames` can stay format-iterator-
+    // agnostic and accept any `impl Iterator<Item = BfFrame>` —
+    // synthetic frames in tests, real `BfFrames` here.
+    let collected: Vec<BfFrame> = (&mut frames).collect();
+    frames.finalize();
+    let stats = std::mem::take(&mut frames.stats);
+    let mut warnings = parse_warnings;
+    warnings.append(&mut frames.warnings);
+
+    session_from_frames(
+        collected.into_iter(),
+        headers,
+        main_defs,
+        slow_defs,
+        gps_defs,
+        firmware_version,
+        craft_name,
+        session_index,
+        stats,
+        warnings,
+    )
+}
+
+/// Build a `Session` from a stream of pre-decoded [`BfFrame`]s plus
+/// the headers/defs and pre-computed stats/warnings. Generic over the
+/// iterator so tests can feed synthetic frames without constructing a
+/// `BfFrames` (which requires a real binary stream).
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(crate) fn session_from_frames(
+    frames: impl Iterator<Item = BfFrame>,
+    headers: &HashMap<String, BfHeaderValue>,
+    main_defs: &BfFrameDefs,
+    slow_defs: Option<&BfFrameDefs>,
+    gps_defs: Option<&BfFrameDefs>,
+    firmware_version: String,
+    craft_name: String,
+    session_index: usize,
+    stats: BfParseStats,
+    warnings: Vec<Warning>,
 ) -> Session {
     let mut s = Session::default();
 
@@ -72,7 +116,7 @@ pub(crate) fn session(
     let mut prev_flight_mode_flags: u32 = 0;
     let mut armed_state = false;
 
-    for frame in frames.by_ref() {
+    for frame in frames {
         match frame {
             BfFrame::Main { values, .. } => {
                 let t = main_time_idx
@@ -251,11 +295,6 @@ pub(crate) fn session(
             }
         }
     }
-
-    frames.finalize();
-    let stats = std::mem::take(&mut frames.stats);
-    let mut warnings = parse_warnings;
-    warnings.append(&mut frames.warnings);
 
     // BF uses `s.gps.get_or_insert_with` mid-loop, which makes
     // `s.gps == Some` on the first G-frame regardless of whether the
@@ -440,4 +479,163 @@ fn parse_flight_mode_flags(flags: u32) -> (FlightMode, bool) {
         FlightMode::None
     };
     (mode, armed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::format::bf::types::{
+        BfFieldDef, BfFieldSign, BfFrameKind, BfHeaderValue, Encoding, Predictor,
+    };
+    use crate::types::Axis;
+
+    fn field(name: SensorField, encoding: Encoding) -> BfFieldDef {
+        BfFieldDef {
+            name,
+            signed: false,
+            predictor: Predictor::Zero,
+            encoding,
+            value_sign: BfFieldSign::Signed,
+        }
+    }
+
+    /// bug_007 regression: a BF GPS schema that lacks `GpsLat` and
+    /// `GpsLng` (e.g. a stripped-down firmware variant logging only
+    /// altitude and sat count) must yield empty `gps.lat`/`gps.lng` —
+    /// not a vector of `DecimalDegrees(0.0)` per frame (which would
+    /// silently render Null Island on a map). The whole `s.gps`
+    /// option should drop to None when no data column survives.
+    #[test]
+    fn bf_gps_schema_without_latlng_yields_empty_columns() {
+        // Main frame: just Time so the iterator has something to chew.
+        let main_defs = BfFrameDefs::new(vec![field(SensorField::Time, Encoding::UnsignedVb)]);
+        // GPS schema with NO GpsLat/Lng — only Time + Altitude.
+        let gps_defs = BfFrameDefs::new(vec![
+            field(SensorField::Time, Encoding::UnsignedVb),
+            field(SensorField::Altitude, Encoding::SignedVb),
+        ]);
+
+        let frames = vec![
+            BfFrame::Main {
+                kind: BfFrameKind::Intra,
+                values: vec![1000],
+            },
+            BfFrame::Gps {
+                values: vec![1500, 12_345],
+            },
+            BfFrame::Gps {
+                values: vec![2500, 12_400],
+            },
+        ];
+
+        let session = session_from_frames(
+            frames.into_iter(),
+            &HashMap::new(),
+            &main_defs,
+            None,
+            Some(&gps_defs),
+            "test".into(),
+            String::new(),
+            1,
+            BfParseStats::default(),
+            Vec::new(),
+        );
+
+        let gps = session
+            .gps
+            .as_ref()
+            .expect("alt-only schema should still yield Some(Gps) since alt is data");
+        assert!(
+            gps.lat.is_empty(),
+            "absent GpsLat must yield empty Vec, not [0.0; N] (got {} entries)",
+            gps.lat.len()
+        );
+        assert!(
+            gps.lng.is_empty(),
+            "absent GpsLng must yield empty Vec, not [0.0; N]"
+        );
+        assert_eq!(gps.alt.len(), 2, "altitude column should be populated");
+        assert!(gps.has_data(), "alt populated → has_data() == true");
+    }
+
+    /// Companion regression: a GPS schema with ONLY Time (no data
+    /// columns at all) must drop `s.gps` to `None`, since the build
+    /// step's `get_or_insert_with` makes it Some by default.
+    #[test]
+    fn bf_gps_schema_with_only_time_yields_none_session_gps() {
+        let main_defs = BfFrameDefs::new(vec![field(SensorField::Time, Encoding::UnsignedVb)]);
+        let gps_defs = BfFrameDefs::new(vec![field(SensorField::Time, Encoding::UnsignedVb)]);
+
+        let frames = vec![
+            BfFrame::Main {
+                kind: BfFrameKind::Intra,
+                values: vec![1000],
+            },
+            BfFrame::Gps { values: vec![1500] },
+        ];
+
+        let session = session_from_frames(
+            frames.into_iter(),
+            &HashMap::new(),
+            &main_defs,
+            None,
+            Some(&gps_defs),
+            "test".into(),
+            String::new(),
+            1,
+            BfParseStats::default(),
+            Vec::new(),
+        );
+
+        assert!(
+            session.gps.is_none(),
+            "schema without any data columns must drop s.gps to None"
+        );
+    }
+
+    /// Sanity: a normal full-schema GPS frame populates lat/lng correctly
+    /// and they round-trip through the parser → build pipeline as
+    /// decimal degrees (BF stores raw int×10⁷; build divides by 1e7).
+    #[test]
+    fn bf_gps_full_schema_populates_lat_lng() {
+        let main_defs = BfFrameDefs::new(vec![field(SensorField::Time, Encoding::UnsignedVb)]);
+        let gps_defs = BfFrameDefs::new(vec![
+            field(SensorField::Time, Encoding::UnsignedVb),
+            field(SensorField::GpsLat, Encoding::SignedVb),
+            field(SensorField::GpsLng, Encoding::SignedVb),
+        ]);
+
+        let frames = vec![
+            BfFrame::Main {
+                kind: BfFrameKind::Intra,
+                values: vec![1000],
+            },
+            BfFrame::Gps {
+                values: vec![1500, 502_075_967, 7_900_000], // ~50.21°, ~0.79°
+            },
+        ];
+
+        let session = session_from_frames(
+            frames.into_iter(),
+            &HashMap::new(),
+            &main_defs,
+            None,
+            Some(&gps_defs),
+            "test".into(),
+            String::new(),
+            1,
+            BfParseStats::default(),
+            Vec::new(),
+        );
+
+        let gps = session.gps.as_ref().expect("full GPS schema → Some");
+        assert_eq!(gps.lat.len(), 1);
+        assert!(
+            (gps.lat[0].0 - 50.207_596_7).abs() < 1e-6,
+            "lat scaled to decimal degrees, got {}",
+            gps.lat[0].0
+        );
+        // axis is unused but referenced to avoid an unused-import warn:
+        let _ = Axis::Roll;
+    }
 }
