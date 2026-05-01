@@ -1,19 +1,18 @@
 #![doc = "propwash-core: lenient parser for flight controller blackbox logs."]
 #![doc = ""]
-#![doc = "Two-layer API:"]
-#![doc = "- **Unified** — `Session` implements the `Unified` trait for format-agnostic sensor data"]
-#![doc = "- **Raw** (`session.raw`) — format-specific parsed data, faithful to the file"]
+#![doc = "Decodes Betaflight `.bbl`, `ArduPilot` `.bin`, PX4 `.ulg`, and"]
+#![doc = "`MAVLink` `.tlog` formats into a unified, typed [`Session`]."]
 
 pub mod analysis;
 pub mod filter;
-#[cfg(feature = "raw")]
-pub mod format;
-#[cfg(not(feature = "raw"))]
 pub(crate) mod format;
 mod reader;
+pub mod session;
 pub mod types;
+pub mod units;
 
-pub use types::{FilterConfig, Log, ParseError, Session, Warning};
+pub use session::Session;
+pub use types::{FilterConfig, Log, ParseError, Warning};
 
 /// Decodes a blackbox log from raw bytes.
 /// Never panics on corrupt data. Collects warnings instead.
