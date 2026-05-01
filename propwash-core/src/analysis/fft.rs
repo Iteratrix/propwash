@@ -5,6 +5,39 @@ use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
 use crate::types::{Axis, MotorIndex, RcChannel, SensorField, Session};
+use crate::units::{DegPerSec, MetersPerSec2, Normalized01};
+
+/// Local helper for `compute_spectrogram` — pulls a numeric trace from
+/// the typed Session by `SensorField`. Only the variants actually requested
+/// by the spectrogram caller are handled; others return empty.
+fn field_as_f64(s: &Session, f: &SensorField) -> Vec<f64> {
+    match f {
+        SensorField::Time => s.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
+        SensorField::Gyro(axis) => {
+            bytemuck::cast_slice::<DegPerSec, f64>(s.gyro.values.get(*axis).as_slice()).to_vec()
+        }
+        SensorField::Setpoint(axis) => {
+            bytemuck::cast_slice::<DegPerSec, f64>(s.setpoint.values.get(*axis).as_slice()).to_vec()
+        }
+        SensorField::Accel(axis) => {
+            bytemuck::cast_slice::<MetersPerSec2, f64>(s.accel.values.get(*axis).as_slice())
+                .to_vec()
+        }
+        SensorField::Motor(MotorIndex(i)) => s
+            .motors
+            .commands
+            .get(*i)
+            .map(|c| c.iter().map(|n| f64::from(n.0)).collect())
+            .unwrap_or_default(),
+        SensorField::Rc(RcChannel::Throttle) => {
+            bytemuck::cast_slice::<Normalized01, f32>(s.rc_command.throttle.as_slice())
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
@@ -254,25 +287,17 @@ pub fn analyze_vibration_unified(
         return None;
     }
 
-    // Get motor pole count for eRPM → frequency conversion
-    let motor_poles: u32 = match unified {
-        Session::Betaflight(bf) => {
-            let v = bf.get_header_int("motor_poles", 14);
-            if v > 0 {
-                v.cast_unsigned()
-            } else {
-                14
-            }
-        }
-        _ => 14,
-    };
+    // Get motor pole count for eRPM → frequency conversion.
+    // TODO(refactor/session-typed): wire BF parser to put motor_poles into
+    // SessionMeta or extras, then read it here. Default 14 is fine for now.
+    let motor_poles: u32 = 14;
 
     let mut spectra = Vec::new();
 
     for axis in Axis::ALL {
-        let gyro = unified.field(&SensorField::Gyro(axis));
+        let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
         if gyro.len() >= FFT_WINDOW_SIZE {
-            spectra.push(compute_spectrum_from_samples(&gyro, sample_rate, axis));
+            spectra.push(compute_spectrum_from_samples(gyro, sample_rate, axis));
         }
     }
 
@@ -293,11 +318,32 @@ pub fn analyze_vibration_unified(
 
     let propwash = analyze_propwash(unified, events, sample_rate);
 
-    // Compute overall average motor RPM from all eRPM data
+    // Compute overall average motor RPM from all eRPM data, resampled
+    // onto the gyro time axis so that `all_indices` (gyro frame count)
+    // refer to corresponding ESC samples — without this, BF "works"
+    // because main+esc share an axis but AP/PX4 silently misindex.
     let all_indices: Vec<usize> = (0..unified.frame_count()).collect();
-    let erpm_data: Vec<Vec<f64>> = (0..4)
-        .map(|i| unified.field(&SensorField::ERpm(MotorIndex(i))))
-        .collect();
+    let erpm_data: Vec<Vec<f64>> = if let Some(esc) = unified.motors.esc.as_ref() {
+        let target_axis = &unified.gyro.time_us;
+        (0..esc.erpm.len())
+            .map(|i| {
+                let col = &esc.erpm[i];
+                if col.is_empty() {
+                    return Vec::new();
+                }
+                let view = super::util::TimeSeriesView {
+                    time_us: &esc.time_us,
+                    values: col.as_slice(),
+                };
+                super::util::resample_zoh_view(view, target_axis)
+                    .into_iter()
+                    .map(|r| f64::from(r.0))
+                    .collect()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let avg_motor_hz = if erpm_data.iter().any(|e| !e.is_empty()) {
         compute_avg_motor_hz(&erpm_data, &all_indices, motor_poles)
     } else {
@@ -319,12 +365,27 @@ fn compute_throttle_bands_unified(
     sample_rate: f64,
     motor_poles: u32,
 ) -> Vec<ThrottleBand> {
-    let throttle = unified.field(&SensorField::Rc(RcChannel::Throttle));
-    if throttle.is_empty() {
+    if unified.rc_command.throttle.is_empty() {
+        return Vec::new();
+    }
+    let target_axis = &unified.gyro.time_us;
+    if target_axis.is_empty() {
         return Vec::new();
     }
 
-    // Normalize throttle to percentage using data range
+    // Resample raw throttle (Normalized01 on rc_command.time_us) onto
+    // the gyro time axis so band-membership indices and gyro/ERPM
+    // sample lookups all refer to the same moments.
+    let throttle_view = super::util::TimeSeriesView {
+        time_us: &unified.rc_command.time_us,
+        values: unified.rc_command.throttle.as_slice(),
+    };
+    let throttle: Vec<f64> = super::util::resample_zoh_view(throttle_view, target_axis)
+        .into_iter()
+        .map(|n| f64::from(n.0))
+        .collect();
+
+    // Normalize throttle to percentage using its own data range
     let t_min_val = throttle.iter().copied().fold(f64::MAX, f64::min);
     let t_max_val = throttle.iter().copied().fold(f64::MIN, f64::max);
     let t_range = (t_max_val - t_min_val).max(1.0);
@@ -335,13 +396,32 @@ fn compute_throttle_bands_unified(
 
     let gyro_data: Vec<Vec<f64>> = Axis::ALL
         .iter()
-        .map(|a| unified.field(&SensorField::Gyro(*a)))
+        .map(|a| {
+            bytemuck::cast_slice::<DegPerSec, f64>(unified.gyro.values.get(*a).as_slice()).to_vec()
+        })
         .collect();
 
-    // Collect eRPM data for all motors (average across motors for RPM frequency)
-    let erpm_data: Vec<Vec<f64>> = (0..4)
-        .map(|i| unified.field(&SensorField::ERpm(MotorIndex(i))))
-        .collect();
+    // eRPM resampled onto the gyro axis too.
+    let erpm_data: Vec<Vec<f64>> = if let Some(esc) = unified.motors.esc.as_ref() {
+        (0..esc.erpm.len())
+            .map(|i| {
+                let col = &esc.erpm[i];
+                if col.is_empty() {
+                    return Vec::new();
+                }
+                let view = super::util::TimeSeriesView {
+                    time_us: &esc.time_us,
+                    values: col.as_slice(),
+                };
+                super::util::resample_zoh_view(view, target_axis)
+                    .into_iter()
+                    .map(|r| f64::from(r.0))
+                    .collect()
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let has_erpm = erpm_data.iter().any(|e| !e.is_empty());
 
     let mut bands = Vec::new();
@@ -438,7 +518,7 @@ fn analyze_accel_unified(unified: &Session, sample_rate: f64) -> Option<AccelVib
     let mut has_data = false;
 
     for (i, axis) in Axis::ALL.iter().enumerate() {
-        let samples = unified.field(&SensorField::Accel(*axis));
+        let samples: &[f64] = bytemuck::cast_slice(unified.accel.values.get(*axis).as_slice());
         if samples.is_empty() {
             continue;
         }
@@ -476,6 +556,7 @@ const PROPWASH_WINDOW_SECS: f64 = 0.75;
 const PROPWASH_MIN_HZ: f64 = 20.0;
 const PROPWASH_MAX_HZ: f64 = 100.0;
 
+#[allow(clippy::too_many_lines)]
 fn analyze_propwash(
     session: &Session,
     events: &[FlightEvent],
@@ -493,7 +574,12 @@ fn analyze_propwash(
         return None;
     }
 
-    let time = session.field(&SensorField::Time);
+    let time: Vec<f64> = session
+        .gyro
+        .time_us
+        .iter()
+        .map(|&t| t.az::<f64>())
+        .collect();
     if time.is_empty() {
         return None;
     }
@@ -508,7 +594,9 @@ fn analyze_propwash(
 
     let gyro_data: Vec<Vec<f64>> = Axis::ALL
         .iter()
-        .map(|a| session.field(&SensorField::Gyro(*a)))
+        .map(|a| {
+            bytemuck::cast_slice::<DegPerSec, f64>(session.gyro.values.get(*a).as_slice()).to_vec()
+        })
         .collect();
 
     if gyro_data.iter().all(Vec::is_empty) {
@@ -626,6 +714,14 @@ pub struct Spectrogram {
 ///
 /// Each entry in `axes` is `(axis_name, sensor_field)`. Returns `None` if the
 /// session has no valid sample rate or no axis produced output.
+///
+/// **Caveat (multi-rate sources):** the per-window timestamps are
+/// derived from `session.gyro.time_us`. For non-gyro fields (motor,
+/// throttle, accel) on AP/PX4/MAVLink — where each stream has its own
+/// rate — the FFT magnitudes themselves are correct (each window is
+/// contiguous samples of the source field), but the x-axis labels
+/// linearly project onto the gyro time axis, so they're approximate.
+/// Spec accuracy is tracked separately; `bug_005` follow-up.
 pub fn compute_spectrogram(
     session: &Session,
     axes: &[(&str, &SensorField)],
@@ -641,7 +737,12 @@ pub fn compute_spectrogram(
         .min(SPEC_WINDOW / 2);
     let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i.az::<f64>() * freq_res).collect();
 
-    let time_raw = session.field(&SensorField::Time);
+    let time_raw: Vec<f64> = session
+        .gyro
+        .time_us
+        .iter()
+        .map(|&t| t.az::<f64>())
+        .collect();
     let t0 = time_raw.first().copied().unwrap_or(0.0);
 
     let hann = hann_window(SPEC_WINDOW);
@@ -652,7 +753,7 @@ pub fn compute_spectrogram(
     let mut result_axes = Vec::new();
 
     for &(axis_name, field) in axes {
-        let raw = session.field(field);
+        let raw = field_as_f64(session, field);
         if raw.len() < SPEC_WINDOW {
             continue;
         }
@@ -873,6 +974,76 @@ mod tests {
         assert!(
             (hz - 14.3).abs() < 0.5,
             "should be ~14.3 Hz (ignoring zeros), got {hz:.1}"
+        );
+    }
+
+    /// bug_005 regression: `compute_throttle_bands_unified` must classify
+    /// gyro samples by their *real-time-correlated* throttle, not by
+    /// indexing throttle and gyro at the same array position. A Session
+    /// where throttle is at 50 Hz and gyro is at 4 kHz exercises the
+    /// resample path; if the path regressed to direct indexing, the
+    /// throttle would drive band selection on only the first ~50 of
+    /// the 4000 gyro samples and the rest would all classify as the
+    /// last-known band — yielding wildly skewed `frame_count`s.
+    #[test]
+    fn throttle_bands_use_resampled_throttle_axis() {
+        use crate::session::{Format, RcCommand, Session, SessionMeta, TriaxialSeries};
+        use crate::units::{DegPerSec, Normalized01};
+
+        // 1 second @ 4 kHz gyro, 50 Hz throttle.
+        let gyro_n = 4_000usize;
+        let throttle_n = 50usize;
+        let gyro_time: Vec<u64> = (0..gyro_n).map(|i| (i * 250) as u64).collect();
+        let throttle_time: Vec<u64> = (0..throttle_n).map(|i| (i * 20_000) as u64).collect();
+
+        // Throttle ramp: 0%-50% over the first half, 50%-100% over the
+        // second half. After resample-to-gyro, the first 2000 gyro
+        // samples should fall in 0-25%/25-50% bands and the second 2000
+        // in 50-75%/75-100% bands. Direct-indexing regression would
+        // flatten this to throttle_n=50 samples and leave the remaining
+        // ~3950 gyro samples mis-classified.
+        let throttle: Vec<Normalized01> = (0..throttle_n)
+            .map(|i| Normalized01((i as f32) / (throttle_n as f32 - 1.0)))
+            .collect();
+
+        let mut s = Session::default();
+        s.meta = SessionMeta {
+            format: Format::ArduPilot,
+            ..SessionMeta::default()
+        };
+        // Gyro: a sine wave on roll so the FFT actually has content
+        // (compute_throttle_bands_unified internally calls compute_spectrum
+        // which needs ≥ FFT_WINDOW_SIZE samples and non-zero magnitudes).
+        let sine: Vec<DegPerSec> = (0..gyro_n)
+            .map(|i| {
+                let v = (2.0 * std::f64::consts::PI * 200.0 * i as f64 / 4_000.0).sin() * 100.0;
+                DegPerSec(v)
+            })
+            .collect();
+        s.gyro = TriaxialSeries {
+            time_us: gyro_time,
+            values: crate::session::Triaxial::new(
+                sine.clone(),
+                vec![DegPerSec(0.0); gyro_n],
+                vec![DegPerSec(0.0); gyro_n],
+            ),
+        };
+        s.rc_command = RcCommand {
+            time_us: throttle_time,
+            sticks: crate::session::Triaxial::new(vec![], vec![], vec![]),
+            throttle,
+        };
+
+        let bands = super::compute_throttle_bands_unified(&s, 4_000.0, 14);
+        // Each band's frame_count must reflect membership of gyro
+        // samples (which span the full ~4000), not the raw 50
+        // throttle samples. Sum across bands ≥ FFT_WINDOW_SIZE means
+        // the resample expanded throttle correctly onto gyro time.
+        let total: usize = bands.iter().map(|b| b.frame_count).sum();
+        assert!(
+            total >= 1024,
+            "expected ≥1024 gyro samples binned across throttle bands; \
+             got {total} (likely regressed to direct-index throttle)"
         );
     }
 }
