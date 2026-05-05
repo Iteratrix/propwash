@@ -507,12 +507,17 @@ impl Session {
         (0.0, 1.0)
     }
 
-    /// Returns canonical names of all populated typed streams plus any
-    /// `extras` keys. Format-agnostic: a name appearing here means
-    /// [`Self::field`] will return non-empty data for it.
+    /// Enumerate canonical names of populated streams (typed slots +
+    /// `extras` keys) for runtime field-picker UIs and `propwash info`
+    /// output. A name in this list, when round-tripped through
+    /// [`SensorField::from_str`] and [`Self::field`], is guaranteed to
+    /// resolve to a non-empty `Vec` (with the exception of names that
+    /// have no `SensorField` variant — `attitude[*]`, `current`,
+    /// `extras` keys — which fall back to [`SensorField::Unknown`]).
     ///
-    /// Used by user-facing tools (CLI `info`, `dump`, WASM raw-data tab)
-    /// to enumerate available signals.
+    /// Code that knows what it wants at compile time should reach into
+    /// the typed fields directly (`session.gyro.values.roll`, etc.)
+    /// instead of round-tripping through strings.
     pub fn field_names(&self) -> Vec<String> {
         let mut names = Vec::new();
         // Time is the implicit anchor for any non-empty triaxial stream.
@@ -598,26 +603,28 @@ impl Session {
         names
     }
 
-    /// Look up a field by canonical name (e.g. `"gyro[roll]"`,
-    /// `"motor[0]"`, `"vbat"`) and return its values as a `Vec<f64>`.
-    /// Returns an empty `Vec` for names that don't resolve.
+    /// Look up a field by typed [`SensorField`] handle. Returns an
+    /// empty `Vec` for variants that aren't populated in this session
+    /// (e.g. asking for `Gyro(Roll)` on a session whose gyro stream is
+    /// empty, or any [`SensorField::Unknown`] value).
     ///
-    /// This is the recommended entry point for tools that take a
-    /// user-supplied field name at runtime (CLI `dump`, WASM raw-data
-    /// tab). Internal analysis code should use the typed accessors
-    /// (`session.gyro.values.roll`, etc.) directly.
-    pub fn field_by_name(&self, name: &str) -> Vec<f64> {
-        match SensorField::parse(name) {
-            Ok(f) => self.field(&f),
-            Err(_) => Vec::new(),
-        }
-    }
-
-    /// Crate-internal: look up a field by typed `SensorField` enum.
-    /// External callers use [`Self::field_by_name`] (which routes
-    /// through `SensorField::parse` then this method).
+    /// **Prefer the typed accessors directly** when the field is
+    /// known at compile time — they're zero-cost and preserve unit
+    /// information:
+    ///
+    /// ```ignore
+    /// let roll: &[DegPerSec]    = &session.gyro.values.roll;
+    /// let m0:   &[Normalized01] = &session.motors.commands[0];
+    /// let vbat: &[Volts]        = &session.vbat.values;
+    /// ```
+    ///
+    /// Use this method when the field handle came from a runtime
+    /// source — a CLI argument parsed via [`SensorField::from_str`],
+    /// a `SensorField` deserialized off the WASM boundary, etc. It
+    /// allocates a `Vec<f64>` per call (copy + cast off the typed
+    /// columns) and erases the unit type.
     #[allow(clippy::too_many_lines)] // declarative variant-to-typed-field routing
-    pub(crate) fn field(&self, field: &SensorField) -> Vec<f64> {
+    pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {
             SensorField::Time => self.gyro.time_us.iter().map(|&t| t.az::<f64>()).collect(),
             SensorField::Gyro(axis) => {

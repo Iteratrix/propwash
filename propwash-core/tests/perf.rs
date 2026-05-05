@@ -140,7 +140,7 @@ fn perf_mavlink_dronekit() {
 #[test]
 #[ignore]
 fn perf_field_extraction_all_formats() {
-    let fields = ["time", "gyro[roll]", "gyro[pitch]", "gyro[yaw]"];
+    use propwash_core::units::DegPerSec;
 
     for (name, fixture) in [
         ("BF", "fc-blackbox/btfl_001.bbl"),
@@ -151,23 +151,26 @@ fn perf_field_extraction_all_formats() {
         let path = fixture_path(fixture);
         let data = std::fs::read(&path).unwrap();
         let log = propwash_core::decode(&data).unwrap();
-        let session = &log.sessions[0];
+        let s = &log.sessions[0];
 
         let start = Instant::now();
         for _ in 0..100 {
-            for f in &fields {
-                std::hint::black_box(session.field_by_name(f));
-            }
+            std::hint::black_box(s.gyro.time_us.as_slice());
+            std::hint::black_box(bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.roll));
+            std::hint::black_box(bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.pitch));
+            std::hint::black_box(bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.yaw));
         }
         let elapsed = start.elapsed();
         let ms_per = elapsed.as_secs_f64() * 1000.0 / 100.0;
 
-        eprintln!("  {name} field extract (4 fields): {ms_per:.2}ms per iteration");
+        eprintln!("  {name} typed field access (time + 3 gyro): {ms_per:.4}ms per iteration");
 
-        // Columnar storage should make field extraction fast
+        // Typed access via cast_slice is zero-cost; this should be
+        // well under a millisecond. Catches accidental regressions
+        // (e.g. an allocating implementation slipping in).
         assert!(
-            ms_per < 50.0,
-            "{name} field extraction {ms_per:.1}ms exceeds 50ms ceiling"
+            ms_per < 1.0,
+            "{name} typed field access {ms_per:.3}ms exceeds 1ms ceiling"
         );
     }
 }

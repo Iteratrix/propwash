@@ -7,9 +7,6 @@ use super::events::{EventKind, FlightEvent};
 use crate::types::{Axis, Session};
 use crate::units::DegPerSec;
 
-// `field_as_f64` removed — `compute_spectrogram` now takes field names
-// as `&str` and routes them through `Session::field_by_name`.
-
 #[derive(Debug, Clone, Serialize)]
 pub struct FrequencySpectrum {
     pub axis: Axis,
@@ -685,34 +682,38 @@ pub struct Spectrogram {
 
 /// Computes a time-frequency spectrogram for the given axes.
 ///
-/// Each entry in `axes` is `(axis_name, sensor_field)`. Returns `None` if the
-/// session has no valid sample rate or no axis produced output.
+/// Each entry in `axes` is `(axis_label, samples)` — the caller pulls
+/// the samples out of typed Session fields (e.g. via
+/// `bytemuck::cast_slice` on `session.gyro.values.roll`) and labels
+/// them however it wants for the result. `sample_rate_hz` and
+/// `time_us_axis` come from the same Session field the samples are
+/// taken from, typically the gyro axis.
 ///
-/// **Caveat (multi-rate sources):** the per-window timestamps are
-/// derived from `session.gyro.time_us`. For non-gyro fields (motor,
-/// throttle, accel) on AP/PX4/MAVLink — where each stream has its own
-/// rate — the FFT magnitudes themselves are correct (each window is
-/// contiguous samples of the source field), but the x-axis labels
-/// linearly project onto the gyro time axis, so they're approximate.
-/// Spec accuracy is tracked separately; `bug_005` follow-up.
-pub fn compute_spectrogram(session: &Session, axes: &[(&str, &str)]) -> Option<Spectrogram> {
-    let sample_rate = session.sample_rate_hz();
-    if sample_rate <= 0.0 {
+/// Returns `None` if `sample_rate_hz` is non-positive or no axis
+/// produced enough samples for one window.
+///
+/// **Caveat (multi-rate sources):** for axes whose source stream
+/// samples at a different rate than `time_us_axis`, the FFT magnitudes
+/// are correct (each window is contiguous samples of the source) but
+/// the per-window x-axis labels linearly project onto `time_us_axis`,
+/// so they're approximate. Pass the same axis whose `samples` you're
+/// FFT-ing to keep labels exact.
+pub fn compute_spectrogram(
+    sample_rate_hz: f64,
+    time_us_axis: &[u64],
+    axes: &[(&str, &[f64])],
+) -> Option<Spectrogram> {
+    if sample_rate_hz <= 0.0 {
         return None;
     }
 
-    let freq_res = sample_rate / SPEC_WINDOW.az::<f64>();
+    let freq_res = sample_rate_hz / SPEC_WINDOW.az::<f64>();
     let max_bin = (SPEC_MAX_FREQ / freq_res)
         .saturating_as::<usize>()
         .min(SPEC_WINDOW / 2);
     let frequencies_hz: Vec<f64> = (0..max_bin).map(|i| i.az::<f64>() * freq_res).collect();
 
-    let time_raw: Vec<f64> = session
-        .gyro
-        .time_us
-        .iter()
-        .map(|&t| t.az::<f64>())
-        .collect();
+    let time_raw: Vec<f64> = time_us_axis.iter().map(|&t| t.az::<f64>()).collect();
     let t0 = time_raw.first().copied().unwrap_or(0.0);
 
     let hann = hann_window(SPEC_WINDOW);
@@ -722,8 +723,7 @@ pub fn compute_spectrogram(session: &Session, axes: &[(&str, &str)]) -> Option<S
     let step = SPEC_WINDOW - SPEC_OVERLAP;
     let mut result_axes = Vec::new();
 
-    for &(axis_name, field) in axes {
-        let raw = session.field_by_name(field);
+    for &(axis_name, raw) in axes {
         if raw.len() < SPEC_WINDOW {
             continue;
         }
@@ -778,7 +778,7 @@ pub fn compute_spectrogram(session: &Session, axes: &[(&str, &str)]) -> Option<S
 
     Some(Spectrogram {
         axes: result_axes,
-        sample_rate_hz: sample_rate,
+        sample_rate_hz,
     })
 }
 

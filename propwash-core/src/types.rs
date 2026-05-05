@@ -1,13 +1,18 @@
 use std::fmt;
+use std::str::FromStr;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "wasm")]
+use tsify_next::Tsify;
 
 // Re-export so existing `crate::types::Session` imports keep working during
 // the refactor — Session itself lives in `crate::session`.
 pub use crate::session::Session;
 
 /// Rotational axis: roll, pitch, or yaw.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Axis {
     Roll,
     Pitch,
@@ -47,8 +52,10 @@ impl fmt::Display for Axis {
 }
 
 /// RC channel: roll, pitch, yaw, or throttle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum RcChannel {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub enum RcChannel {
     Roll,
     Pitch,
     Yaw,
@@ -67,8 +74,13 @@ impl fmt::Display for RcChannel {
 }
 
 /// Typed motor index. Prevents mixing with axis indices or other ordinals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct MotorIndex(pub usize);
+///
+/// Serialized as a bare integer (newtype-struct shorthand): `MotorIndex(3)`
+/// goes over the wire as `3`, not `{ "MotorIndex": 3 }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
+pub struct MotorIndex(pub usize);
 
 impl fmt::Display for MotorIndex {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -78,16 +90,24 @@ impl fmt::Display for MotorIndex {
 
 /// Format-agnostic sensor field identifier.
 ///
-/// Crate-internal: external consumers use [`Session::field_by_name`]
-/// to look up fields by string name. Kept inside the crate because
-/// the BF parser uses it as a typed key for field-position lookup
-/// tables.
+/// Public so external consumers can pass typed field handles to
+/// [`Session::field`] (faster + type-safe) or speak it across the
+/// WASM boundary as a discriminated union.
 ///
-/// Known fields get proper variants with typed indices.
-/// Unknown fields preserve the original header string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Wire format (default serde external tagging):
+/// - Unit variants serialize as plain strings: `"Time"`, `"Vbat"`,
+///   `"Heading"`.
+/// - Payload variants serialize as single-key objects:
+///   `{ "Gyro": "Roll" }`, `{ "Motor": 0 }`,
+///   `{ "Unknown": "weird_field" }`.
+///
+/// For the canonical-string format used by [`Self::parse`] /
+/// [`Display`] (`"gyro[roll]"`, `"motor[0]"`), use [`FromStr`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[non_exhaustive]
-pub(crate) enum SensorField {
+pub enum SensorField {
     Time,
     Gyro(Axis),
     Motor(MotorIndex),
@@ -110,8 +130,19 @@ pub(crate) enum SensorField {
     Unknown(String),
 }
 
+impl FromStr for SensorField {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
 impl SensorField {
-    /// Parses a canonical field name into a `SensorField`.
+    /// Parses a canonical field name (e.g. `"gyro[roll]"`,
+    /// `"motor[0]"`, `"vbat"`) into a `SensorField`. Same logic as
+    /// [`FromStr`]; kept as an inherent method for ergonomic use
+    /// without needing the trait in scope.
     ///
     /// # Errors
     ///

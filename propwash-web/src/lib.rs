@@ -1,11 +1,21 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use serde::Serialize;
+use az::Az;
+use serde::{Deserialize, Serialize};
+use tsify_next::Tsify;
 use wasm_bindgen::prelude::*;
 
 use propwash_core::analysis::{self, fft, trend, FlightAnalysis};
-use propwash_core::types::Log;
+use propwash_core::types::{Log, SensorField};
+
+/// Newtype wrapper so `Vec<SensorField>` can cross the wasm-bindgen
+/// boundary as a typed `SensorField[]` array. JS callers see a plain
+/// array of `SensorField` values; Rust gets a typed `Vec<SensorField>`.
+#[derive(Tsify, Serialize, Deserialize)]
+#[tsify(into_wasm_abi, from_wasm_abi)]
+#[serde(transparent)]
+pub struct SensorFields(pub Vec<SensorField>);
 
 // ---------------------------------------------------------------------------
 // Workspace state — supports multiple loaded files
@@ -198,8 +208,9 @@ pub fn get_timeseries(
     file_id: u32,
     session_idx: usize,
     max_points: usize,
-    field_list: &str,
+    field_list: SensorFields,
 ) -> String {
+    let SensorFields(requested) = field_list;
     with_session(file_id, session_idx, |session| {
         let total_frames = session.frame_count();
         let sample_rate = session.sample_rate_hz();
@@ -210,11 +221,10 @@ pub fn get_timeseries(
             1
         };
 
-        let requested: Vec<&str> = field_list.split(',').collect();
         let mut fields: HashMap<String, Vec<f64>> = HashMap::new();
 
-        for &name in &requested {
-            let raw = session.field_by_name(name);
+        for name in &requested {
+            let raw = session.field(name);
             if raw.is_empty() {
                 continue;
             }
@@ -222,12 +232,19 @@ pub fn get_timeseries(
             fields.insert(name.to_string(), decimated);
         }
 
-        let time_raw = session.field_by_name("time");
-        let t0 = time_raw.first().copied().unwrap_or(0.0);
-        let time_s: Vec<f64> = time_raw
+        let t0 = session
+            .gyro
+            .time_us
+            .first()
+            .copied()
+            .unwrap_or(0)
+            .az::<f64>();
+        let time_s: Vec<f64> = session
+            .gyro
+            .time_us
             .iter()
             .step_by(step)
-            .map(|&v| (v - t0) / 1_000_000.0)
+            .map(|&v| (v.az::<f64>() - t0) / 1_000_000.0)
             .collect();
 
         let result = TimeseriesResult {
@@ -243,30 +260,24 @@ pub fn get_timeseries(
     })
 }
 
-/// Get spectrogram data for a session.
+/// Get spectrogram data for a session. Each axis is labelled by its
+/// `Display` form (e.g. `"gyro[roll]"`) in the response.
 #[wasm_bindgen]
-pub fn get_spectrogram(file_id: u32, session_idx: usize, axis_list: &str) -> String {
+pub fn get_spectrogram(file_id: u32, session_idx: usize, axis_list: SensorFields) -> String {
+    let SensorFields(requested) = axis_list;
     with_session(file_id, session_idx, |session| {
-        // Frontend passes "roll"/"pitch"/"yaw" shorthand for gyro axes;
-        // expand to the canonical Session field names.
-        let resolved: Vec<(String, String)> = axis_list
-            .split(',')
-            .map(|a| {
-                let canonical = match a {
-                    "roll" => "gyro[roll]".to_string(),
-                    "pitch" => "gyro[pitch]".to_string(),
-                    "yaw" => "gyro[yaw]".to_string(),
-                    other => other.to_string(),
-                };
-                (a.to_string(), canonical)
-            })
-            .collect();
-        let axis_refs: Vec<(&str, &str)> = resolved
+        let owned: Vec<(String, Vec<f64>)> = requested
             .iter()
-            .map(|(label, canonical)| (label.as_str(), canonical.as_str()))
+            .map(|f| (f.to_string(), session.field(f)))
+            .collect();
+        let axes: Vec<(&str, &[f64])> = owned
+            .iter()
+            .map(|(label, samples)| (label.as_str(), samples.as_slice()))
             .collect();
 
-        let Some(spectrogram) = fft::compute_spectrogram(session, &axis_refs) else {
+        let Some(spectrogram) =
+            fft::compute_spectrogram(session.sample_rate_hz(), &session.gyro.time_us, &axes)
+        else {
             return r#"{"error":"no spectrogram data"}"#.to_string();
         };
 
@@ -291,18 +302,15 @@ pub fn get_raw_frames(
     session_idx: usize,
     start: usize,
     count: usize,
-    field_list: &str,
+    field_list: SensorFields,
 ) -> String {
+    let SensorFields(requested) = field_list;
     with_session(file_id, session_idx, |session| {
         let total = session.frame_count();
-        let requested: Vec<&str> = field_list.split(',').collect();
 
         let end = (start + count).min(total);
 
-        let columns: Vec<Vec<f64>> = requested
-            .iter()
-            .map(|&name| session.field_by_name(name))
-            .collect();
+        let columns: Vec<Vec<f64>> = requested.iter().map(|f| session.field(f)).collect();
 
         let frames: Vec<Vec<f64>> = (start..end)
             .map(|frame_idx| {
@@ -314,7 +322,7 @@ pub fn get_raw_frames(
             .collect();
 
         let result = RawFramesResult {
-            field_names: requested.iter().map(|s| (*s).to_string()).collect(),
+            field_names: requested.iter().map(SensorField::to_string).collect(),
             frames,
             start,
             total,

@@ -1,4 +1,5 @@
 import { get_spectrogram } from "../../pkg/propwash_web.js";
+import type { SensorField } from "../../pkg/propwash_web.js";
 import { heatColor } from "../format.js";
 import type { SessionRef, VibrationAnalysis, Spectrum } from "../types.js";
 import { $, chartWidth, filterConfig, echartsInstances } from "../state.js";
@@ -220,7 +221,8 @@ export function renderSpectrogram(ref: SessionRef): void {
   const container = $("#spectrogram-plots");
   container.innerHTML = "";
 
-  const json = get_spectrogram(ref.fileId, ref.sessionIdx, "roll,pitch,yaw");
+  const axes: SensorField[] = [{ Gyro: "Roll" }, { Gyro: "Pitch" }, { Gyro: "Yaw" }];
+  const json = get_spectrogram(ref.fileId, ref.sessionIdx, axes);
   const data = JSON.parse(json);
   if (data.error || !data.axes || data.axes.length === 0) {
     container.innerHTML = '<p class="hint">No spectrogram data available.</p>';

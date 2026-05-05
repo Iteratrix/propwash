@@ -492,9 +492,7 @@ fn parse_flight_mode_flags(flags: u32) -> (FlightMode, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::bf::types::{
-        BfFieldDef, BfFieldSign, BfFrameKind, BfHeaderValue, Encoding, Predictor,
-    };
+    use crate::format::bf::types::{BfFieldDef, BfFieldSign, BfFrameKind, Encoding, Predictor};
     use crate::types::Axis;
 
     fn field(name: SensorField, encoding: Encoding) -> BfFieldDef {
