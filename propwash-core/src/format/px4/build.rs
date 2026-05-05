@@ -333,6 +333,7 @@ pub(crate) fn session(parsed: Px4Parsed, warnings: Vec<Warning>, session_index: 
         },
         board: None,
         motor_count: s.meta.motor_count,
+        motor_poles: None, // PX4 doesn't expose motor pole count via params
         pid_gains: None,
         filter_config: None,
         session_index,

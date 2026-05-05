@@ -396,6 +396,12 @@ pub struct SessionMeta {
     pub craft_name: Option<String>,
     pub board: Option<String>,
     pub motor_count: usize,
+    /// Motor pole count, used by FFT analysis to convert eRPM to
+    /// mechanical Hz (`mechanical_hz = erpm / 60 / (poles / 2)`).
+    /// Sourced from BF `motor_poles` header; AP/PX4/MAVLink leave it
+    /// `None`. Default 14 (3-pole-pair brushless, the common 5" build)
+    /// is a reasonable downstream fallback.
+    pub motor_poles: Option<u32>,
     pub pid_gains: Option<PidGains>,
     pub filter_config: Option<FilterConfig>,
     /// 1-based index within the parent log (logs may contain multiple sessions).
@@ -416,6 +422,7 @@ impl Default for SessionMeta {
             craft_name: None,
             board: None,
             motor_count: 0,
+            motor_poles: None,
             pid_gains: None,
             filter_config: None,
             session_index: 0,
@@ -500,27 +507,122 @@ impl Session {
         (0.0, 1.0)
     }
 
-    /// Returns the names of all populated streams.
-    /// TODO(refactor/session-typed): replace with typed iteration once
-    /// consumers no longer ask for fields by name.
+    /// Enumerate canonical names of populated streams (typed slots +
+    /// `extras` keys) for runtime field-picker UIs and `propwash info`
+    /// output. A name in this list, when round-tripped through
+    /// [`SensorField::from_str`] and [`Self::field`], is guaranteed to
+    /// resolve to a non-empty `Vec` (with the exception of names that
+    /// have no `SensorField` variant — `attitude[*]`, `current`,
+    /// `extras` keys — which fall back to [`SensorField::Unknown`]).
+    ///
+    /// Code that knows what it wants at compile time should reach into
+    /// the typed fields directly (`session.gyro.values.roll`, etc.)
+    /// instead of round-tripping through strings.
     pub fn field_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        if !self.gyro.is_empty() {
+        // Time is the implicit anchor for any non-empty triaxial stream.
+        if !self.gyro.is_empty()
+            || !self.accel.is_empty()
+            || !self.setpoint.is_empty()
+            || !self.motors.is_empty()
+            || !self.rc_command.is_empty()
+        {
             names.push("time".into());
-            for axis in [Axis::Roll, Axis::Pitch, Axis::Yaw] {
+        }
+        for axis in [Axis::Roll, Axis::Pitch, Axis::Yaw] {
+            if !self.gyro.values.get(axis).is_empty() {
                 names.push(format!("gyro[{axis}]"));
+            }
+        }
+        for axis in [Axis::Roll, Axis::Pitch, Axis::Yaw] {
+            if !self.accel.values.get(axis).is_empty() {
+                names.push(format!("accel[{axis}]"));
+            }
+        }
+        for axis in [Axis::Roll, Axis::Pitch, Axis::Yaw] {
+            if !self.setpoint.values.get(axis).is_empty() {
+                names.push(format!("setpoint[{axis}]"));
+            }
+        }
+        for axis in [Axis::Roll, Axis::Pitch, Axis::Yaw] {
+            if !self.attitude.values.get(axis).is_empty() {
+                names.push(format!("attitude[{axis}]"));
+            }
+        }
+        for (i, col) in self.motors.commands.iter().enumerate() {
+            if !col.is_empty() {
+                names.push(format!("motor[{i}]"));
+            }
+        }
+        if let Some(esc) = &self.motors.esc {
+            for (i, col) in esc.erpm.iter().enumerate() {
+                if !col.is_empty() {
+                    names.push(format!("erpm[{i}]"));
+                }
+            }
+        }
+        if !self.rc_command.sticks.roll.is_empty() {
+            names.push("rc[roll]".into());
+        }
+        if !self.rc_command.sticks.pitch.is_empty() {
+            names.push("rc[pitch]".into());
+        }
+        if !self.rc_command.sticks.yaw.is_empty() {
+            names.push("rc[yaw]".into());
+        }
+        if !self.rc_command.throttle.is_empty() {
+            names.push("rc[throttle]".into());
+        }
+        if !self.vbat.is_empty() {
+            names.push("vbat".into());
+        }
+        if !self.current.is_empty() {
+            names.push("current".into());
+        }
+        if !self.rssi.is_empty() {
+            names.push("rssi".into());
+        }
+        if let Some(gps) = &self.gps {
+            if !gps.lat.is_empty() {
+                names.push("gps_lat".into());
+            }
+            if !gps.lng.is_empty() {
+                names.push("gps_lng".into());
+            }
+            if !gps.alt.is_empty() {
+                names.push("altitude".into());
+            }
+            if !gps.speed.is_empty() {
+                names.push("gps_speed".into());
+            }
+            if !gps.heading.is_empty() {
+                names.push("heading".into());
             }
         }
         names.extend(self.extras.keys().cloned());
         names
     }
 
-    /// Bridge: legacy stringly-typed field accessor.
+    /// Look up a field by typed [`SensorField`] handle. Returns an
+    /// empty `Vec` for variants that aren't populated in this session
+    /// (e.g. asking for `Gyro(Roll)` on a session whose gyro stream is
+    /// empty, or any [`SensorField::Unknown`] value).
     ///
-    /// Used by the CLI `dump` command and the WASM raw-data tab where
-    /// the user supplies a field name (e.g. `gyro[roll]`) at runtime —
-    /// stringly-typed lookup is the right shape there. Internal analysis
-    /// code uses typed accessors directly.
+    /// **Prefer the typed accessors directly** when the field is
+    /// known at compile time — they're zero-cost and preserve unit
+    /// information:
+    ///
+    /// ```ignore
+    /// let roll: &[DegPerSec]    = &session.gyro.values.roll;
+    /// let m0:   &[Normalized01] = &session.motors.commands[0];
+    /// let vbat: &[Volts]        = &session.vbat.values;
+    /// ```
+    ///
+    /// Use this method when the field handle came from a runtime
+    /// source — a CLI argument parsed via [`SensorField::from_str`],
+    /// a `SensorField` deserialized off the WASM boundary, etc. It
+    /// allocates a `Vec<f64>` per call (copy + cast off the typed
+    /// columns) and erases the unit type.
     #[allow(clippy::too_many_lines)] // declarative variant-to-typed-field routing
     pub fn field(&self, field: &SensorField) -> Vec<f64> {
         match field {

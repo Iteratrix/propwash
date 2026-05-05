@@ -1,4 +1,5 @@
 import { get_raw_frames } from "../../pkg/propwash_web.js";
+import { parseSensorFields } from "../sensor-field.js";
 import type { SessionRef } from "../types.js";
 import { $ } from "../state.js";
 
@@ -33,7 +34,8 @@ export function loadRawPage(ref: SessionRef, start: number): void {
   const selected = Array.from(select.selectedOptions).map((o) => o.value);
   if (selected.length === 0) return;
 
-  const json = get_raw_frames(ref.fileId, ref.sessionIdx, start, RAW_PAGE_SIZE, selected.join(","));
+  const fields = parseSensorFields(selected.join(","));
+  const json = get_raw_frames(ref.fileId, ref.sessionIdx, start, RAW_PAGE_SIZE, fields);
   const data = JSON.parse(json);
   if (data.error) return;
 

@@ -305,6 +305,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
         },
         board: None,
         motor_count: s.meta.motor_count,
+        motor_poles: None, // AP doesn't expose motor pole count via params
         pid_gains: Some(ardupilot_pid_gains(&parsed.params)),
         filter_config: Some(ardupilot_filter_config(&parsed.params)),
         session_index,

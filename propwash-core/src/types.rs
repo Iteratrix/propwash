@@ -1,13 +1,18 @@
 use std::fmt;
+use std::str::FromStr;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "wasm")]
+use tsify_next::Tsify;
 
 // Re-export so existing `crate::types::Session` imports keep working during
 // the refactor — Session itself lives in `crate::session`.
 pub use crate::session::Session;
 
 /// Rotational axis: roll, pitch, or yaw.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum Axis {
     Roll,
     Pitch,
@@ -47,23 +52,14 @@ impl fmt::Display for Axis {
 }
 
 /// RC channel: roll, pitch, yaw, or throttle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum RcChannel {
     Roll,
     Pitch,
     Yaw,
     Throttle,
-}
-
-impl RcChannel {
-    pub fn index(self) -> usize {
-        match self {
-            Self::Roll => 0,
-            Self::Pitch => 1,
-            Self::Yaw => 2,
-            Self::Throttle => 3,
-        }
-    }
 }
 
 impl fmt::Display for RcChannel {
@@ -78,7 +74,12 @@ impl fmt::Display for RcChannel {
 }
 
 /// Typed motor index. Prevents mixing with axis indices or other ordinals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Serialized as a bare integer (newtype-struct shorthand): `MotorIndex(3)`
+/// goes over the wire as `3`, not `{ "MotorIndex": 3 }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MotorIndex(pub usize);
 
 impl fmt::Display for MotorIndex {
@@ -89,52 +90,22 @@ impl fmt::Display for MotorIndex {
 
 /// Format-agnostic sensor field identifier.
 ///
-/// Canonical unit for a sensor field's values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Unit {
-    /// Microseconds (timestamps).
-    Microseconds,
-    /// Degrees per second (angular rates).
-    DegreesPerSecond,
-    /// Meters per second squared (linear acceleration).
-    MetersPerSecondSquared,
-    /// PWM microseconds (motor/servo/RC outputs).
-    Pwm,
-    /// Revolutions per minute.
-    Rpm,
-    /// Volts.
-    Volts,
-    /// Meters.
-    Meters,
-    /// Meters per second.
-    MetersPerSecond,
-    /// Degrees (angle or coordinate).
-    Degrees,
-    /// No meaningful unit.
-    Dimensionless,
-}
-
-impl fmt::Display for Unit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Microseconds | Self::Pwm => write!(f, "μs"),
-            Self::DegreesPerSecond => write!(f, "deg/s"),
-            Self::MetersPerSecondSquared => write!(f, "m/s²"),
-            Self::Rpm => write!(f, "rpm"),
-            Self::Volts => write!(f, "V"),
-            Self::Meters => write!(f, "m"),
-            Self::MetersPerSecond => write!(f, "m/s"),
-            Self::Degrees => write!(f, "deg"),
-            Self::Dimensionless => write!(f, ""),
-        }
-    }
-}
-
-/// Format-agnostic sensor field identifier.
+/// Public so external consumers can pass typed field handles to
+/// [`Session::field`] (faster + type-safe) or speak it across the
+/// WASM boundary as a discriminated union.
 ///
-/// Known fields get proper variants with typed indices.
-/// Unknown fields preserve the original header string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Wire format (default serde external tagging):
+/// - Unit variants serialize as plain strings: `"Time"`, `"Vbat"`,
+///   `"Heading"`.
+/// - Payload variants serialize as single-key objects:
+///   `{ "Gyro": "Roll" }`, `{ "Motor": 0 }`,
+///   `{ "Unknown": "weird_field" }`.
+///
+/// For the canonical-string format used by [`Self::parse`] /
+/// [`Display`] (`"gyro[roll]"`, `"motor[0]"`), use [`FromStr`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 #[non_exhaustive]
 pub enum SensorField {
     Time,
@@ -159,44 +130,19 @@ pub enum SensorField {
     Unknown(String),
 }
 
-impl SensorField {
-    /// Parses a canonical field name into a `SensorField`.
-    ///
-    /// Canonical names use format-agnostic conventions:
-    /// `"gyro[roll]"`, `"motor[0]"`, `"rc[throttle]"`, `"pid_p[yaw]"`, etc.
-    ///
-    /// Unknown names are returned as `Ok(Self::Unknown(...))`.
-    ///
-    /// # Errors
-    ///
-    /// Returns `Err` if an indexed field has an invalid axis or index
-    /// (e.g., `"gyro[invalid]"`).
-    /// Returns the canonical unit for this field's values.
-    ///
-    /// All format implementations must convert to these units in their
-    /// `field()` methods. For example, `Vbat` must return volts regardless
-    /// of whether the format stores millivolts, centivalts, or raw ADC counts.
-    pub fn unit(&self) -> Unit {
-        match self {
-            Self::Time => Unit::Microseconds,
-            Self::Gyro(_) | Self::GyroUnfilt(_) | Self::Setpoint(_) => Unit::DegreesPerSecond,
-            Self::Accel(_) => Unit::MetersPerSecondSquared,
-            Self::Motor(_) | Self::Rc(_) => Unit::Pwm,
-            Self::ERpm(_) => Unit::Rpm,
-            Self::Vbat => Unit::Volts,
-            Self::Altitude => Unit::Meters,
-            Self::GpsSpeed => Unit::MetersPerSecond,
-            Self::GpsLat | Self::GpsLng | Self::Heading => Unit::Degrees,
-            Self::Rssi
-            | Self::PidP(_)
-            | Self::PidI(_)
-            | Self::PidD(_)
-            | Self::Feedforward(_)
-            | Self::Unknown(_) => Unit::Dimensionless,
-        }
-    }
+impl FromStr for SensorField {
+    type Err = String;
 
-    /// Parses a canonical field name into a `SensorField`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s)
+    }
+}
+
+impl SensorField {
+    /// Parses a canonical field name (e.g. `"gyro[roll]"`,
+    /// `"motor[0]"`, `"vbat"`) into a `SensorField`. Same logic as
+    /// [`FromStr`]; kept as an inherent method for ergonomic use
+    /// without needing the trait in scope.
     ///
     /// # Errors
     ///

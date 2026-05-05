@@ -323,6 +323,14 @@ pub(crate) fn session_from_frames(
         },
         board: None,
         motor_count,
+        motor_poles: {
+            let v = BfHeaderValue::int(headers, "motor_poles", 0);
+            if v > 0 {
+                Some(v.cast_unsigned())
+            } else {
+                None
+            }
+        },
         pid_gains: Some(parse_pid_gains(headers)),
         filter_config: Some(parse_filter_config(headers)),
         session_index,
@@ -484,9 +492,7 @@ fn parse_flight_mode_flags(flags: u32) -> (FlightMode, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::bf::types::{
-        BfFieldDef, BfFieldSign, BfFrameKind, BfHeaderValue, Encoding, Predictor,
-    };
+    use crate::format::bf::types::{BfFieldDef, BfFieldSign, BfFrameKind, Encoding, Predictor};
     use crate::types::Axis;
 
     fn field(name: SensorField, encoding: Encoding) -> BfFieldDef {

@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use propwash_core::types::{Axis, SensorField};
+use propwash_core::units::DegPerSec;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -39,21 +39,16 @@ fn main() {
         frames as f64 / ms
     );
 
-    // Benchmark field extraction
+    // Benchmark typed field access (the recommended path).
     let s = &log.sessions[0];
-    let fields = [
-        SensorField::Time,
-        SensorField::Gyro(Axis::Roll),
-        SensorField::Gyro(Axis::Pitch),
-        SensorField::Gyro(Axis::Yaw),
-    ];
     let start = Instant::now();
     for _ in 0..10 {
-        for f in &fields {
-            std::hint::black_box(s.field(f));
-        }
+        std::hint::black_box(s.gyro.time_us.as_slice());
+        std::hint::black_box(bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.roll));
+        std::hint::black_box(bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.pitch));
+        std::hint::black_box(bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.yaw));
     }
     let field_elapsed = start.elapsed();
     let field_ms = field_elapsed.as_secs_f64() * 1000.0 / 10.0;
-    println!("Field extract (4 fields x10): {field_ms:.2}ms per iteration");
+    println!("Typed field access (time + 3 gyro x10): {field_ms:.4}ms per iteration");
 }
