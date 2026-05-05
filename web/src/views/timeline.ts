@@ -1,5 +1,6 @@
 import { get_timeseries } from "../../pkg/propwash_web.js";
 import { eventColor } from "../format.js";
+import { parseSensorFields } from "../sensor-field.js";
 import type { SessionRef, FlightEvent } from "../types.js";
 import { $, $$, chartWidth, activeSession, activeSessionResult, renderedViews, tsPlots, setTsPlots, setTsSync } from "../state.js";
 import { FIELD_GROUPS, TS_MAX_POINTS, pidFieldGroup } from "../chart-config.js";
@@ -96,7 +97,7 @@ export function renderTimeseries(ref: SessionRef, group: string): void {
   const g = resolveFieldGroup(group);
   if (!g) return;
 
-  const allFields = g.fields.join(",");
+  const allFields = parseSensorFields(g.fields.join(","));
   const json = get_timeseries(ref.fileId, ref.sessionIdx, TS_MAX_POINTS, allFields);
   const ts = JSON.parse(json);
   if (ts.error) {

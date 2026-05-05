@@ -1,4 +1,8 @@
 use std::path::Path;
+use std::str::FromStr;
+
+use propwash_core::types::SensorField;
+use propwash_web::SensorFields;
 
 fn fixtures_dir() -> &'static Path {
     Path::new(concat!(
@@ -10,6 +14,17 @@ fn fixtures_dir() -> &'static Path {
 fn read_fixture(rel_path: &str) -> Vec<u8> {
     let path = fixtures_dir().join(rel_path);
     std::fs::read(&path).unwrap_or_else(|e| panic!("Failed to read {rel_path}: {e}"))
+}
+
+/// Parse a comma-separated list of canonical field names (e.g.
+/// `"gyro[roll],motor[0]"`) into the typed `SensorFields` payload the
+/// bridge functions now expect.
+fn fields(s: &str) -> SensorFields {
+    SensorFields(
+        s.split(',')
+            .map(|n| SensorField::from_str(n).unwrap())
+            .collect(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +92,7 @@ fn remove_file_drops_entry() {
     propwash_web::remove_file(file_id);
 
     // Accessing removed file should return error
-    let ts = propwash_web::get_timeseries(file_id, 0, 100, "gyro[roll]");
+    let ts = propwash_web::get_timeseries(file_id, 0, 100, fields("gyro[roll]"));
     let ts_result: serde_json::Value = serde_json::from_str(&ts).unwrap();
     assert!(
         ts_result["error"].is_string(),
@@ -101,8 +116,8 @@ fn multiple_files_in_workspace() {
     assert_ne!(id1, id2, "file IDs should be unique");
 
     // Both should be accessible
-    let ts1 = propwash_web::get_timeseries(id1 as u32, 0, 100, "gyro[roll]");
-    let ts2 = propwash_web::get_timeseries(id2 as u32, 0, 100, "gyro[roll]");
+    let ts1 = propwash_web::get_timeseries(id1 as u32, 0, 100, fields("gyro[roll]"));
+    let ts2 = propwash_web::get_timeseries(id2 as u32, 0, 100, fields("gyro[roll]"));
     assert!(!ts1.contains("error"));
     assert!(!ts2.contains("error"));
 }
@@ -135,7 +150,8 @@ fn get_timeseries_returns_data() {
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
     let file_id = r["file_id"].as_u64().unwrap() as u32;
 
-    let json = propwash_web::get_timeseries(file_id, 0, 1000, "gyro[roll],gyro[pitch],motor[0]");
+    let json =
+        propwash_web::get_timeseries(file_id, 0, 1000, fields("gyro[roll],gyro[pitch],motor[0]"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert!(ts["time_s"].as_array().unwrap().len() > 0);
@@ -153,7 +169,7 @@ fn get_timeseries_decimation() {
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
     let file_id = r["file_id"].as_u64().unwrap() as u32;
 
-    let json = propwash_web::get_timeseries(file_id, 0, 100, "gyro[roll]");
+    let json = propwash_web::get_timeseries(file_id, 0, 100, fields("gyro[roll]"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     let points = ts["time_s"].as_array().unwrap().len();
@@ -178,7 +194,7 @@ fn get_timeseries_unknown_field_skipped() {
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
     let file_id = r["file_id"].as_u64().unwrap() as u32;
 
-    let json = propwash_web::get_timeseries(file_id, 0, 100, "nonexistent_field");
+    let json = propwash_web::get_timeseries(file_id, 0, 100, fields("nonexistent_field"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     // Unknown fields resolve to empty data (SensorField::Unknown)
@@ -200,7 +216,7 @@ fn get_timeseries_invalid_session() {
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
     let file_id = r["file_id"].as_u64().unwrap() as u32;
 
-    let json = propwash_web::get_timeseries(file_id, 999, 100, "gyro[roll]");
+    let json = propwash_web::get_timeseries(file_id, 999, 100, fields("gyro[roll]"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
     assert!(ts["error"].is_string());
 }
@@ -217,7 +233,8 @@ fn get_spectrogram_returns_axes() {
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
     let file_id = r["file_id"].as_u64().unwrap() as u32;
 
-    let json = propwash_web::get_spectrogram(file_id, 0, "roll,pitch,yaw");
+    let json =
+        propwash_web::get_spectrogram(file_id, 0, fields("gyro[roll],gyro[pitch],gyro[yaw]"));
     let sg: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     // Either axes data or an error for too-short logs
@@ -258,7 +275,7 @@ fn get_raw_frames_returns_data() {
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
     let file_id = r["file_id"].as_u64().unwrap() as u32;
 
-    let json = propwash_web::get_raw_frames(file_id, 0, 0, 10, "gyro[roll],motor[0]");
+    let json = propwash_web::get_raw_frames(file_id, 0, 0, 10, fields("gyro[roll],motor[0]"));
     let raw: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     assert_eq!(raw["start"], 0);
@@ -278,7 +295,7 @@ fn get_raw_frames_clamped_to_total() {
     let file_id = r["file_id"].as_u64().unwrap() as u32;
 
     // Request beyond total frames
-    let json = propwash_web::get_raw_frames(file_id, 0, 999_999, 100, "gyro[roll]");
+    let json = propwash_web::get_raw_frames(file_id, 0, 999_999, 100, fields("gyro[roll]"));
     let raw: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     let frames = raw["frames"].as_array().unwrap();

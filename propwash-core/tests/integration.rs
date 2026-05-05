@@ -204,7 +204,6 @@ fn ap_heading_uses_airframe_attitude_not_gps_cog() {
 }
 
 #[test]
-#[allow(deprecated)]
 fn field_heading_prefers_attitude_over_gps_cog() {
     use propwash_core::types::SensorField;
     let sessions = decode("ardupilot/dronekit-copter-log171.bin");
@@ -325,14 +324,7 @@ fn mavlink_unit_sanity() {
 #[test]
 fn spectrogram_smoke_each_format() {
     use propwash_core::analysis::fft::compute_spectrogram;
-    use propwash_core::types::{Axis, SensorField};
-
-    let axes_input = [
-        ("roll", SensorField::Gyro(Axis::Roll)),
-        ("pitch", SensorField::Gyro(Axis::Pitch)),
-        ("yaw", SensorField::Gyro(Axis::Yaw)),
-    ];
-    let axis_refs: Vec<(&str, &SensorField)> = axes_input.iter().map(|(n, f)| (*n, f)).collect();
+    use propwash_core::units::DegPerSec;
 
     for fixture in [
         "fc-blackbox/btfl_002.bbl",
@@ -341,7 +333,12 @@ fn spectrogram_smoke_each_format() {
         "mavlink/dronekit-flight.tlog",
     ] {
         let sessions = decode(fixture);
-        let spec = compute_spectrogram(&sessions[0], &axis_refs);
+        let s = &sessions[0];
+        let roll: &[f64] = bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.roll);
+        let pitch: &[f64] = bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.pitch);
+        let yaw: &[f64] = bytemuck::cast_slice::<DegPerSec, f64>(&s.gyro.values.yaw);
+        let axes = [("roll", roll), ("pitch", pitch), ("yaw", yaw)];
+        let spec = compute_spectrogram(s.sample_rate_hz(), &s.gyro.time_us, &axes);
         // Some fixtures may not have enough samples for a full
         // spectrogram window; require ≥1 axis produced output for
         // those that do, but skip cleanly for those that don't.

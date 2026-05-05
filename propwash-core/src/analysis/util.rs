@@ -4,13 +4,12 @@ use crate::session::TimeSeries;
 use crate::units::{Amps, DegPerSec, MetersPerSec, MetersPerSec2, Volts};
 
 // ── Resampling ──────────────────────────────────────────────────────────────
-// TODO(refactor/session-typed): drop these `allow(dead_code)`s once the
-// analysis layer migrates and starts calling resample() / resample_zoh().
 
 /// Strategy for filling samples at target timestamps that don't align with
-/// the source time axis.
-#[allow(dead_code)]
+/// the source time axis. Public API — `StepFill`/`Nearest` aren't used by
+/// the analysis layer today but stay available for future callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Strategy {
     /// Linear interpolation between bracketing samples. Best for continuous
     /// signals (gyro, setpoint, accel). Requires `T: Lerp`.
@@ -26,7 +25,6 @@ pub enum Strategy {
 
 /// Linear interpolation contract. Implemented for numeric scalars and the
 /// unit-typed newtypes built on them.
-#[allow(dead_code)]
 pub trait Lerp: Copy {
     /// Returns `a + (b - a) * t` where `t ∈ [0.0, 1.0]`.
     fn lerp(a: Self, b: Self, t: f64) -> Self;
@@ -82,7 +80,25 @@ impl<'a, T> From<&'a TimeSeries<T>> for TimeSeriesView<'a, T> {
     }
 }
 
-/// Resample a time series onto a target timestamp axis.
+/// Resample an owned [`TimeSeries`] onto a target timestamp axis. Thin
+/// wrapper around [`resample_view`] for callers who happen to have a
+/// `TimeSeries` (vs slice pairs) — see [`resample_view`] for the
+/// boundary semantics. Public for symmetry; not used by the analysis
+/// layer today (which works with `TriaxialSeries` axes via views).
+#[allow(dead_code)]
+pub fn resample<T: Lerp>(src: &TimeSeries<T>, target: &[u64], strategy: Strategy) -> Vec<T> {
+    resample_view(src.into(), target, strategy)
+}
+
+/// Resample for any `Copy` type using zero-order hold (step fill). Use
+/// this for bool, enum, and other non-interpolatable streams.
+#[allow(dead_code)]
+pub fn resample_zoh<T: Copy>(src: &TimeSeries<T>, target: &[u64]) -> Vec<T> {
+    resample_zoh_view(src.into(), target)
+}
+
+/// Resample onto a target timestamp axis, taking separate `time_us` and
+/// `values` slices.
 ///
 /// `target` must be sorted ascending. The returned `Vec` has the same
 /// length as `target`. If `src` is empty, the result is an empty `Vec`
@@ -91,14 +107,10 @@ impl<'a, T> From<&'a TimeSeries<T>> for TimeSeriesView<'a, T> {
 /// For target timestamps before the first source sample, all strategies
 /// return the first sample value. For target timestamps after the last
 /// source sample, all strategies return the last sample value.
-#[allow(dead_code)] // thin TimeSeries-taking wrapper; analysis call sites use resample_view directly
-pub fn resample<T: Lerp>(src: &TimeSeries<T>, target: &[u64], strategy: Strategy) -> Vec<T> {
-    resample_view(src.into(), target, strategy)
-}
-
-/// Same as [`resample`] but takes a [`TimeSeriesView`] (separate
-/// `time_us` and `values` slices). Useful when the stream isn't stored
-/// as a `TimeSeries` (e.g. one axis of a `TriaxialSeries`).
+///
+/// Useful when the stream isn't stored as a [`TimeSeries`] (e.g. one
+/// axis of a [`crate::session::TriaxialSeries`]) and you don't want to
+/// allocate a temporary `TimeSeries` just to resample it.
 pub fn resample_view<T: Lerp>(
     src: TimeSeriesView<'_, T>,
     target: &[u64],
@@ -163,14 +175,7 @@ pub fn resample_view<T: Lerp>(
     out
 }
 
-/// Resample for any `Copy` type using zero-order hold (step fill). Use this
-/// for bool, enum, and other non-interpolatable streams.
-#[allow(dead_code)]
-pub fn resample_zoh<T: Copy>(src: &TimeSeries<T>, target: &[u64]) -> Vec<T> {
-    resample_zoh_view(src.into(), target)
-}
-
-#[allow(dead_code)]
+/// View-based zero-order-hold variant of [`resample_zoh`].
 pub fn resample_zoh_view<T: Copy>(src: TimeSeriesView<'_, T>, target: &[u64]) -> Vec<T> {
     let n = src.time_us.len();
     if n == 0 || src.values.is_empty() {

@@ -315,6 +315,7 @@ pub(crate) fn session(
         craft_name: Some(parsed.vehicle_type.as_str().to_string()),
         board: None,
         motor_count: s.meta.motor_count,
+        motor_poles: None, // MAVLink doesn't expose motor pole count
         pid_gains,
         filter_config,
         session_index,
