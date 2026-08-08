@@ -8,6 +8,7 @@ on:
       - '**'
   schedule:
     - cron: "0 6 * * 1" # Weekly Monday 6am UTC
+  workflow_dispatch: # Manual trigger, e.g. after re-enabling a schedule disabled by inactivity
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
