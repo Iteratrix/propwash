@@ -61,6 +61,9 @@ export interface PidAnalysis {
   windup: AxisWindup[];
   oscillation: AxisOscillation[];
   tuning: TuningSuggestion[];
+  /** Betaflight CLI `set` commands for the changed gains; null for
+   *  non-Betaflight logs or when no gain changes. */
+  betaflight_cli_diff: string | null;
 }
 
 export interface AxisWindup {

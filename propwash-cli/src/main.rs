@@ -492,6 +492,7 @@ fn cmd_analyze(path: &str, output: OutputFormat) {
                     &episodes,
                     analysis.vibration.as_ref(),
                     analysis.step_response.as_ref(),
+                    analysis.pid.as_ref(),
                     &analysis.diagnostics,
                 );
             }
@@ -505,6 +506,7 @@ fn print_summary(
     episodes: &[episodes::Episode],
     vibration: Option<&propwash_core::analysis::fft::VibrationAnalysis>,
     step_response: Option<&propwash_core::analysis::step_response::StepResponseAnalysis>,
+    pid: Option<&propwash_core::analysis::pid::PidAnalysis>,
     diagnostics: &[propwash_core::analysis::diagnostics::Diagnostic],
 ) {
     println!("── Session {} ──", s.session_index);
@@ -646,6 +648,34 @@ fn print_summary(
                 axis.settling_time_ms,
                 axis.step_count
             );
+        }
+    }
+
+    if let Some(pid) = pid {
+        if !pid.tuning.is_empty() {
+            println!();
+            println!("  PID Tuning:");
+            for t in &pid.tuning {
+                let gain = |cur: Option<u32>, sug: Option<u32>, label: &str| match (cur, sug) {
+                    (Some(c), Some(s)) if c != s => format!("  {label} {c}→{s}"),
+                    _ => String::new(),
+                };
+                println!(
+                    "    {}: {}{}{}{}",
+                    t.axis,
+                    t.rating.as_str(),
+                    gain(t.current.p, t.suggested.p, "P"),
+                    gain(t.current.i, t.suggested.i, "I"),
+                    gain(t.current.d, t.suggested.d, "D"),
+                );
+            }
+        }
+        if let Some(diff) = &pid.betaflight_cli_diff {
+            println!();
+            println!("  Apply via Betaflight CLI (paste into Configurator CLI tab):");
+            for line in diff.lines() {
+                println!("    {line}");
+            }
         }
     }
 

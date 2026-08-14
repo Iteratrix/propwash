@@ -254,6 +254,36 @@ export function renderTuning(pid: PidAnalysis | null): void {
   }
 
   content.innerHTML = html;
+
+  if (pid.betaflight_cli_diff) {
+    const block = document.createElement("div");
+    block.className = "cli-diff";
+    block.style.marginTop = "0.75rem";
+
+    const pre = document.createElement("pre");
+    pre.className = "cli-diff-text";
+    pre.style.cssText = "overflow-x:auto;padding:0.5rem 0.75rem;border:1px solid var(--border, #444);border-radius:4px;font-size:0.85em";
+    pre.textContent = pid.betaflight_cli_diff;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Copy for Betaflight CLI";
+    button.addEventListener("click", () => {
+      navigator.clipboard.writeText(pid.betaflight_cli_diff!).then(
+        () => {
+          button.textContent = "Copied — paste into the Configurator CLI tab";
+          setTimeout(() => (button.textContent = "Copy for Betaflight CLI"), 2500);
+        },
+        () => {
+          button.textContent = "Copy failed — select the text manually";
+        },
+      );
+    });
+
+    block.appendChild(pre);
+    block.appendChild(button);
+    content.appendChild(block);
+  }
 }
 
 export function renderStepOverlay(ref: SessionRef): void {

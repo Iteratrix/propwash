@@ -1,6 +1,7 @@
 use az::{Az, SaturatingAs};
 use serde::Serialize;
 
+use crate::session::Format;
 use crate::types::{Axis, AxisGains, PidGains, Session};
 
 use super::util;
@@ -56,6 +57,10 @@ pub struct PidAnalysis {
     pub oscillation: Vec<AxisOscillation>,
     /// Per-axis tuning suggestions with specific gain recommendations.
     pub tuning: Vec<TuningSuggestion>,
+    /// Ready-to-paste Betaflight CLI `set` commands applying every
+    /// changed gain from `tuning`, terminated by `save`. `None` when
+    /// the log isn't Betaflight-family or no suggestion changes a gain.
+    pub betaflight_cli_diff: Option<String>,
 }
 
 /// I-term windup assessment for one axis.
@@ -120,11 +125,52 @@ pub fn analyze_pid(
         return None;
     }
 
+    // The `set p_roll = …` vocabulary is Betaflight's; other firmware
+    // has entirely different parameter systems (and gain scales), so
+    // emitting a diff there would be actively misleading.
+    let betaflight_cli_diff = if session.meta.format == Format::Betaflight {
+        build_betaflight_cli_diff(&tuning)
+    } else {
+        None
+    };
+
     Some(PidAnalysis {
         windup,
         oscillation,
         tuning,
+        betaflight_cli_diff,
     })
+}
+
+/// Render changed gains as Betaflight CLI commands
+/// (`set p_roll = 38\n…\nsave`). Returns `None` when every suggestion
+/// keeps the current gains (nothing worth pasting).
+fn build_betaflight_cli_diff(tuning: &[TuningSuggestion]) -> Option<String> {
+    let changes: Vec<String> = tuning
+        .iter()
+        .flat_map(|t| {
+            [
+                ("p", t.current.p, t.suggested.p),
+                ("i", t.current.i, t.suggested.i),
+                ("d", t.current.d, t.suggested.d),
+            ]
+            .into_iter()
+            .filter_map(move |(term, current, suggested)| {
+                let (current, suggested) = current.zip(suggested)?;
+                (current != suggested)
+                    .then(|| format!("set {term}_{axis} = {suggested}", axis = t.axis))
+            })
+        })
+        .collect();
+
+    if changes.is_empty() {
+        return None;
+    }
+
+    let mut out = String::from("# propwash suggested PID changes\n");
+    out.push_str(&changes.join("\n"));
+    out.push_str("\nsave\n");
+    Some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -448,6 +494,80 @@ mod tests {
         s.pid_terms.p.roll = vec![p; n];
         s.pid_terms.i.roll = vec![i; n];
         s
+    }
+
+    fn suggestion(axis: Axis, current: AxisGains, suggested: AxisGains) -> TuningSuggestion {
+        TuningSuggestion {
+            axis,
+            rating: TuningRating::Overshooting,
+            current,
+            suggested,
+            overshoot_percent: 30.0,
+            rise_time_ms: 5.0,
+            settling_time_ms: 20.0,
+            step_count: 5,
+        }
+    }
+
+    #[test]
+    fn cli_diff_emits_only_changed_gains() {
+        let s = suggestion(
+            Axis::Roll,
+            AxisGains {
+                p: Some(45),
+                i: Some(80),
+                d: Some(40),
+            },
+            AxisGains {
+                p: Some(38),
+                i: Some(80),
+                d: Some(46),
+            },
+        );
+        let diff = build_betaflight_cli_diff(&[s]).expect("changed gains produce a diff");
+        assert_eq!(
+            diff, "# propwash suggested PID changes\nset p_roll = 38\nset d_roll = 46\nsave\n",
+            "unchanged I must not appear; save terminates"
+        );
+    }
+
+    #[test]
+    fn cli_diff_none_when_nothing_changes() {
+        let gains = AxisGains {
+            p: Some(45),
+            i: Some(80),
+            d: Some(40),
+        };
+        let s = suggestion(Axis::Pitch, gains, gains);
+        assert!(build_betaflight_cli_diff(&[s]).is_none());
+    }
+
+    #[test]
+    fn cli_diff_skips_axes_without_known_gains() {
+        let s = suggestion(
+            Axis::Yaw,
+            AxisGains::default(),
+            AxisGains {
+                p: Some(30),
+                i: None,
+                d: None,
+            },
+        );
+        assert!(
+            build_betaflight_cli_diff(&[s]).is_none(),
+            "no current value → nothing to diff against"
+        );
+    }
+
+    #[test]
+    fn cli_diff_gated_to_betaflight_sessions() {
+        // A non-BF session with windup data still gets PidAnalysis,
+        // but never a Betaflight CLI diff.
+        let mut s = session_with_roll_terms(1000, 10.0, 30.0);
+        s.meta.format = crate::session::Format::Px4;
+        let analysis =
+            analyze_pid(&s, None, &PidGains::default()).expect("windup yields an analysis");
+        assert!(analysis.betaflight_cli_diff.is_none());
     }
 
     #[test]

@@ -641,6 +641,7 @@ mod tests {
             windup: Vec::new(),
             oscillation: Vec::new(),
             tuning: suggestions,
+            betaflight_cli_diff: None,
         }
     }
 
