@@ -175,13 +175,25 @@ pub(crate) fn session_from_frames(
                                 .throttle
                                 .push(normalize_throttle(raw, motor_min, pwm_span)),
                         },
+                        SensorField::PidP(axis) => {
+                            s.pid_terms.p.get_mut(*axis).push(raw.az::<f32>());
+                        }
+                        SensorField::PidI(axis) => {
+                            s.pid_terms.i.get_mut(*axis).push(raw.az::<f32>());
+                        }
+                        SensorField::PidD(axis) => {
+                            s.pid_terms.d.get_mut(*axis).push(raw.az::<f32>());
+                        }
+                        SensorField::Feedforward(axis) => {
+                            s.pid_terms.f.get_mut(*axis).push(raw.az::<f32>());
+                        }
                         SensorField::Unknown(name) => {
                             s.extras
                                 .entry(name.clone())
                                 .or_default()
                                 .push(t, raw.az::<f64>());
                         }
-                        // Not currently routed: PidP/PidI/PidD, Feedforward, GyroUnfilt, Vbat (slow), Rssi (slow), GPS fields (gps frame)
+                        // Not currently routed: GyroUnfilt, Vbat (slow), Rssi (slow), GPS fields (gps frame)
                         _ => {}
                     }
                 }
@@ -309,6 +321,12 @@ pub(crate) fn session_from_frames(
     s.accel.time_us = main_time_us.clone();
     s.setpoint.time_us = main_time_us.clone();
     s.pid_err.time_us = main_time_us.clone();
+    // Time axis only when at least one term column exists — a bare time
+    // axis would make `pid_terms` look present on schemas without PID
+    // fields (same contract as the GPS bug_007 fix).
+    if s.pid_terms.has_data() {
+        s.pid_terms.time_us = main_time_us.clone();
+    }
     s.motors.time_us = main_time_us.clone();
     s.rc_command.time_us = main_time_us;
 
@@ -597,6 +615,81 @@ mod tests {
             session.gps.is_none(),
             "schema without any data columns must drop s.gps to None"
         );
+    }
+
+    /// PID term fields route into the typed `pid_terms` group and pick
+    /// up the main-frame time axis; sessions without PID fields keep
+    /// `pid_terms` fully empty (no bare time axis).
+    #[test]
+    fn bf_pid_terms_route_into_typed_group() {
+        let main_defs = BfFrameDefs::new(vec![
+            field(SensorField::Time, Encoding::UnsignedVb),
+            field(SensorField::PidP(Axis::Roll), Encoding::SignedVb),
+            field(SensorField::PidI(Axis::Roll), Encoding::SignedVb),
+            field(SensorField::PidD(Axis::Pitch), Encoding::SignedVb),
+            field(SensorField::Feedforward(Axis::Yaw), Encoding::SignedVb),
+        ]);
+
+        let frames = vec![
+            BfFrame::Main {
+                kind: BfFrameKind::Intra,
+                values: vec![1000, 12, -8, 3, 7],
+            },
+            BfFrame::Main {
+                kind: BfFrameKind::Inter,
+                values: vec![1250, 14, -9, 2, 6],
+            },
+        ];
+
+        let session = session_from_frames(
+            frames.into_iter(),
+            &HashMap::new(),
+            &main_defs,
+            None,
+            None,
+            "test".into(),
+            String::new(),
+            1,
+            BfParseStats::default(),
+            Vec::new(),
+        );
+
+        let terms = &session.pid_terms;
+        assert!(terms.has_data());
+        assert_eq!(terms.time_us, vec![1000, 1250]);
+        assert_eq!(terms.p.roll, vec![12.0, 14.0]);
+        assert_eq!(terms.i.roll, vec![-8.0, -9.0]);
+        assert_eq!(terms.d.pitch, vec![3.0, 2.0]);
+        assert_eq!(terms.f.yaw, vec![7.0, 6.0]);
+        assert!(terms.p.pitch.is_empty(), "unlogged columns stay empty");
+    }
+
+    /// Companion: no PID fields in the schema → `pid_terms` stays
+    /// entirely empty, including the time axis.
+    #[test]
+    fn bf_no_pid_fields_leaves_pid_terms_empty() {
+        let main_defs = BfFrameDefs::new(vec![field(SensorField::Time, Encoding::UnsignedVb)]);
+        let frames = vec![BfFrame::Main {
+            kind: BfFrameKind::Intra,
+            values: vec![1000],
+        }];
+
+        let session = session_from_frames(
+            frames.into_iter(),
+            &HashMap::new(),
+            &main_defs,
+            None,
+            None,
+            "test".into(),
+            String::new(),
+            1,
+            BfParseStats::default(),
+            Vec::new(),
+        );
+
+        assert!(session.pid_terms.is_empty());
+        assert!(!session.pid_terms.has_data());
+        assert!(session.pid_terms.time_us.is_empty());
     }
 
     /// Sanity: a normal full-schema GPS frame populates lat/lng correctly

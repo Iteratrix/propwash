@@ -81,10 +81,21 @@ pub struct AxisOscillation {
 }
 
 /// Minimum frames for windup analysis to be meaningful.
-/// (Currently unused — see `analyze_windup` TODO. Restore when typed
-/// PID-term traces land on Session.)
-#[allow(dead_code)]
 const MIN_FRAMES_WINDUP: usize = 500;
+
+/// |P| below this (mixer-output units) is treated as "P inactive";
+/// I/P ratios against a near-zero P would be meaninglessly large.
+const WINDUP_P_ACTIVE_MIN: f64 = 1.0;
+
+/// With P inactive, |I| above this still counts as I-dominant —
+/// a large I-term holding against nothing is the windup signature.
+const WINDUP_I_STANDALONE_MIN: f64 = 10.0;
+
+/// Report an axis when I dominates more than this fraction of frames…
+const WINDUP_FRACTION_REPORT: f64 = 0.01;
+
+/// …or when the peak |I/P| ratio exceeds this, even briefly.
+const WINDUP_PEAK_RATIO_REPORT: f64 = 2.0;
 
 /// Minimum step count for oscillation frequency detection.
 const MIN_STEPS_OSCILLATION: usize = 3;
@@ -224,13 +235,53 @@ fn classify_and_suggest(
 
 /// Detect I-term windup: frames where |I-term| exceeds |P-term|.
 ///
-/// TODO(refactor/session-typed): the typed Session doesn't yet carry
-/// per-axis PID-term traces (BF stores them; AP/PX4 don't). When we add
-/// typed `pid_p`/`pid_i`/`pid_d` slots, restore this analysis. The legacy
-/// `field()` bridge already returned empty for PID terms, so windup
-/// detection has been a no-op for some time.
-fn analyze_windup(_session: &Session) -> Vec<AxisWindup> {
-    Vec::new()
+/// Reads the typed [`Session::pid_terms`] traces — populated by
+/// Betaflight-family logs; empty for AP/PX4/MAVLink, where this
+/// returns no findings. Only axes crossing a report threshold are
+/// included, so a well-behaved log yields an empty `Vec`.
+fn analyze_windup(session: &Session) -> Vec<AxisWindup> {
+    let terms = &session.pid_terms;
+    let mut results = Vec::new();
+
+    for axis in Axis::ALL {
+        let pid_p = terms.p.get(axis);
+        let pid_i = terms.i.get(axis);
+
+        if pid_p.len() < MIN_FRAMES_WINDUP || pid_i.len() < MIN_FRAMES_WINDUP {
+            continue;
+        }
+
+        let len = pid_p.len().min(pid_i.len());
+        let mut i_dominant_count = 0usize;
+        let mut peak_ratio: f64 = 0.0;
+
+        for (&p, &i_term) in pid_p.iter().zip(pid_i) {
+            let p_abs = f64::from(p).abs();
+            let i_abs = f64::from(i_term).abs();
+
+            if p_abs > WINDUP_P_ACTIVE_MIN {
+                let ratio = i_abs / p_abs;
+                if ratio > 1.0 {
+                    i_dominant_count += 1;
+                }
+                peak_ratio = peak_ratio.max(ratio);
+            } else if i_abs > WINDUP_I_STANDALONE_MIN {
+                i_dominant_count += 1;
+            }
+        }
+
+        let fraction = i_dominant_count.az::<f64>() / len.az::<f64>();
+
+        if fraction > WINDUP_FRACTION_REPORT || peak_ratio > WINDUP_PEAK_RATIO_REPORT {
+            results.push(AxisWindup {
+                axis,
+                i_dominant_fraction: fraction,
+                peak_ratio,
+            });
+        }
+    }
+
+    results
 }
 
 // ---------------------------------------------------------------------------
@@ -388,6 +439,55 @@ mod tests {
             "detected {f:.1} Hz, expected ~{freq} Hz"
         );
         assert!(detected_mag.is_some());
+    }
+
+    /// Session with `n` frames of constant P and I terms on the roll axis.
+    fn session_with_roll_terms(n: usize, p: f32, i: f32) -> Session {
+        let mut s = Session::default();
+        s.pid_terms.time_us = (0..n).map(|j| (j * 250).az::<u64>()).collect();
+        s.pid_terms.p.roll = vec![p; n];
+        s.pid_terms.i.roll = vec![i; n];
+        s
+    }
+
+    #[test]
+    fn windup_detected_when_i_dominates() {
+        let s = session_with_roll_terms(1000, 10.0, 30.0);
+        let windup = analyze_windup(&s);
+        assert_eq!(windup.len(), 1, "sustained |I| > |P| should be reported");
+        assert_eq!(windup[0].axis, Axis::Roll);
+        assert!((windup[0].i_dominant_fraction - 1.0).abs() < 1e-9);
+        assert!((windup[0].peak_ratio - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn windup_quiet_when_p_dominates() {
+        let s = session_with_roll_terms(1000, 30.0, 10.0);
+        assert!(analyze_windup(&s).is_empty(), "healthy P-dominant trace");
+    }
+
+    #[test]
+    fn windup_detected_with_inactive_p_and_large_i() {
+        // P near zero (stick centred) while I holds a big offset —
+        // the classic windup signature after a sustained disturbance.
+        let s = session_with_roll_terms(1000, 0.0, 50.0);
+        let windup = analyze_windup(&s);
+        assert_eq!(windup.len(), 1);
+        assert!((windup[0].i_dominant_fraction - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn windup_skips_short_traces() {
+        let s = session_with_roll_terms(MIN_FRAMES_WINDUP - 1, 10.0, 30.0);
+        assert!(
+            analyze_windup(&s).is_empty(),
+            "below MIN_FRAMES_WINDUP no assessment is made"
+        );
+    }
+
+    #[test]
+    fn windup_empty_for_sessions_without_pid_terms() {
+        assert!(analyze_windup(&Session::default()).is_empty());
     }
 
     #[test]

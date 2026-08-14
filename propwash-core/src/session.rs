@@ -208,6 +208,48 @@ impl RcCommand {
     }
 }
 
+/// Per-axis PID controller term traces.
+///
+/// P, I, D, and feedforward contributions in the firmware's
+/// mixer-output scale (unitless). All terms are co-sampled with the
+/// main loop and share one `time_us` axis. An empty column means that
+/// term wasn't logged: Betaflight-family firmware records these in
+/// every main frame; ArduPilot/PX4/MAVLink don't expose them, so the
+/// whole group stays empty there. Yaw D is commonly absent even on
+/// Betaflight (yaw D defaults to 0 and is dropped from the schema).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PidTerms {
+    pub time_us: Vec<u64>,
+    pub p: Triaxial<Vec<f32>>,
+    pub i: Triaxial<Vec<f32>>,
+    pub d: Triaxial<Vec<f32>>,
+    pub f: Triaxial<Vec<f32>>,
+}
+
+impl PidTerms {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.time_us.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.time_us.len()
+    }
+
+    /// True when at least one term column carries values. Mirrors
+    /// [`Gps::has_data`]: a time axis without any term columns should
+    /// not count as "PID terms present".
+    pub fn has_data(&self) -> bool {
+        [&self.p, &self.i, &self.d, &self.f]
+            .into_iter()
+            .flat_map(|t| t.iter().map(|(_, col)| col))
+            .any(|col| !col.is_empty())
+    }
+}
+
 /// Mixer outputs and (optional) ESC telemetry.
 ///
 /// `commands[motor_index]` is the per-sample command for one motor;
@@ -452,6 +494,9 @@ pub struct Session {
     pub accel: TriaxialSeries<MetersPerSec2>,
     pub setpoint: TriaxialSeries<DegPerSec>,
     pub pid_err: TriaxialSeries<DegPerSec>,
+    /// PID controller term traces (P/I/D/feedforward per axis).
+    /// Betaflight-family only; empty for other formats.
+    pub pid_terms: PidTerms,
     /// Vehicle attitude (roll/pitch/yaw) in **degrees**. This is the
     /// firmware-reported airframe orientation — distinct from
     /// [`Gps::heading`] which is GPS course-over-ground (direction of
@@ -547,6 +592,18 @@ impl Session {
         for axis in [Axis::Roll, Axis::Pitch, Axis::Yaw] {
             if !self.attitude.values.get(axis).is_empty() {
                 names.push(format!("attitude[{axis}]"));
+            }
+        }
+        for (name, terms) in [
+            ("pid_p", &self.pid_terms.p),
+            ("pid_i", &self.pid_terms.i),
+            ("pid_d", &self.pid_terms.d),
+            ("feedforward", &self.pid_terms.f),
+        ] {
+            for (axis, col) in terms.iter() {
+                if !col.is_empty() {
+                    names.push(format!("{name}[{axis}]"));
+                }
             }
         }
         for (i, col) in self.motors.commands.iter().enumerate() {
@@ -745,12 +802,34 @@ impl Session {
                         .collect()
                 })
                 .unwrap_or_default(),
-            SensorField::PidP(_)
-            | SensorField::PidI(_)
-            | SensorField::PidD(_)
-            | SensorField::Feedforward(_) => {
-                Vec::new() // PID terms not modelled directly yet
-            }
+            SensorField::PidP(axis) => self
+                .pid_terms
+                .p
+                .get(*axis)
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
+            SensorField::PidI(axis) => self
+                .pid_terms
+                .i
+                .get(*axis)
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
+            SensorField::PidD(axis) => self
+                .pid_terms
+                .d
+                .get(*axis)
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
+            SensorField::Feedforward(axis) => self
+                .pid_terms
+                .f
+                .get(*axis)
+                .iter()
+                .map(|&v| f64::from(v))
+                .collect(),
             SensorField::Unknown(name) => self
                 .extras
                 .get(name)

@@ -43,6 +43,23 @@ fn bf_decodes_typical_log() {
 }
 
 #[test]
+fn bf_pid_terms_populated_from_real_log() {
+    let sessions = decode("fc-blackbox/btfl_002.bbl");
+    let terms = &sessions[0].pid_terms;
+    assert!(terms.has_data(), "BF logs carry axisP/axisI traces");
+    assert_eq!(
+        terms.p.roll.len(),
+        terms.time_us.len(),
+        "P roll column aligned with the shared time axis"
+    );
+    assert_eq!(
+        terms.i.roll.len(),
+        terms.time_us.len(),
+        "I roll column aligned with the shared time axis"
+    );
+}
+
+#[test]
 fn bf_gyro_in_realistic_deg_per_sec_range() {
     let sessions = decode("fc-blackbox/btfl_002.bbl");
     let gyro = &sessions[0].gyro.values.roll;
