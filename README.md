@@ -1,6 +1,6 @@
 # propwash
 
-Drone flight log analyzer. Parses Betaflight blackbox (`.bbl`), ArduPilot DataFlash (`.bin`), and PX4 ULog (`.ulg`) logs to detect vibration issues, PID tuning problems, motor saturation, gyro spikes, and mechanical faults - with frequency spectrum analysis and actionable diagnostics.
+Drone flight log analyzer. Parses Betaflight blackbox (`.bbl`), ArduPilot DataFlash (`.bin`), PX4 ULog (`.ulg`) and MAVLink telemetry (`.tlog`) logs to detect vibration issues, PID tuning problems, motor saturation, gyro spikes, and mechanical faults - with frequency spectrum analysis and actionable diagnostics.
 
 **Try it now: [propwash.deltave.org](https://propwash.deltave.org)** - drop a log file in your browser. No install, no uploads. Runs locally via WebAssembly.
 
@@ -44,15 +44,17 @@ $ propwash analyze flight.bbl
 
 ## Web UI
 
-Features: tabbed interface (Overview, Timeline, Spectrum, Raw Data), interactive ECharts plots with zoom/pan, spectrogram heatmaps, filter overlay, throttle-band analysis, side-by-side flight comparison.
+Features: views for Overview, Timeline, Spectrum, Compare, Trend and Raw Data; PID tuning with step-response overlays and a paste-ready Betaflight CLI diff; interactive ECharts and uPlot charts with zoom/pan; spectrogram heatmaps; filter-cutoff and RPM-harmonic overlays; throttle-band analysis; side-by-side comparison and trends across flights. Works offline once loaded.
 
 ## Install (CLI)
 
-Download a prebuilt binary from [Releases](https://github.com/Iteratrix/propwash/releases), or build from source:
+Download a prebuilt binary from [Releases](https://github.com/Iteratrix/propwash/releases) (archives are named `propwash-cli-<platform>`), or build from source:
 
 ```bash
-cargo install --git https://github.com/Iteratrix/propwash propwash
+cargo install --git https://github.com/Iteratrix/propwash propwash-cli
 ```
+
+Either way, the command is `propwash`.
 
 ## Usage
 
@@ -93,6 +95,11 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 - Spectrogram (frequency vs time heatmap)
 - Accelerometer vibration (FC mounting quality)
 
+**Tuning:**
+- Step response per axis (overshoot, rise and settling time) with overlaid step traces
+- P/I/D gain suggestions, exported as a paste-ready Betaflight CLI diff
+- I-term windup and oscillation frequency
+
 **Diagnostics:**
 - Asymmetric motor saturation → mechanical issue on one side
 - Severe overshoot → P/D imbalance with axis-specific recommendation
@@ -110,31 +117,40 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 | Rotorflight | `.bbl` blackbox | Full support |
 | INAV | `.bbl` blackbox | Full support |
 | Cleanflight | `.bbl` blackbox | Full support |
-| ArduPilot (Copter/Plane/Rover) | `.bin` DataFlash | Full support |
+| ArduPilot (Copter/Plane/Rover) | `.bin` DataFlash | Supported; vibration needs the gyro logged at 200 Hz or faster* |
 | PX4 | `.ulg` ULog | Full support |
+| ArduPilot / PX4 ground station | `.tlog` MAVLink | Events, attitude and tuning; too slow (~10 Hz) for vibration |
+
+\* ArduPilot's `IMU` message rate follows the log settings and is often 25-50 Hz. A spectrum only reaches half the sample rate, so propwash skips vibration checks on slow logs and says why. Reading the full-rate batch sampler (`ISBH`/`ISBD`) is planned.
 
 ## Architecture
 
 ```
-propwash-core/          Parser library (can be used independently)
+propwash-core/          Parser and analysis library (usable on its own)
   format/bf/            Betaflight-family blackbox decoder
   format/ap/            ArduPilot DataFlash decoder
   format/px4/           PX4 ULog decoder
-  analysis/             Event detection, FFT, diagnostics
-propwash/               CLI binary
+  format/mavlink/       MAVLink telemetry (.tlog) decoder
+  analysis/             Events, FFT, step response, PID tuning, diagnostics
+propwash-cli/           CLI (installs the `propwash` command)
 propwash-web/           WASM bridge (powers the web UI)
-web/                    Browser frontend (vanilla JS + ECharts + uPlot)
+web/                    Browser frontend (TypeScript + ECharts + uPlot)
 ```
 
-Two-layer API for library consumers:
-- **`session.unified()`** — format-agnostic sensor data via the `Unified` trait
-- **`session.raw`** — format-specific parsed data (behind `features = ["raw"]`)
+Each format decodes into one typed `Session`: per-stream time axes, with units carried as types (`DegPerSec`, `Volts`, `Normalized01`, ...).
 
-Typed field access:
 ```rust
-use propwash_core::types::{SensorField, Axis};
+use propwash_core::types::SensorField;
 
-let gyro = session.unified().field(&SensorField::Gyro(Axis::Roll));
+let log = propwash_core::decode_file("flight.bbl")?;
+for session in &log.sessions {
+    let roll = &session.gyro.values.roll; // Vec<DegPerSec>
+    let motor0 = session.field(&"motor[0]".parse::<SensorField>()?); // by name, for user input
+    let analysis = propwash_core::analysis::analyze(session);
+    for d in &analysis.diagnostics {
+        println!("{}: {}", d.category, d.message);
+    }
+}
 ```
 
 ## Performance

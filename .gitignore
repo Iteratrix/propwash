@@ -4,7 +4,6 @@ perf.data.old
 *.svg
 .idea/
 compare.py
-perf.data
 web/pkg
 web/pkg/
 web/dist/

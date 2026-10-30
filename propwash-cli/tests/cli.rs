@@ -13,7 +13,7 @@ fn fixture(rel_path: &str) -> String {
 }
 
 fn propwash() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_propwash-cli"))
+    Command::new(env!("CARGO_BIN_EXE_propwash"))
 }
 
 // ---------------------------------------------------------------------------

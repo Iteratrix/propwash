@@ -17,3 +17,9 @@ serde_json = "1"
 
 [lints]
 workspace = true
+
+# The package is propwash-cli (beside propwash-core and propwash-web); the
+# installed command is plain `propwash`.
+[[bin]]
+name = "propwash"
+path = "src/main.rs"

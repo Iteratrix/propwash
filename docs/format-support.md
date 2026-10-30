@@ -5,9 +5,9 @@
 | Format | Extension | Firmware | Status |
 |--------|-----------|----------|--------|
 | Betaflight Blackbox | `.bbl` | Betaflight, EmuFlight, Rotorflight, INAV, Cleanflight | Full support |
-| ArduPilot DataFlash | `.bin` | ArduCopter, ArduPlane, ArduRover, ArduSub | Full support |
+| ArduPilot DataFlash | `.bin` | ArduCopter, ArduPlane, ArduRover, ArduSub | Supported. Vibration needs the gyro logged at 200 Hz or faster; the IMU message is often 25-50 Hz. Batch sampler (`ISBH`/`ISBD`) planned. |
 | PX4 ULog | `.ulg` | PX4 Autopilot | Full support |
-| MAVLink Telemetry | `.tlog` | ArduPilot, PX4 (ground station side) | Full support (low rate ~10Hz, ground-station side) |
+| MAVLink Telemetry | `.tlog` | ArduPilot, PX4 (ground station side) | Events, attitude and tuning. Too slow (~10 Hz) for vibration. |
 
 ## Planned
 

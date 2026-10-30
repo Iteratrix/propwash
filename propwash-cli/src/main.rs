@@ -22,9 +22,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Show metadata and field inventory for a blackbox log.
+    /// Show metadata and field inventory for a flight log.
     Info {
-        /// Path to a .bbl or .bfl log file.
+        /// Path to a flight log (.bbl, .bfl, .bin, .ulg or .tlog).
         log_file: String,
         /// Output as JSON.
         #[arg(long)]
@@ -32,7 +32,7 @@ enum Command {
     },
     /// Analyze flight events and vibration characteristics.
     Analyze {
-        /// Path to a .bbl or .bfl log file.
+        /// Path to a flight log (.bbl, .bfl, .bin, .ulg or .tlog).
         log_file: String,
         /// Output format.
         #[arg(long, default_value_t, value_enum)]
@@ -62,7 +62,7 @@ enum Command {
     },
     /// Dump raw frame data for programmatic consumption.
     Dump {
-        /// Path to a .bbl or .bfl log file.
+        /// Path to a flight log (.bbl, .bfl, .bin, .ulg or .tlog).
         log_file: String,
         /// Session index (1-based, default: all).
         #[arg(long)]
