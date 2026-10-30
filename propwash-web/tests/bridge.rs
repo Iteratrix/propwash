@@ -4,6 +4,14 @@ use std::str::FromStr;
 use propwash_core::types::SensorField;
 use propwash_web::SensorFields;
 
+/// The `file_id` an `add_file` result assigned, as the bridge's `u32` id.
+fn file_id(result: &serde_json::Value) -> u32 {
+    let id = result["file_id"]
+        .as_u64()
+        .expect("add_file result carries file_id");
+    u32::try_from(id).expect("file_id fits in u32")
+}
+
 fn fixtures_dir() -> &'static Path {
     Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -87,7 +95,7 @@ fn remove_file_drops_entry() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let json = propwash_web::add_file(&data, "btfl_001.bbl");
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();
-    let file_id = result["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&result);
 
     propwash_web::remove_file(file_id);
 
@@ -111,13 +119,13 @@ fn multiple_files_in_workspace() {
     let r2: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data2, "btfl_002.bbl")).unwrap();
 
-    let id1 = r1["file_id"].as_u64().unwrap();
-    let id2 = r2["file_id"].as_u64().unwrap();
+    let id1 = file_id(&r1);
+    let id2 = file_id(&r2);
     assert_ne!(id1, id2, "file IDs should be unique");
 
     // Both should be accessible
-    let ts1 = propwash_web::get_timeseries(id1 as u32, 0, 100, fields("gyro[roll]"));
-    let ts2 = propwash_web::get_timeseries(id2 as u32, 0, 100, fields("gyro[roll]"));
+    let ts1 = propwash_web::get_timeseries(id1, 0, 100, fields("gyro[roll]"));
+    let ts2 = propwash_web::get_timeseries(id2, 0, 100, fields("gyro[roll]"));
     assert!(!ts1.contains("error"));
     assert!(!ts2.contains("error"));
 }
@@ -134,7 +142,10 @@ fn analyze_backward_compat() {
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     // analyze() wraps add_file(), so same shape
-    assert!(result["sessions"].as_array().unwrap().len() > 0);
+    assert!(
+        !result["sessions"].as_array().unwrap().is_empty(),
+        "expected at least one session"
+    );
     assert!(result["file_id"].as_u64().is_some());
 }
 
@@ -148,15 +159,24 @@ fn get_timeseries_returns_data() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json =
         propwash_web::get_timeseries(file_id, 0, 1000, fields("gyro[roll],gyro[pitch],motor[0]"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-    assert!(ts["time_s"].as_array().unwrap().len() > 0);
-    assert!(ts["fields"]["gyro[roll]"].as_array().unwrap().len() > 0);
-    assert!(ts["fields"]["motor[0]"].as_array().unwrap().len() > 0);
+    assert!(
+        !ts["time_s"].as_array().unwrap().is_empty(),
+        "expected time samples"
+    );
+    assert!(
+        !ts["fields"]["gyro[roll]"].as_array().unwrap().is_empty(),
+        "expected gyro[roll] samples"
+    );
+    assert!(
+        !ts["fields"]["motor[0]"].as_array().unwrap().is_empty(),
+        "expected motor[0] samples"
+    );
     assert!(ts["sample_rate_hz"].as_f64().unwrap() > 0.0);
     assert!(ts["total_frames"].as_u64().unwrap() > 0);
 }
@@ -167,13 +187,13 @@ fn get_timeseries_decimation() {
     let data = read_fixture("fc-blackbox/btfl_002.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_timeseries(file_id, 0, 100, fields("gyro[roll]"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     let points = ts["time_s"].as_array().unwrap().len();
-    let total = ts["total_frames"].as_u64().unwrap() as usize;
+    let total = usize::try_from(ts["total_frames"].as_u64().unwrap()).unwrap();
     // step_by rounds up: ceil(total / max_points) steps → points can be max_points + 1
     assert!(
         points <= 101,
@@ -192,7 +212,7 @@ fn get_timeseries_unknown_field_skipped() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_timeseries(file_id, 0, 100, fields("nonexistent_field"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -214,7 +234,7 @@ fn get_timeseries_invalid_session() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_timeseries(file_id, 999, 100, fields("gyro[roll]"));
     let ts: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -231,7 +251,7 @@ fn get_spectrogram_returns_axes() {
     let data = read_fixture("fc-blackbox/btfl_002.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json =
         propwash_web::get_spectrogram(file_id, 0, fields("gyro[roll],gyro[pitch],gyro[yaw]"));
@@ -240,7 +260,10 @@ fn get_spectrogram_returns_axes() {
     // Either axes data or an error for too-short logs
     if sg.get("error").is_none() {
         let axes = sg["axes"].as_array().unwrap();
-        assert!(!axes.is_empty());
+        assert!(
+            !axes.is_empty(),
+            "spectrogram should have at least one axis"
+        );
     }
 }
 
@@ -254,7 +277,7 @@ fn get_filter_config_returns_json() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_filter_config(file_id, 0);
     let fc: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -273,7 +296,7 @@ fn get_raw_frames_returns_data() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_raw_frames(file_id, 0, 0, 10, fields("gyro[roll],motor[0]"));
     let raw: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -292,7 +315,7 @@ fn get_raw_frames_clamped_to_total() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     // Request beyond total frames
     let json = propwash_web::get_raw_frames(file_id, 0, 999_999, 100, fields("gyro[roll]"));
@@ -340,7 +363,7 @@ fn add_ardupilot_file() {
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     let sessions = result["sessions"].as_array().unwrap();
-    assert!(!sessions.is_empty());
+    assert!(!sessions.is_empty(), "expected at least one session");
     assert!(sessions[0]["frame_count"].as_u64().unwrap() > 0);
 }
 
@@ -352,7 +375,7 @@ fn add_px4_file() {
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     let sessions = result["sessions"].as_array().unwrap();
-    assert!(!sessions.is_empty());
+    assert!(!sessions.is_empty(), "expected at least one session");
 }
 
 #[test]
@@ -363,7 +386,7 @@ fn add_mavlink_file() {
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();
 
     let sessions = result["sessions"].as_array().unwrap();
-    assert!(!sessions.is_empty());
+    assert!(!sessions.is_empty(), "expected at least one session");
     assert!(sessions[0]["frame_count"].as_u64().unwrap() > 0);
 }
 
@@ -403,7 +426,7 @@ fn get_step_overlay_gentle_flight() {
     let data = read_fixture("fc-blackbox/btfl_002.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_step_overlay(file_id, 0);
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -421,7 +444,7 @@ fn get_step_overlay_aggressive_flight() {
     let data = read_fixture("fc-blackbox/btfl_035.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_step_overlay(file_id, 0);
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -445,7 +468,7 @@ fn get_step_overlay_invalid_session() {
     let data = read_fixture("fc-blackbox/btfl_001.bbl");
     let r: serde_json::Value =
         serde_json::from_str(&propwash_web::add_file(&data, "test.bbl")).unwrap();
-    let file_id = r["file_id"].as_u64().unwrap() as u32;
+    let file_id = file_id(&r);
 
     let json = propwash_web::get_step_overlay(file_id, 999);
     let result: serde_json::Value = serde_json::from_str(&json).unwrap();

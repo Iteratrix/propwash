@@ -436,7 +436,7 @@ mod tests {
         topics
     }
 
-    /// bug_006: ATTITUDE.{roll,pitch,yaw} radians must convert to
+    /// `bug_006`: ATTITUDE.{roll,pitch,yaw} radians must convert to
     /// attitude.values.{roll,pitch,yaw} in degrees.
     #[test]
     fn mavlink_attitude_radians_to_degrees() {
@@ -468,7 +468,7 @@ mod tests {
         assert!((s.attitude.values.yaw[0] - 180.0).abs() < 0.01);
     }
 
-    /// bug_016: a HEARTBEAT.autopilot=12 (PX4) tlog with PX4 parameter
+    /// `bug_016`: a HEARTBEAT.autopilot=12 (PX4) tlog with PX4 parameter
     /// names must yield populated `pid_gains` from the PX4 parser, not
     /// an empty `Some` from the AP parser path.
     #[test]
@@ -505,7 +505,7 @@ mod tests {
         );
     }
 
-    /// And the inverse: HEARTBEAT.autopilot=3 (ArduPilot) must dispatch
+    /// And the inverse: HEARTBEAT.autopilot=3 (`ArduPilot`) must dispatch
     /// to the AP helper.
     #[test]
     fn mavlink_ardupilot_autopilot_dispatches_to_ap_pid_helper() {

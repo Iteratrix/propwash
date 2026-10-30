@@ -92,7 +92,7 @@ mod tests {
     #[test]
     fn empty_result() {
         let indices = filter_frame_indices(0, &[], None, None);
-        assert!(indices.is_empty());
+        assert_eq!(indices, [] as [usize; 0]);
     }
 
     #[test]

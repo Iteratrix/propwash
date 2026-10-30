@@ -103,62 +103,6 @@ fn fold_session_events(session: &Session) -> Vec<FlightEvent> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::session::{Event, EventKind, FlightMode, LogSeverity};
-
-    #[test]
-    fn session_events_fold_into_flight_analysis() {
-        let mut s = Session::default();
-        // Need at least 2 gyro samples for first_t to be meaningful.
-        s.gyro.time_us = vec![1_000_000, 2_000_000];
-        s.gyro.values.roll = vec![Default::default(); 2];
-        s.gyro.values.pitch = vec![Default::default(); 2];
-        s.gyro.values.yaw = vec![Default::default(); 2];
-        s.events = vec![
-            Event {
-                time_us: 1_500_000,
-                kind: EventKind::Armed,
-                message: None,
-            },
-            Event {
-                time_us: 1_750_000,
-                kind: EventKind::ModeChange {
-                    to: FlightMode::Stabilize,
-                },
-                message: None,
-            },
-            Event {
-                time_us: 1_900_000,
-                kind: EventKind::LogMessage {
-                    severity: LogSeverity::Warning,
-                },
-                message: Some("low battery".into()),
-            },
-        ];
-
-        let folded = fold_session_events(&s);
-        assert_eq!(folded.len(), 3, "all 3 session events should fold");
-
-        // Each should be a FirmwareMessage with a sensible level.
-        let messages: Vec<&str> = folded
-            .iter()
-            .filter_map(|e| match &e.kind {
-                FlightEventKind::FirmwareMessage { level, message } => Some(level.as_str())
-                    .zip(Some(message.as_str()))
-                    .map(|_| level.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(messages, vec!["info", "info", "warning"]);
-
-        // Time projection: events should land at t-first_t in seconds.
-        // first_t = 1_000_000 µs, so Armed at 1.5s = 0.5s.
-        assert!((folded[0].time_seconds - 0.5).abs() < 1e-9);
-    }
-}
-
 fn describe_session_event(ev: &sess::Event) -> (String, String) {
     use sess::{EventKind, FlightMode, LogSeverity};
     let mode_label = |m: &FlightMode| match m {
@@ -201,4 +145,61 @@ fn describe_session_event(ev: &sess::Event) -> (String, String) {
             .map_or_else(|| name.clone(), |m| format!("{name}: {m}")),
     };
     (level, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::{Event, EventKind, FlightMode, LogSeverity};
+    use crate::units::DegPerSec;
+
+    #[test]
+    fn session_events_fold_into_flight_analysis() {
+        let mut s = Session::default();
+        // Need at least 2 gyro samples for first_t to be meaningful.
+        s.gyro.time_us = vec![1_000_000, 2_000_000];
+        s.gyro.values.roll = vec![DegPerSec::default(); 2];
+        s.gyro.values.pitch = vec![DegPerSec::default(); 2];
+        s.gyro.values.yaw = vec![DegPerSec::default(); 2];
+        s.events = vec![
+            Event {
+                time_us: 1_500_000,
+                kind: EventKind::Armed,
+                message: None,
+            },
+            Event {
+                time_us: 1_750_000,
+                kind: EventKind::ModeChange {
+                    to: FlightMode::Stabilize,
+                },
+                message: None,
+            },
+            Event {
+                time_us: 1_900_000,
+                kind: EventKind::LogMessage {
+                    severity: LogSeverity::Warning,
+                },
+                message: Some("low battery".into()),
+            },
+        ];
+
+        let folded = fold_session_events(&s);
+        assert_eq!(folded.len(), 3, "all 3 session events should fold");
+
+        // Each should be a FirmwareMessage with a sensible level.
+        let messages: Vec<&str> = folded
+            .iter()
+            .filter_map(|e| match &e.kind {
+                FlightEventKind::FirmwareMessage { level, message } => Some(level.as_str())
+                    .zip(Some(message.as_str()))
+                    .map(|_| level.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(messages, vec!["info", "info", "warning"]);
+
+        // Time projection: events should land at t-first_t in seconds.
+        // first_t = 1_000_000 µs, so Armed at 1.5s = 0.5s.
+        assert!((folded[0].time_seconds - 0.5).abs() < 1e-9);
+    }
 }

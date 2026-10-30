@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use az::Az;
+
 use propwash_core::units::DegPerSec;
 
 fn main() {
@@ -10,7 +12,7 @@ fn main() {
     }
     let path = &args[1];
     let data = std::fs::read(path).unwrap();
-    let size_mb = data.len() as f64 / 1_048_576.0;
+    let size_mb = data.len().az::<f64>() / 1_048_576.0;
 
     // Warm up
     let _ = propwash_core::decode(&data);
@@ -31,12 +33,16 @@ fn main() {
     // Parse once more to get stats
     let log = propwash_core::decode(&data).unwrap();
     let sessions = log.sessions.len();
-    let frames: usize = log.sessions.iter().map(|s| s.frame_count()).sum();
+    let frames: usize = log
+        .sessions
+        .iter()
+        .map(propwash_core::Session::frame_count)
+        .sum();
 
     println!("{size_mb:.1}MB, {sessions} sessions, {frames} frames");
     println!(
         "Parse: {ms:.1}ms ({mb_s:.0} MB/s, {:.0} kframes/s)",
-        frames as f64 / ms
+        frames.az::<f64>() / ms
     );
 
     // Benchmark typed field access (the recommended path).

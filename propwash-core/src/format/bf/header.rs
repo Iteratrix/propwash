@@ -363,7 +363,7 @@ mod tests {
     fn find_sessions_single_log() {
         let data = std::fs::read(fixtures_dir().join("fc-blackbox/btfl_002.bbl")).unwrap();
         let offsets = find_sessions(&data);
-        assert!(!offsets.is_empty());
+        assert_ne!(offsets, [] as [usize; 0]);
     }
 
     #[test]
@@ -460,7 +460,7 @@ mod tests {
     fn parse_inav_headers() {
         let data = std::fs::read(fixtures_dir().join("inav/LOG00001.TXT")).unwrap();
         let offsets = find_sessions(&data);
-        assert!(!offsets.is_empty());
+        assert_ne!(offsets, [] as [usize; 0]);
 
         let end = offsets.get(1).copied().unwrap_or(data.len());
         let mut warnings = Vec::new();
@@ -473,7 +473,7 @@ mod tests {
     fn parse_crash_log_headers() {
         let data = std::fs::read(fixtures_dir().join("fc-blackbox/crashing-LOG00002.BFL")).unwrap();
         let offsets = find_sessions(&data);
-        assert!(!offsets.is_empty());
+        assert_ne!(offsets, [] as [usize; 0]);
 
         let end = offsets.get(1).copied().unwrap_or(data.len());
         let mut warnings = Vec::new();

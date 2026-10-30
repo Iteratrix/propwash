@@ -517,7 +517,7 @@ mod tests {
         let s = super::session(parsed, vec![], 1);
         assert_eq!(s.gyro.time_us, vec![1000, 2000]);
         assert_eq!(s.gyro.values.roll.len(), 2);
-        assert!((s.gyro.values.roll[1].0 - 0.2 * RAD_TO_DEG).abs() < 1e-9);
+        assert!(0.2f64.mul_add(-RAD_TO_DEG, s.gyro.values.roll[1].0).abs() < 1e-9);
     }
 
     /// BAT names its instance column `Inst` from AP 4.5 (`Instance` before).
@@ -563,8 +563,8 @@ mod tests {
         assert_eq!(s.meta.motor_poles, Some(12));
     }
 
-    /// bug_019: consecutive duplicate MODE samples must collapse to one
-    /// ModeChange event + one flight_mode sample (matches PX4/MAVLink/BF
+    /// `bug_019`: consecutive duplicate MODE samples must collapse to one
+    /// `ModeChange` event + one `flight_mode` sample (matches PX4/MAVLink/BF
     /// dedup pattern).
     #[test]
     fn ap_mode_dedup_collapses_consecutive_duplicates() {
@@ -591,7 +591,7 @@ mod tests {
         assert_eq!(s.flight_mode.values[1], FlightMode::Loiter);
     }
 
-    /// bug_006 + F7: ATT.{Roll,Pitch,Yaw} use FMT type `c` (centidegrees);
+    /// `bug_006` + F7: ATT.{Roll,Pitch,Yaw} use FMT type `c` (centidegrees);
     /// after F7 the parser scales them at decode time, so the build step
     /// receives values already in degrees and must just pass them through.
     /// (Prior to F7, the build step divided by 100 itself; pre-F7 this

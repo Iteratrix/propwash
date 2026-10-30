@@ -99,19 +99,6 @@ impl AutopilotFamily {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::AutopilotFamily;
-
-    #[test]
-    fn autopilot_family_canonical_ids() {
-        assert_eq!(AutopilotFamily::from_id(3), AutopilotFamily::ArduPilot);
-        assert_eq!(AutopilotFamily::from_id(12), AutopilotFamily::Px4);
-        assert_eq!(AutopilotFamily::from_id(0), AutopilotFamily::Generic);
-        assert_eq!(AutopilotFamily::from_id(8), AutopilotFamily::Other(8));
-    }
-}
-
 /// Extract `ArduPilot` PID gains from a parameter map.
 ///
 /// Shared by AP `DataFlash` and `MAVLink` tlog sessions, which use the same
@@ -219,5 +206,18 @@ pub fn px4_filter_config(params: &HashMap<String, f64>) -> FilterConfig {
         dyn_notch_max_hz: None,
         gyro_notch1_hz: non_zero(p("IMU_GYRO_NF0_FRQ")),
         gyro_notch2_hz: non_zero(p("IMU_GYRO_NF1_FRQ")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AutopilotFamily;
+
+    #[test]
+    fn autopilot_family_canonical_ids() {
+        assert_eq!(AutopilotFamily::from_id(3), AutopilotFamily::ArduPilot);
+        assert_eq!(AutopilotFamily::from_id(12), AutopilotFamily::Px4);
+        assert_eq!(AutopilotFamily::from_id(0), AutopilotFamily::Generic);
+        assert_eq!(AutopilotFamily::from_id(8), AutopilotFamily::Other(8));
     }
 }

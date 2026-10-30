@@ -474,7 +474,7 @@ mod tests {
         let sample_rate = 1000.0;
         let freq = 50.0;
         let window: Vec<f64> = (0..n)
-            .map(|i| (2.0 * std::f64::consts::PI * freq * i as f64 / sample_rate).sin() * 100.0)
+            .map(|i| (2.0 * std::f64::consts::PI * freq * f64::from(i) / sample_rate).sin() * 100.0)
             .collect();
 
         let (detected_freq, detected_mag) = find_dominant_oscillation(&[window], sample_rate);

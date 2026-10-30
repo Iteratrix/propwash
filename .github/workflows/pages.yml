@@ -28,14 +28,18 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - uses: Swatinem/rust-cache@v2
+
       - name: Install wasm-pack
-        run: cargo install wasm-pack
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
 
       - name: Build WASM
         run: wasm-pack build propwash-web --target web --out-dir ../web/pkg
 
       - name: Build TypeScript
-        run: cd web && npm install && npm run build
+        run: cd web && npm ci && npm run typecheck && npm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

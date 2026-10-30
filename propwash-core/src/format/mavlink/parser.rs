@@ -380,7 +380,7 @@ fn decode_statustext(payload: &[u8], tlog_ts: u64) -> Option<StatusMessage> {
     let text_end = payload[1..]
         .iter()
         .position(|&b| b == 0)
-        .map_or(payload.len() - 1, |p| p);
+        .unwrap_or(payload.len() - 1);
     Some(StatusMessage {
         timestamp_us: tlog_ts,
         severity: Severity::from_id(payload[0]),

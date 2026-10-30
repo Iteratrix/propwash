@@ -410,11 +410,11 @@ fn decode_f16(bits: u16) -> f32 {
 mod tests {
     use super::*;
 
-    /// F7 red→green: ArduPilot FMT type `c` means "int16 × 100"
+    /// F7 red→green: `ArduPilot` FMT type `c` means "int16 × 100"
     /// (centidegrees / fixed-point). The parser must apply the ÷100
     /// scaling so consumers don't see raw centidegrees and compute
     /// values 100× wrong. Pre-fix, both `h` and `c` collapsed to
-    /// `FieldType::I16` and decode_f64 returned the raw int16 as f64.
+    /// `FieldType::I16` and `decode_f64` returned the raw int16 as f64.
     #[test]
     fn fmt_c_centidegree_field_scaled() {
         let centi_type = FieldType::from_format_char(b'c');
@@ -455,7 +455,7 @@ mod tests {
         let l_type = FieldType::from_format_char(b'L');
         let bytes = 502_075_967_i32.to_le_bytes(); // Sweden, ~50.2076°
         let v = decode_f64(l_type, &bytes);
-        assert!((v - 50.2_075_967).abs() < 1e-6, "got {v}, expected ~50.21");
+        assert!((v - 50.207_596_7).abs() < 1e-6, "got {v}, expected ~50.21");
     }
 
     /// Plain `h` (no scaling) must still decode raw — regression guard

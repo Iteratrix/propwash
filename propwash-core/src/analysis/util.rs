@@ -270,7 +270,10 @@ mod tests {
     #[test]
     fn resample_empty_source_returns_empty() {
         let src: TimeSeries<f64> = TimeSeries::new();
-        assert!(resample(&src, &[0, 100, 200], Strategy::Linear).is_empty());
+        assert_eq!(
+            resample(&src, &[0, 100, 200], Strategy::Linear),
+            [] as [f64; 0]
+        );
     }
 
     #[test]
@@ -349,9 +352,7 @@ mod tests {
     #[test]
     fn detect_steps_instant_jump() {
         let mut sp = vec![0.0; 200];
-        for i in 100..200 {
-            sp[i] = 200.0;
-        }
+        sp[100..].fill(200.0);
         let steps = detect_steps(&sp);
         assert!(!steps.is_empty(), "should detect the step");
         assert!(
@@ -363,14 +364,12 @@ mod tests {
     #[test]
     fn detect_steps_below_threshold() {
         let mut sp = vec![0.0; 200];
-        for i in 100..200 {
-            sp[i] = 30.0;
-        }
-        assert!(detect_steps(&sp).is_empty());
+        sp[100..].fill(30.0);
+        assert_eq!(detect_steps(&sp), [] as [usize; 0]);
     }
 
     #[test]
     fn detect_steps_too_short() {
-        assert!(detect_steps(&vec![0.0; 10]).is_empty());
+        assert_eq!(detect_steps(&[0.0; 10]), [] as [usize; 0]);
     }
 }

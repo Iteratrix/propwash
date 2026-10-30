@@ -22,7 +22,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - run: cargo clippy --workspace -- -D warnings
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Tests
@@ -30,6 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
 
   fmt:
@@ -42,28 +44,29 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  web-test:
-    name: Web Tests
+  web:
+    name: WASM Build & Web Tests
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: cd web && npm install && npx vitest run
-
-  wasm:
-    name: WASM Build
-    runs-on: ubuntu-latest
-    # PRs and weekly — catches WASM target regressions from toolchain updates
-    if: github.event_name == 'pull_request' || github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - run: cargo install wasm-pack
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      # The TypeScript imports the generated bindings, so typechecking needs the WASM build first.
       - run: wasm-pack build propwash-web --target web --out-dir ../web/pkg
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+        working-directory: web
+      - run: npm run typecheck
+        working-directory: web
+      - run: npm test
+        working-directory: web
 
   perf:
     name: Performance
@@ -73,4 +76,5 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - run: cargo test --release -p propwash-core --test perf -- --ignored

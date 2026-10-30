@@ -456,7 +456,7 @@ mod tests {
 
     /// Construct a minimal `Px4Parsed` containing one topic. The topic
     /// schema is dummy (not used by build's `topic()` lookup beyond
-    /// format_name → msg_id matching).
+    /// `format_name` → `msg_id` matching).
     fn synthetic_parsed(
         topic_name: &str,
         field_names: Vec<&str>,
@@ -514,8 +514,8 @@ mod tests {
         }
     }
 
-    /// bug_008: actuator_outputs schema with output[0] all zeros must NOT
-    /// truncate the motor list. Pre-fix this returned motor_count=0 for
+    /// `bug_008`: `actuator_outputs` schema with output[0] all zeros must NOT
+    /// truncate the motor list. Pre-fix this returned `motor_count=0` for
     /// pre-arm logs and VTOL/quadplane configs with inert low-index
     /// channels.
     #[test]
@@ -544,7 +544,7 @@ mod tests {
         assert!(s.motors.commands[0].iter().all(|n| n.0 == 0.0));
     }
 
-    /// bug_006: vehicle_attitude.q quaternion must convert to attitude
+    /// `bug_006`: `vehicle_attitude.q` quaternion must convert to attitude
     /// roll/pitch/yaw in degrees via the standard ZYX Euler formula.
     /// Test values: identity quaternion (w=1) → all zeros; 90° yaw
     /// quaternion (w=cos(45°), z=sin(45°)) → yaw ≈ 90°.

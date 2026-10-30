@@ -46,7 +46,7 @@ fn info_json() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sessions = parsed["sessions"].as_array().unwrap();
-    assert!(!sessions.is_empty());
+    assert!(!sessions.is_empty(), "expected at least one session");
     assert!(sessions[0]["frame_count"].as_u64().unwrap() > 0);
 }
 
@@ -280,8 +280,11 @@ fn dump_default() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let sessions = parsed["sessions"].as_array().unwrap();
-    assert!(!sessions.is_empty());
-    assert!(sessions[0]["frames"].as_array().unwrap().len() > 0);
+    assert!(!sessions.is_empty(), "expected at least one session");
+    assert!(
+        !sessions[0]["frames"].as_array().unwrap().is_empty(),
+        "expected dumped frames"
+    );
 }
 
 #[test]
@@ -347,8 +350,7 @@ fn dump_with_field_filter() {
     for field in fields {
         assert!(
             field.as_str().unwrap().starts_with("gyro"),
-            "field {:?} should start with 'gyro'",
-            field
+            "field {field:?} should start with 'gyro'"
         );
     }
 }

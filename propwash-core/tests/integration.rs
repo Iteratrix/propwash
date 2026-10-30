@@ -97,7 +97,7 @@ fn bf_gps_coords_in_decimal_degrees() {
         .gps
         .as_ref()
         .expect("gps_rescue fixture should have GPS");
-    assert!(!gps.lat.is_empty());
+    assert_ne!(gps.lat, [] as [propwash_core::units::DecimalDegrees; 0]);
     let lat0 = gps.lat[0].0;
     let lng0 = gps.lng[0].0;
     assert!((-90.0..=90.0).contains(&lat0), "lat {lat0} not in [-90,90]");

@@ -10,19 +10,21 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use az::Az;
+
 fn fixture_path(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures")
         .join(rel)
 }
 
-/// Parse a fixture file in release mode and return (MB/s, frame_count).
+/// Parse a fixture file in release mode and return (MB/s, `frame_count`).
 fn bench_parse(rel: &str) -> (f64, usize) {
     let path = fixture_path(rel);
     let data = std::fs::read(&path).unwrap_or_else(|e| {
         panic!("Failed to read fixture {}: {e}", path.display());
     });
-    let size_mb = data.len() as f64 / 1_048_576.0;
+    let size_mb = data.len().az::<f64>() / 1_048_576.0;
 
     // Warm up
     let _ = propwash_core::decode(&data);
@@ -38,7 +40,11 @@ fn bench_parse(rel: &str) -> (f64, usize) {
 
         if elapsed < best {
             best = elapsed;
-            frames = log.sessions.iter().map(|s| s.frame_count()).sum();
+            frames = log
+                .sessions
+                .iter()
+                .map(propwash_core::Session::frame_count)
+                .sum();
         }
     }
 
@@ -53,7 +59,7 @@ fn bench_parse(rel: &str) -> (f64, usize) {
 // ── Betaflight ───────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_bf_btfl_001() {
     let (mb_s, frames) = bench_parse("fc-blackbox/btfl_001.bbl");
     assert!(frames > 0, "should parse frames");
@@ -64,7 +70,7 @@ fn perf_bf_btfl_001() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_bf_log00007() {
     let (mb_s, frames) = bench_parse("fc-blackbox/LOG00007.BFL");
     assert!(frames > 0, "should parse frames");
@@ -77,7 +83,7 @@ fn perf_bf_log00007() {
 // ── ArduPilot ────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_ap_methodic() {
     let (mb_s, frames) = bench_parse("ardupilot/methodic-copter-tarot-x4.bin");
     assert!(frames > 0, "should parse frames");
@@ -88,7 +94,7 @@ fn perf_ap_methodic() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_ap_dronekit() {
     let (mb_s, frames) = bench_parse("ardupilot/dronekit-copter-log171.bin");
     assert!(frames > 0, "should parse frames");
@@ -101,7 +107,7 @@ fn perf_ap_dronekit() {
 // ── PX4 ──────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_px4_sample() {
     let (mb_s, frames) = bench_parse("px4/sample_log_small.ulg");
     assert!(frames > 0, "should parse frames");
@@ -112,7 +118,7 @@ fn perf_px4_sample() {
 }
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_px4_tagged() {
     let (mb_s, frames) = bench_parse("px4/sample_logging_tagged_and_default_params.ulg");
     assert!(frames > 0, "should parse frames");
@@ -125,7 +131,7 @@ fn perf_px4_tagged() {
 // ── MAVLink ─────────────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_mavlink_dronekit() {
     let (mb_s, frames) = bench_parse("mavlink/dronekit-flight.tlog");
     assert!(frames > 0, "should parse frames");
@@ -138,7 +144,7 @@ fn perf_mavlink_dronekit() {
 // ── Field extraction ─────────────────────────────────────────────────
 
 #[test]
-#[ignore]
+#[ignore = "perf regression check: cargo test --release --test perf -- --ignored"]
 fn perf_field_extraction_all_formats() {
     use propwash_core::units::DegPerSec;
 

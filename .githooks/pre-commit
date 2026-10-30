@@ -2,7 +2,12 @@
 set -e
 echo "Running pre-commit checks..."
 cargo fmt --all -- --check
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cd web && npm install --prefer-offline --silent && npx vitest run && cd ..
+cd web
+npm install --prefer-offline --silent
+# The TypeScript imports the generated WASM bindings; typecheck once they exist.
+if [ -d pkg ]; then npm run --silent typecheck; else echo "web/pkg missing: skipping typecheck (run wasm-pack build first)"; fi
+npx vitest run
+cd ..
 echo "Pre-commit checks passed."

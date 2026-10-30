@@ -523,7 +523,7 @@ mod tests {
         }
     }
 
-    /// bug_007 regression: a BF GPS schema that lacks `GpsLat` and
+    /// `bug_007` regression: a BF GPS schema that lacks `GpsLat` and
     /// `GpsLng` (e.g. a stripped-down firmware variant logging only
     /// altitude and sat count) must yield empty `gps.lat`/`gps.lng` —
     /// not a vector of `DecimalDegrees(0.0)` per frame (which would
@@ -689,7 +689,7 @@ mod tests {
 
         assert!(session.pid_terms.is_empty());
         assert!(!session.pid_terms.has_data());
-        assert!(session.pid_terms.time_us.is_empty());
+        assert_eq!(session.pid_terms.time_us, [] as [u64; 0]);
     }
 
     /// Sanity: a normal full-schema GPS frame populates lat/lng correctly

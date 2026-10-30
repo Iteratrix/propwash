@@ -789,7 +789,9 @@ mod tests {
     /// Generate a pure sine wave at the given frequency and sample rate.
     fn sine_wave(freq_hz: f64, sample_rate: f64, n_samples: usize) -> Vec<f64> {
         (0..n_samples)
-            .map(|i| (2.0 * std::f64::consts::PI * freq_hz * i as f64 / sample_rate).sin() * 100.0)
+            .map(|i| {
+                (2.0 * std::f64::consts::PI * freq_hz * i.az::<f64>() / sample_rate).sin() * 100.0
+            })
             .collect()
     }
 
@@ -833,7 +835,7 @@ mod tests {
     #[test]
     fn spectrum_frequency_resolution() {
         // At 1000 Hz sample rate with 1024-point FFT, resolution is ~0.98 Hz
-        let resolution = 1000.0 / FFT_WINDOW_SIZE as f64;
+        let resolution = 1000.0 / FFT_WINDOW_SIZE.az::<f64>();
         assert!(
             resolution < 2.0,
             "frequency resolution should be < 2 Hz, got {resolution:.2}"
@@ -847,11 +849,7 @@ mod tests {
         let floor = compute_noise_floor(&spectrum.magnitudes_db);
 
         // Noise floor should be well below the peak
-        let peak_db = spectrum
-            .peaks
-            .first()
-            .map(|p| p.magnitude_db)
-            .unwrap_or(0.0);
+        let peak_db = spectrum.peaks.first().map_or(0.0, |p| p.magnitude_db);
         assert!(
             peak_db - floor > 20.0,
             "peak ({peak_db:.0} dB) should be >20 dB above floor ({floor:.0} dB)"
@@ -867,7 +865,7 @@ mod tests {
             .map(|i| {
                 let mut h = DefaultHasher::new();
                 i.hash(&mut h);
-                (h.finish() as f64 / u64::MAX as f64 - 0.5) * 100.0
+                (h.finish().az::<f64>() / u64::MAX.az::<f64>() - 0.5) * 100.0
             })
             .collect();
         let spectrum = compute_spectrum_from_samples(&samples, 1000.0, Axis::Roll);
@@ -932,9 +930,7 @@ mod tests {
     fn avg_motor_hz_zeros_filtered() {
         // Mix of zero and non-zero eRPM — zeros should be excluded
         let mut motor = vec![0.0; 100];
-        for i in 50..100 {
-            motor[i] = 6000.0;
-        }
+        motor[50..].fill(6000.0);
         let erpm = vec![motor; 4];
         let indices: Vec<usize> = (0..100).collect();
         let result = compute_avg_motor_hz(&erpm, &indices, 14);
@@ -947,7 +943,7 @@ mod tests {
         );
     }
 
-    /// bug_005 regression: `compute_throttle_bands_unified` must classify
+    /// `bug_005` regression: `compute_throttle_bands_unified` must classify
     /// gyro samples by their *real-time-correlated* throttle, not by
     /// indexing throttle and gyro at the same array position. A Session
     /// where throttle is at 50 Hz and gyro is at 4 kHz exercises the
@@ -973,20 +969,23 @@ mod tests {
         // flatten this to throttle_n=50 samples and leave the remaining
         // ~3950 gyro samples mis-classified.
         let throttle: Vec<Normalized01> = (0..throttle_n)
-            .map(|i| Normalized01((i as f32) / (throttle_n as f32 - 1.0)))
+            .map(|i| Normalized01(i.az::<f32>() / (throttle_n.az::<f32>() - 1.0)))
             .collect();
 
-        let mut s = Session::default();
-        s.meta = SessionMeta {
-            format: Format::ArduPilot,
-            ..SessionMeta::default()
+        let mut s = Session {
+            meta: SessionMeta {
+                format: Format::ArduPilot,
+                ..SessionMeta::default()
+            },
+            ..Session::default()
         };
         // Gyro: a sine wave on roll so the FFT actually has content
         // (compute_throttle_bands_unified internally calls compute_spectrum
         // which needs ≥ FFT_WINDOW_SIZE samples and non-zero magnitudes).
         let sine: Vec<DegPerSec> = (0..gyro_n)
             .map(|i| {
-                let v = (2.0 * std::f64::consts::PI * 200.0 * i as f64 / 4_000.0).sin() * 100.0;
+                let v =
+                    (2.0 * std::f64::consts::PI * 200.0 * i.az::<f64>() / 4_000.0).sin() * 100.0;
                 DegPerSec(v)
             })
             .collect();

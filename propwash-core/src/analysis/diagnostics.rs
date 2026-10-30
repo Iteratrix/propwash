@@ -645,6 +645,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // test fixture: one argument per TuningSuggestion field
     fn make_suggestion(
         axis: Axis,
         rating: TuningRating,

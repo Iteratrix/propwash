@@ -368,13 +368,59 @@ mod tests {
     // the numerical properties by constructing scenarios and verifying
     // the constants and thresholds are correct.
 
+    /// 1 kHz roll session: setpoint steps 0 → 200 deg/s at sample 400; gyro
+    /// ramps to `peak` over 10 ms, then settles on 200 over the next 20 ms.
+    fn step_session(peak: f64) -> Session {
+        use crate::session::{Triaxial, TriaxialSeries};
+        use crate::units::DegPerSec;
+
+        let n = 1000_usize;
+        let time_us: Vec<u64> = (0..n).map(|i| i.az::<u64>() * 1000).collect();
+        let setpoint = (0..n)
+            .map(|i| DegPerSec(if i < 400 { 0.0 } else { 200.0 }))
+            .collect();
+        let gyro = (0..n)
+            .map(|i| {
+                DegPerSec(match i {
+                    ..400 => 0.0,
+                    400..410 => peak * (i - 400).az::<f64>() / 10.0,
+                    410..430 => (200.0 - peak).mul_add((i - 410).az::<f64>() / 20.0, peak),
+                    _ => 200.0,
+                })
+            })
+            .collect();
+        let roll_only = |roll: Vec<DegPerSec>| TriaxialSeries {
+            time_us: time_us.clone(),
+            values: Triaxial {
+                roll,
+                pitch: Vec::new(),
+                yaw: Vec::new(),
+            },
+        };
+        Session {
+            gyro: roll_only(gyro),
+            setpoint: roll_only(setpoint),
+            ..Session::default()
+        }
+    }
+
+    /// Overshoot above 200% is treated as corrupt data and left out, while
+    /// the same step at 10% overshoot is measured.
     #[test]
     fn overshoot_cap_filters_corrupt_data() {
-        // Verify that the 200% overshoot cap exists in the code
-        // (overshoot > 200.0 triggers `continue`)
-        // This is a code-level assertion rather than a runtime test,
-        // but the integration tests on btfl_035 verify it works on real data
-        assert!(200.0 > 100.0, "overshoot cap should filter extreme values");
+        let measured =
+            analyze_step_response(&step_session(220.0)).expect("a 10% overshoot is measured");
+        let roll = &measured.axes[0];
+        assert_eq!(roll.step_count, 1);
+        assert!(
+            (roll.overshoot_percent - 10.0).abs() < 0.5,
+            "expected ~10% overshoot, got {}",
+            roll.overshoot_percent
+        );
+
+        let capped = analyze_step_response(&step_session(700.0));
+        let counted: usize = capped.map_or(0, |a| a.axes.iter().map(|ax| ax.step_count).sum());
+        assert_eq!(counted, 0, "a 250% overshoot should be discarded");
     }
 
     #[test]

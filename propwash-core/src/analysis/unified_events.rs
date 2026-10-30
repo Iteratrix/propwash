@@ -419,9 +419,9 @@ mod tests {
     use crate::session::{Format, RcCommand, Session, SessionMeta, TriaxialSeries};
     use crate::units::{DegPerSec, Normalized01};
 
-    /// Build a Session where rc_command and gyro have *different* time axes
-    /// — gyro at 1 kHz, rc_command at 10 Hz — and assert that throttle-chop
-    /// detection times the event from rc_command.time_us, not gyro.time_us.
+    /// Build a Session where `rc_command` and gyro have *different* time axes
+    /// — gyro at 1 kHz, `rc_command` at 10 Hz — and assert that throttle-chop
+    /// detection times the event from `rc_command.time_us`, not `gyro.time_us`.
     /// Pre-fix, the event would be timestamped near 0 (gyro index of throttle
     /// index) instead of at the actual throttle-axis time.
     #[test]
@@ -434,10 +434,12 @@ mod tests {
             .map(|i| Normalized01(if i < 5 { 0.8 } else { 0.0 }))
             .collect();
 
-        let mut s = Session::default();
-        s.meta = SessionMeta {
-            format: Format::ArduPilot,
-            ..SessionMeta::default()
+        let mut s = Session {
+            meta: SessionMeta {
+                format: Format::ArduPilot,
+                ..SessionMeta::default()
+            },
+            ..Session::default()
         };
         // Gyro axis populated so detect_all doesn't early-out.
         s.gyro = TriaxialSeries {
@@ -468,7 +470,7 @@ mod tests {
         );
     }
 
-    /// Same shape for motor saturation: motors.time_us must drive the event
+    /// Same shape for motor saturation: `motors.time_us` must drive the event
     /// timestamp. Saturation window starts at motors index 25, ends at 40.
     #[test]
     fn motor_saturation_event_uses_motors_time_axis() {
@@ -482,11 +484,13 @@ mod tests {
             })
             .collect();
 
-        let mut s = Session::default();
-        s.meta = SessionMeta {
-            format: Format::Px4,
-            motor_count: 1,
-            ..SessionMeta::default()
+        let mut s = Session {
+            meta: SessionMeta {
+                format: Format::Px4,
+                motor_count: 1,
+                ..SessionMeta::default()
+            },
+            ..Session::default()
         };
         s.gyro = TriaxialSeries {
             time_us: gyro_time,
