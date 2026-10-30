@@ -1,7 +1,7 @@
 import { get_step_overlay } from "../../pkg/propwash_web.js";
-import { formatEventType, formatEventDetails, eventColor } from "../format.js";
+import { escHtml, formatEventType, formatEventDetails, eventColor } from "../format.js";
 import type { SessionRef, SessionResult, FlightEvent, Diagnostic, PidAnalysis, StepOverlay } from "../types.js";
-import { $, $$, chartWidth, escHtml, tsPlots, navigateTarget, setNavigateTarget, renderedViews, activeSession } from "../state.js";
+import { $, $$, chartWidth, tsPlots, navigateTarget, setNavigateTarget, renderedViews, activeSession } from "../state.js";
 
 function navigateToView(view: string, category: string): void {
   // Switch to target view tab
@@ -129,7 +129,7 @@ export function renderSummary(session: SessionResult): void {
 
   meta.innerHTML = metaItems
     .map(([label, value]) =>
-      `<span><span class="meta-label">${label}</span>${value}</span>`
+      `<span><span class="meta-label">${label}</span>${escHtml(value)}</span>`
     )
     .join("");
 
@@ -505,7 +505,7 @@ export function renderEvents(events: FlightEvent[]): void {
       html += `<tr class="event-row" data-time="${e.time_seconds}">
         <td>${e.time_seconds.toFixed(2)}s</td>
         <td><span class="event-type ${e.kind.type}">${formatEventType(e.kind.type)}</span></td>
-        <td>${formatEventDetails(e.kind)}</td>
+        <td>${escHtml(formatEventDetails(e.kind))}</td>
       </tr>`;
     }
 

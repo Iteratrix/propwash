@@ -1,5 +1,5 @@
 import { get_timeseries } from "../../pkg/propwash_web.js";
-import { eventColor } from "../format.js";
+import { escHtml, eventColor } from "../format.js";
 import { parseSensorFields } from "../sensor-field.js";
 import type { SessionRef, FlightEvent } from "../types.js";
 import { $, $$, chartWidth, activeSession, activeSessionResult, renderedViews, tsPlots, setTsPlots, setTsSync } from "../state.js";
@@ -101,7 +101,7 @@ export function renderTimeseries(ref: SessionRef, group: string): void {
   const json = get_timeseries(ref.fileId, ref.sessionIdx, TS_MAX_POINTS, allFields);
   const ts = JSON.parse(json);
   if (ts.error) {
-    container.innerHTML = `<p class="hint">${ts.error}</p>`;
+    container.innerHTML = `<p class="hint">${escHtml(ts.error)}</p>`;
     return;
   }
 

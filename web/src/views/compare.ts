@@ -1,6 +1,6 @@
-import { bucketDiagnostics, classifyDelta } from "../format.js";
+import { bucketDiagnostics, classifyDelta, escHtml } from "../format.js";
 import type { SessionResult, Spectrum } from "../types.js";
-import { $, chartWidth, escHtml, workspace, lookupSession } from "../state.js";
+import { $, chartWidth, workspace, lookupSession } from "../state.js";
 import { AXIS_COLORS } from "../chart-config.js";
 
 export function populateComparePickers(): void {
@@ -81,7 +81,7 @@ export function renderComparisonSummary(a: SessionResult, b: SessionResult): voi
     <thead><tr><th>Metric</th><th>Before</th><th>After</th><th>Delta</th></tr></thead><tbody>`;
 
   for (const [label, va, vb] of rows) {
-    html += `<tr><td>${label}</td><td>${va}</td><td>${vb}</td><td></td></tr>`;
+    html += `<tr><td>${label}</td><td>${escHtml(va)}</td><td>${escHtml(vb)}</td><td></td></tr>`;
   }
 
   for (const [label, va, vb, better] of eventRows) {

@@ -8,12 +8,6 @@ export function chartWidth(): number {
   return Math.min($("main").clientWidth - padding, 880);
 }
 
-export function escHtml(str: string): string {
-  const div = document.createElement("div");
-  div.textContent = str;
-  return div.innerHTML;
-}
-
 // --- Mutable state ---
 
 export let wasmReady = false;

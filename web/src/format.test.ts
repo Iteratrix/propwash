@@ -6,8 +6,36 @@ import {
   heatColor,
   bucketDiagnostics,
   classifyDelta,
+  escHtml,
 } from "./format.js";
 import type { EventKind, Diagnostic } from "./types.js";
+
+// --- escHtml ---
+
+describe("escHtml", () => {
+  it("neutralizes markup in log-supplied text", () => {
+    expect(escHtml('<img src=x onerror="alert(1)">')).toBe(
+      "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;",
+    );
+  });
+
+  it("escapes ampersands and single quotes", () => {
+    expect(escHtml("Tom & Jerry's quad")).toBe("Tom &amp; Jerry&#39;s quad");
+  });
+
+  it("stringifies numbers", () => {
+    expect(escHtml(1234)).toBe("1234");
+  });
+
+  it("keeps a crafted firmware message inert in the events table", () => {
+    const kind = {
+      type: "FirmwareMessage",
+      level: "Error",
+      message: "<script>steal()</script>",
+    } as EventKind;
+    expect(escHtml(formatEventDetails(kind))).not.toContain("<script>");
+  });
+});
 
 // --- formatEventType ---
 

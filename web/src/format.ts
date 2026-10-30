@@ -1,5 +1,23 @@
 import type { EventKind, Diagnostic } from "./types.js";
 
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+/**
+ * Escape text for an HTML template, in element content or a quoted attribute.
+ * Everything a log file supplies (craft name, firmware, firmware messages,
+ * field names) is untrusted: logs are shared on forums for help, so a crafted
+ * one must not be able to run script on the site.
+ */
+export function escHtml(value: string | number): string {
+  return String(value).replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
+}
+
 export function formatEventType(type: string): string {
   return type.replace(/([A-Z])/g, " $1").trim();
 }

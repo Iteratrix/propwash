@@ -1,6 +1,7 @@
 import { get_trend } from "../../pkg/propwash_web.js";
 import type { TrendPoint } from "../types.js";
-import { $, escHtml, workspace } from "../state.js";
+import { $, workspace } from "../state.js";
+import { escHtml } from "../format.js";
 
 export function renderTrend(): void {
   const container = $("#trend-table");
