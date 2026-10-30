@@ -540,10 +540,7 @@ impl Session {
     /// Convenience: filter config from `meta`. Returns a config with all
     /// `None`s if the format didn't surface filter parameters.
     pub fn filter_config(&self) -> FilterConfig {
-        self.meta
-            .filter_config
-            .clone()
-            .unwrap_or_else(empty_filter_config)
+        self.meta.filter_config.clone().unwrap_or_default()
     }
 
     /// Motor command range. Always `(0.0, 1.0)` because motor commands
@@ -900,18 +897,6 @@ impl Session {
     /// Sample rate of the gyro stream in Hz, or 0.0 if no gyro data.
     pub fn gyro_rate_hz(&self) -> f64 {
         rate_hz(&self.gyro.time_us)
-    }
-}
-
-fn empty_filter_config() -> FilterConfig {
-    FilterConfig {
-        gyro_lpf_hz: None,
-        gyro_lpf2_hz: None,
-        dterm_lpf_hz: None,
-        dyn_notch_min_hz: None,
-        dyn_notch_max_hz: None,
-        gyro_notch1_hz: None,
-        gyro_notch2_hz: None,
     }
 }
 

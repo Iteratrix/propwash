@@ -358,7 +358,7 @@ impl PidGains {
 }
 
 /// Filter configuration extracted from flight controller parameters.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[allow(clippy::struct_field_names)]
 pub struct FilterConfig {
     pub gyro_lpf_hz: Option<f64>,

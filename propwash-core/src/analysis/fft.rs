@@ -71,6 +71,13 @@ pub struct VibrationAnalysis {
     pub propwash: Option<PropwashAnalysis>,
 }
 
+impl VibrationAnalysis {
+    /// Gyro sample rate the spectra were computed at, if any were.
+    pub fn sample_rate_hz(&self) -> Option<f64> {
+        self.spectra.first().map(|s| s.sample_rate_hz)
+    }
+}
+
 const FFT_WINDOW_SIZE: usize = 1024;
 const FFT_OVERLAP: usize = 512;
 const PEAK_COUNT: usize = 5;

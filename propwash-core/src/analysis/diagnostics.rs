@@ -39,16 +39,24 @@ pub fn diagnose(
     diagnostics.extend(diagnose_desync(events));
     diagnostics.extend(diagnose_overshoot(events, duration_seconds));
     diagnostics.extend(diagnose_gyro_spikes(events));
-    if let Some(vib) = vibration {
+
+    let low_rate = vibration.and_then(diagnose_low_sample_rate);
+    // Peak-based checks on a spectrum that stops below the motor and frame
+    // bands would only describe artifacts, so they need a fast enough log.
+    let spectra = vibration.filter(|_| low_rate.is_none());
+    if let Some(vib) = spectra {
         diagnostics.extend(diagnose_vibration(vib));
         diagnostics.extend(diagnose_throttle_response(vib));
+    }
+    if let Some(vib) = vibration {
         diagnostics.extend(diagnose_fc_mounting(vib));
+    }
+    if let Some(vib) = spectra {
         diagnostics.extend(diagnose_filter_adequacy(vib, filter_config));
     }
-    if let Some(sr) = step_response {
-        if let Some(vib) = vibration {
-            diagnostics.extend(diagnose_d_term_noise(sr, vib));
-        }
+    diagnostics.extend(low_rate);
+    if let (Some(sr), Some(vib)) = (step_response, spectra) {
+        diagnostics.extend(diagnose_d_term_noise(sr, vib));
     }
     if let Some(pid) = pid {
         diagnostics.extend(diagnose_tuning_from_analysis(pid));
@@ -234,6 +242,30 @@ fn diagnose_gyro_spikes(events: &[FlightEvent]) -> Vec<Diagnostic> {
         }
     }
     diagnostics
+}
+
+/// A spectrum reaches only half the gyro sample rate. Below 200 Hz that
+/// ceiling sits under 100 Hz, beneath where motor noise and frame resonance
+/// appear. Low-rate logs are common on `ArduPilot` (IMU message rate follows
+/// the log settings) and in `MAVLink` telemetry.
+const MIN_VIBRATION_SAMPLE_RATE_HZ: f64 = 200.0;
+
+fn diagnose_low_sample_rate(vib: &VibrationAnalysis) -> Option<Diagnostic> {
+    let rate = vib.sample_rate_hz()?;
+    if rate >= MIN_VIBRATION_SAMPLE_RATE_HZ {
+        return None;
+    }
+    Some(Diagnostic {
+        severity: Severity::Info,
+        category: "vibration",
+        message: format!("Gyro logged at {rate:.0} Hz, too slow for vibration analysis"),
+        detail: format!(
+            "A log can only show frequencies up to half its sample rate, so this spectrum stops at {:.1} Hz. \
+             Motor noise and frame resonance appear above that, so vibration checks are skipped for this log. \
+             Log the gyro at {MIN_VIBRATION_SAMPLE_RATE_HZ:.0} Hz or faster to analyze vibration.",
+            rate / 2.0
+        ),
+    })
 }
 
 fn diagnose_vibration(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
@@ -754,6 +786,61 @@ mod tests {
             accel: None,
             propwash: None,
         }
+    }
+
+    /// One roll spectrum at `rate` Hz with a prominent first peak at `peak_hz`.
+    fn vib_with_peak(rate: f64, peak_hz: f64) -> VibrationAnalysis {
+        use crate::analysis::fft::{FrequencyPeak, FrequencySpectrum};
+        VibrationAnalysis {
+            spectra: vec![FrequencySpectrum {
+                axis: Axis::Roll,
+                sample_rate_hz: rate,
+                frequencies_hz: Vec::new(),
+                magnitudes_db: Vec::new(),
+                peaks: vec![FrequencyPeak {
+                    frequency_hz: peak_hz,
+                    magnitude_db: 60.0,
+                    rank: 1,
+                    classification: None,
+                }],
+            }],
+            ..make_vib([20.0, 20.0, 20.0])
+        }
+    }
+
+    fn run_diagnose(vib: &VibrationAnalysis) -> Vec<Diagnostic> {
+        diagnose(
+            &[],
+            Some(vib),
+            None,
+            None,
+            &FilterConfig::default(),
+            4,
+            60.0,
+        )
+    }
+
+    /// A 25 Hz log can't see vibration: its near-Nyquist peak must not be
+    /// reported as noise, and the report should say why it was skipped.
+    #[test]
+    fn low_sample_rate_skips_peak_diagnostics_and_says_why() {
+        let diags = run_diagnose(&vib_with_peak(25.0, 22.0));
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].severity, Severity::Info);
+        assert!(diags[0].message.contains("25 Hz"));
+        assert!(diags[0].detail.contains("12.5 Hz"));
+    }
+
+    #[test]
+    fn fast_log_still_reports_peaks() {
+        let diags = run_diagnose(&vib_with_peak(1000.0, 60.0));
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("Low-frequency noise at 60 Hz")),
+            "got {diags:?}"
+        );
+        assert!(!diags.iter().any(|d| d.message.contains("too slow")));
     }
 
     #[test]
