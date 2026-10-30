@@ -17,6 +17,7 @@
 //! /etc., so values reach this build step already in physical units —
 //! no per-call `× 0.01` or `× 1e-7` needed.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use az::{Az, SaturatingAs};
@@ -24,7 +25,9 @@ use az::{Az, SaturatingAs};
 use super::parser::ApParsed;
 use super::types::MsgColumns;
 use crate::format::common::{ardupilot_filter_config, ardupilot_pid_gains};
-use crate::session::{Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries};
+use crate::session::{
+    Esc, Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries,
+};
 use crate::types::Warning;
 use crate::units::{
     Amps, DecimalDegrees, DegPerSec, Erpm, Meters, MetersPerSec, MetersPerSec2, Normalized01, Volts,
@@ -44,8 +47,10 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
             .and_then(|d| parsed.topics.get(&d.msg_type))
     };
 
+    let imu = topic_by_name("IMU").map(primary_instance);
+
     // ── Gyro: prefer IMU (filtered) then GYR (unfiltered fallback) ─────────
-    if let Some(t) = topic_by_name("IMU") {
+    if let Some(t) = imu.as_deref() {
         s.gyro.time_us = t.timestamps.clone();
         let r = t.column("GyrX").unwrap_or(&[]);
         let p = t.column("GyrY").unwrap_or(&[]);
@@ -53,7 +58,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
         s.gyro.values.roll = r.iter().map(|v| DegPerSec(v * RAD_TO_DEG)).collect();
         s.gyro.values.pitch = p.iter().map(|v| DegPerSec(v * RAD_TO_DEG)).collect();
         s.gyro.values.yaw = y.iter().map(|v| DegPerSec(v * RAD_TO_DEG)).collect();
-    } else if let Some(t) = topic_by_name("GYR") {
+    } else if let Some(t) = topic_by_name("GYR").map(primary_instance) {
         s.gyro.time_us = t.timestamps.clone();
         let r = t.column("GyrX").unwrap_or(&[]);
         let p = t.column("GyrY").unwrap_or(&[]);
@@ -64,7 +69,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     }
 
     // ── Accel: prefer IMU then ACC ─────────────────────────────────────────
-    if let Some(t) = topic_by_name("IMU") {
+    if let Some(t) = imu.as_deref() {
         s.accel.time_us = t.timestamps.clone();
         let x = t.column("AccX").unwrap_or(&[]);
         let y = t.column("AccY").unwrap_or(&[]);
@@ -72,7 +77,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
         s.accel.values.roll = x.iter().copied().map(MetersPerSec2).collect();
         s.accel.values.pitch = y.iter().copied().map(MetersPerSec2).collect();
         s.accel.values.yaw = z.iter().copied().map(MetersPerSec2).collect();
-    } else if let Some(t) = topic_by_name("ACC") {
+    } else if let Some(t) = topic_by_name("ACC").map(primary_instance) {
         s.accel.time_us = t.timestamps.clone();
         let x = t.column("AccX").unwrap_or(&[]);
         let y = t.column("AccY").unwrap_or(&[]);
@@ -165,7 +170,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     }
 
     // ── Battery ──────────────────────────────────────────────────────────────
-    if let Some(t) = topic_by_name("BAT") {
+    if let Some(t) = topic_by_name("BAT").map(primary_instance) {
         if let Some(col) = t.column("Volt") {
             s.vbat = TimeSeries::from_parts(
                 t.timestamps.clone(),
@@ -184,7 +189,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     // GPS.Lat/Lng use FMT type `L` (int32 × 1e7); the parser's
     // FieldType::I32DegreesE7 scales to decimal degrees during decode,
     // so build receives values already in decimal degrees.
-    if let Some(t) = topic_by_name("GPS") {
+    if let Some(t) = topic_by_name("GPS").map(primary_instance) {
         let mut gps = Gps {
             time_us: t.timestamps.clone(),
             ..Gps::default()
@@ -212,24 +217,11 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
         }
     }
 
-    // ── ESC telemetry: ESC messages with Instance + RPM ─────────────────────
+    // ── ESC telemetry: one ESC message per motor, interleaved by Instance ──
+    let motor_poles = esc_motor_poles(&parsed.params);
     if let Some(t) = topic_by_name("ESC") {
-        let inst_col = t.column("Instance");
-        let rpm_col = t.column("RPM");
-        if let (Some(inst), Some(rpm)) = (inst_col, rpm_col) {
-            let max_inst = inst.iter().copied().fold(0.0_f64, f64::max).az::<usize>() + 1;
-            let mut erpm: Vec<Vec<Erpm>> = vec![Vec::new(); max_inst];
-            for (&i, &r) in inst.iter().zip(rpm.iter()) {
-                let idx = i.saturating_as::<usize>();
-                if let Some(col) = erpm.get_mut(idx) {
-                    col.push(Erpm(r.max(0.0).az::<u32>()));
-                }
-            }
-            s.motors.esc = Some(crate::session::Esc {
-                time_us: t.timestamps.clone(),
-                erpm,
-                ..crate::session::Esc::default()
-            });
+        if let (Some(inst), Some(rpm)) = (t.column("Instance"), t.column("RPM")) {
+            s.motors.esc = esc_from_interleaved(&t.timestamps, inst, rpm, motor_poles);
         }
     }
 
@@ -305,7 +297,9 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
         },
         board: None,
         motor_count: s.meta.motor_count,
-        motor_poles: None, // AP doesn't expose motor pole count via params
+        // The pole count `esc_from_interleaved` scaled RPM by; the spectrum
+        // divides it back out, so motor lines land at RPM / 60.
+        motor_poles: s.motors.esc.is_some().then_some(motor_poles),
         pid_gains: Some(ardupilot_pid_gains(&parsed.params)),
         filter_config: Some(ardupilot_filter_config(&parsed.params)),
         session_index,
@@ -315,6 +309,108 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     };
 
     s
+}
+
+/// Columns AP has used to tell instances of one sensor apart: `I` (IMU, GYR,
+/// ACC, GPS), `Instance` (ESC, and BAT through 4.4), `Inst` (BAT from 4.5).
+const INSTANCE_COLUMNS: [&str; 3] = ["I", "Instance", "Inst"];
+
+/// AP 4.x logs every instance of a multi-instance sensor (2–3 IMUs, dual GPS,
+/// several batteries) under one message type, interleaved row by row. Session
+/// streams each model one physical sensor, so keep the primary (lowest
+/// numbered) instance; merging them makes a 25 Hz IMU look like a 75 Hz one
+/// whose samples jump between sensors. Older logs wrote `IMU2`/`GPS2` as
+/// separate message types and have no instance column; they pass through.
+fn primary_instance(t: &MsgColumns) -> Cow<'_, MsgColumns> {
+    let Some(col) = INSTANCE_COLUMNS.iter().find_map(|name| t.column(name)) else {
+        return Cow::Borrowed(t);
+    };
+    let ids: Vec<u8> = col.iter().map(|&v| v.saturating_as::<u8>()).collect();
+    let Some(&primary) = ids.iter().min() else {
+        return Cow::Borrowed(t);
+    };
+    if ids.iter().all(|&id| id == primary) {
+        return Cow::Borrowed(t);
+    }
+    Cow::Owned(t.filter_rows(|row| ids.get(row) == Some(&primary)))
+}
+
+/// Motor pole count for converting AP's ESC RPM back to electrical RPM.
+/// `SERVO_BLH_POLES` is the parameter AP itself divides eRPM by; 14 is its
+/// default and the common count for multirotor motors.
+fn esc_motor_poles(params: &HashMap<String, f64>) -> u32 {
+    params
+        .get("SERVO_BLH_POLES")
+        .filter(|p| p.is_finite())
+        .map_or(14, |&p| p.saturating_as::<u32>())
+        .max(2)
+}
+
+/// Build [`Esc`] from AP's interleaved per-motor ESC rows.
+///
+/// Each motor reports on its own clock, but `Esc` shares one time axis across
+/// motors, so every motor is held (zero-order) onto the timestamps of the
+/// motor that reported most often. AP logs mechanical RPM, already divided by
+/// pole pairs; `Erpm` is electrical, so the pole pairs are multiplied back in.
+/// Returns `None` when no row carries a usable instance.
+fn esc_from_interleaved(
+    time_us: &[u64],
+    inst: &[f64],
+    rpm: &[f64],
+    motor_poles: u32,
+) -> Option<Esc> {
+    let pole_pairs = f64::from(motor_poles / 2);
+    let mut per_motor: Vec<(Vec<u64>, Vec<Erpm>)> = Vec::new();
+    for ((&t, &i), &r) in time_us.iter().zip(inst).zip(rpm) {
+        let idx = i.saturating_as::<usize>();
+        // ESC instances are motor indices; anything past 32 is corrupt.
+        if idx >= 32 {
+            continue;
+        }
+        if per_motor.len() <= idx {
+            per_motor.resize_with(idx + 1, Default::default);
+        }
+        per_motor[idx].0.push(t);
+        per_motor[idx]
+            .1
+            .push(Erpm((r.max(0.0) * pole_pairs).saturating_as::<u32>()));
+    }
+    let axis = per_motor
+        .iter()
+        .map(|(t, _)| t)
+        .max_by_key(|t| t.len())?
+        .clone();
+    if axis.is_empty() {
+        return None;
+    }
+    let erpm = per_motor
+        .iter()
+        .map(|(t, v)| hold_onto(t, v, &axis))
+        .collect();
+    Some(Esc {
+        time_us: axis,
+        erpm,
+        ..Esc::default()
+    })
+}
+
+/// Zero-order hold of `(time, values)` onto `axis`: each output is the latest
+/// sample at or before that time (the first sample before the series starts).
+/// Empty input stays empty so a silent motor reads as missing, not zero.
+fn hold_onto<T: Copy>(time: &[u64], values: &[T], axis: &[u64]) -> Vec<T> {
+    let n = time.len().min(values.len());
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut cursor = 0;
+    axis.iter()
+        .map(|&t| {
+            while cursor + 1 < n && time[cursor + 1] <= t {
+                cursor += 1;
+            }
+            values[cursor]
+        })
+        .collect()
 }
 
 fn ap_motor_range(params: &HashMap<String, f64>) -> (f64, f64) {
@@ -401,6 +497,70 @@ mod tests {
             params: HashMap::new(),
             stats: ApParseStats::default(),
         }
+    }
+
+    /// AP 4.x interleaves all IMUs under one `IMU` type; the gyro stream must
+    /// carry the primary IMU alone, at its own rate.
+    #[test]
+    fn ap_imu_keeps_primary_instance_only() {
+        let parsed = synthetic_parsed(
+            "IMU",
+            vec!["I", "GyrX", "GyrY", "GyrZ"],
+            vec![1000, 1000, 1000, 2000, 2000, 2000],
+            vec![
+                vec![0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+                vec![0.1, 9.0, 9.0, 0.2, 9.0, 9.0],
+                vec![0.0; 6],
+                vec![0.0; 6],
+            ],
+        );
+        let s = super::session(parsed, vec![], 1);
+        assert_eq!(s.gyro.time_us, vec![1000, 2000]);
+        assert_eq!(s.gyro.values.roll.len(), 2);
+        assert!((s.gyro.values.roll[1].0 - 0.2 * RAD_TO_DEG).abs() < 1e-9);
+    }
+
+    /// BAT names its instance column `Inst` from AP 4.5 (`Instance` before).
+    #[test]
+    fn ap_battery_keeps_primary_instance_only() {
+        let parsed = synthetic_parsed(
+            "BAT",
+            vec!["Inst", "Volt"],
+            vec![1000, 1000, 2000, 2000],
+            vec![vec![0.0, 1.0, 0.0, 1.0], vec![16.0, 4.0, 15.5, 4.0]],
+        );
+        let s = super::session(parsed, vec![], 1);
+        assert_eq!(s.vbat.time_us, vec![1000, 2000]);
+        assert_eq!(s.vbat.values, vec![Volts(16.0), Volts(15.5)]);
+    }
+
+    /// ESC rows interleave motors that report on their own clocks. Every
+    /// motor column must line up with the shared axis (a short column used
+    /// to crash the spectrum's resampler), and mechanical RPM must come back
+    /// as electrical RPM using the logged pole count.
+    #[test]
+    fn ap_esc_splits_motors_onto_one_axis_as_electrical_rpm() {
+        let mut parsed = synthetic_parsed(
+            "ESC",
+            vec!["Instance", "RPM"],
+            vec![1000, 1100, 2000, 2100, 3000],
+            vec![
+                vec![0.0, 1.0, 0.0, 1.0, 0.0],
+                vec![1000.0, 2000.0, 1500.0, 2500.0, 1200.0],
+            ],
+        );
+        parsed.params.insert("SERVO_BLH_POLES".into(), 12.0);
+        let s = super::session(parsed, vec![], 1);
+        let esc = s
+            .motors
+            .esc
+            .as_ref()
+            .expect("ESC rows should build telemetry");
+        assert_eq!(esc.time_us, vec![1000, 2000, 3000]);
+        assert_eq!(esc.erpm.len(), 2);
+        assert_eq!(esc.erpm[0], vec![Erpm(6000), Erpm(9000), Erpm(7200)]);
+        assert_eq!(esc.erpm[1], vec![Erpm(12000), Erpm(12000), Erpm(15000)]);
+        assert_eq!(s.meta.motor_poles, Some(12));
     }
 
     /// bug_019: consecutive duplicate MODE samples must collapse to one

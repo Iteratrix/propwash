@@ -177,8 +177,10 @@ pub fn resample_view<T: Lerp>(
 
 /// View-based zero-order-hold variant of [`resample_zoh`].
 pub fn resample_zoh_view<T: Copy>(src: TimeSeriesView<'_, T>, target: &[u64]) -> Vec<T> {
-    let n = src.time_us.len();
-    if n == 0 || src.values.is_empty() {
+    // Same defensive clamp as `resample_view`: a mismatched slice pair
+    // yields the overlapping prefix instead of indexing past `values`.
+    let n = src.time_us.len().min(src.values.len());
+    if n == 0 {
         return Vec::new();
     }
     let mut out = Vec::with_capacity(target.len());
@@ -252,6 +254,17 @@ mod tests {
 
     fn ts<T>(time_us: Vec<u64>, values: Vec<T>) -> TimeSeries<T> {
         TimeSeries::from_parts(time_us, values)
+    }
+
+    /// A slice pair with fewer values than timestamps (the shape AP's ESC
+    /// build used to produce) resamples the overlap instead of panicking.
+    #[test]
+    fn resample_zoh_view_clamps_mismatched_lengths() {
+        let view = TimeSeriesView {
+            time_us: &[0, 100, 200, 300],
+            values: &[1u32, 2],
+        };
+        assert_eq!(resample_zoh_view(view, &[0, 150, 400]), vec![1, 2, 2]);
     }
 
     #[test]

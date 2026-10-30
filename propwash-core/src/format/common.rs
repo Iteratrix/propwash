@@ -8,7 +8,7 @@ use crate::types::{AxisGains, FilterConfig, PidGains};
 ///
 /// All column vectors have the same length as `timestamps`.
 /// Shared across AP, PX4, and `MAVLink` format modules.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MsgColumns {
     /// Timestamps in microseconds, one per message.
     pub timestamps: Vec<u64>,
@@ -50,6 +50,22 @@ impl MsgColumns {
         self.timestamps.push(timestamp);
         for (col, &val) in self.columns.iter_mut().zip(values.iter()) {
             col.push(val);
+        }
+    }
+
+    /// A copy holding only the rows for which `keep(row_index)` is true,
+    /// with every column filtered in step with `timestamps`.
+    pub(crate) fn filter_rows(&self, keep: impl Fn(usize) -> bool) -> Self {
+        let rows: Vec<usize> = (0..self.timestamps.len()).filter(|&i| keep(i)).collect();
+        Self {
+            timestamps: rows.iter().map(|&i| self.timestamps[i]).collect(),
+            columns: self
+                .columns
+                .iter()
+                .map(|col| rows.iter().filter_map(|&i| col.get(i).copied()).collect())
+                .collect(),
+            field_names: self.field_names.clone(),
+            field_index: self.field_index.clone(),
         }
     }
 }
