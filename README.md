@@ -117,11 +117,11 @@ propwash dump flight.bbl --session 2 --frames 100-200 --fields gyroADC,motor
 | Rotorflight | `.bbl` blackbox | Full support |
 | INAV | `.bbl` blackbox | Full support |
 | Cleanflight | `.bbl` blackbox | Full support |
-| ArduPilot (Copter/Plane/Rover) | `.bin` DataFlash | Supported; vibration needs the gyro logged at 200 Hz or faster* |
+| ArduPilot (Copter/Plane/Rover) | `.bin` DataFlash | Full support; vibration from the batch sampler* |
 | PX4 | `.ulg` ULog | Full support |
 | ArduPilot / PX4 ground station | `.tlog` MAVLink | Events, attitude and tuning; too slow (~10 Hz) for vibration |
 
-\* ArduPilot's `IMU` message rate follows the log settings and is often 25-50 Hz. A spectrum only reaches half the sample rate, so propwash skips vibration checks on slow logs and says why. Reading the full-rate batch sampler (`ISBH`/`ISBD`) is planned.
+\* Vibration spectra use the batch sampler's full-rate gyro bursts (`ISBH`/`ISBD`, enabled with `INS_LOG_BAT_MASK`). Without them, the `IMU` message is often logged at only 25-50 Hz; a spectrum only reaches half the sample rate, so propwash skips vibration checks on such logs and says why.
 
 ## Architecture
 

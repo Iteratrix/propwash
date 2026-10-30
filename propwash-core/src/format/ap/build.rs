@@ -23,10 +23,11 @@ use std::collections::HashMap;
 use az::{Az, SaturatingAs};
 
 use super::parser::ApParsed;
-use super::types::MsgColumns;
+use super::types::{IsbBatch, MsgColumns};
 use crate::format::common::{ardupilot_filter_config, ardupilot_pid_gains};
 use crate::session::{
-    Esc, Event, EventKind, FlightMode, Format, Gps, Session, SessionMeta, TimeSeries,
+    Esc, Event, EventKind, FlightMode, Format, Gps, SampleBatch, Session, SessionMeta, TimeSeries,
+    Triaxial,
 };
 use crate::types::Warning;
 use crate::units::{
@@ -48,6 +49,7 @@ pub(crate) fn session(parsed: ApParsed, warnings: Vec<Warning>, session_index: u
     };
 
     let imu = topic_by_name("IMU").map(primary_instance);
+    s.gyro_batches = gyro_batches(&parsed.batches);
 
     // ── Gyro: prefer IMU (filtered) then GYR (unfiltered fallback) ─────────
     if let Some(t) = imu.as_deref() {
@@ -335,6 +337,45 @@ fn primary_instance(t: &MsgColumns) -> Cow<'_, MsgColumns> {
     Cow::Owned(t.filter_rows(|row| ids.get(row) == Some(&primary)))
 }
 
+/// `ISBH.type` for gyro bursts (0 is the accelerometer).
+const ISB_GYRO: u8 = 1;
+
+/// Full-rate gyro bursts from the batch sampler, for the primary (lowest
+/// numbered) IMU, converted from raw `int16 × multiplier` rad/s to deg/s.
+/// Bursts at a different rate from the first are dropped so that every
+/// spectrum window shares one frequency axis.
+fn gyro_batches(batches: &[IsbBatch]) -> Vec<SampleBatch<DegPerSec>> {
+    let gyro = || batches.iter().filter(|b| b.sensor_type == ISB_GYRO);
+    let Some(primary) = gyro().map(|b| b.instance).min() else {
+        return Vec::new();
+    };
+    let mut primary_bursts = gyro().filter(|b| b.instance == primary).peekable();
+    let Some(rate) = primary_bursts.peek().map(|b| b.sample_rate_hz) else {
+        return Vec::new();
+    };
+    primary_bursts
+        // AP reports the rate it measured per burst; it jitters in the fifth digit.
+        .filter(|b| (b.sample_rate_hz - rate).abs() <= rate * 1e-3)
+        .map(|b| {
+            let scale = RAD_TO_DEG / b.multiplier;
+            let axis = |raw: &[i16]| {
+                raw.iter()
+                    .map(|&v| DegPerSec(f64::from(v) * scale))
+                    .collect()
+            };
+            SampleBatch {
+                start_us: b.sample_us,
+                sample_rate_hz: b.sample_rate_hz,
+                values: Triaxial {
+                    roll: axis(&b.samples[0]),
+                    pitch: axis(&b.samples[1]),
+                    yaw: axis(&b.samples[2]),
+                },
+            }
+        })
+        .collect()
+}
+
 /// Motor pole count for converting AP's ESC RPM back to electrical RPM.
 /// `SERVO_BLH_POLES` is the parameter AP itself divides eRPM by; 14 is its
 /// default and the common count for multirotor motors.
@@ -453,7 +494,7 @@ fn ap_flight_mode(id: u8) -> FlightMode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::format::ap::types::{ApMsgDef, ApParseStats, FieldType};
+    use crate::format::ap::types::{ApMsgDef, ApParseStats, FieldType, IsbBatch};
     use std::collections::HashMap;
 
     /// Construct a minimal `ApParsed` with one custom message type whose
@@ -495,6 +536,7 @@ mod tests {
             firmware_version: String::new(),
             vehicle_name: String::new(),
             params: HashMap::new(),
+            batches: Vec::new(),
             stats: ApParseStats::default(),
         }
     }
@@ -561,6 +603,46 @@ mod tests {
         assert_eq!(esc.erpm[0], vec![Erpm(6000), Erpm(9000), Erpm(7200)]);
         assert_eq!(esc.erpm[1], vec![Erpm(12000), Erpm(12000), Erpm(15000)]);
         assert_eq!(s.meta.motor_poles, Some(12));
+    }
+
+    fn burst(sensor_type: u8, instance: u8, rate: f64, raw: i16) -> IsbBatch {
+        IsbBatch {
+            sensor_type,
+            instance,
+            multiplier: 1000.0,
+            sample_us: 1_000_000,
+            sample_rate_hz: rate,
+            samples: [vec![raw; 4], vec![0; 4], vec![-raw; 4]],
+        }
+    }
+
+    /// Batch-sampler gyro bursts reach the Session for the primary IMU only,
+    /// scaled from `raw / multiplier` rad/s to deg/s; accelerometer bursts
+    /// and bursts at a different rate stay out.
+    #[test]
+    fn ap_gyro_batches_keep_primary_imu_in_deg_per_sec() {
+        let mut parsed = synthetic_parsed("MODE", vec!["Mode"], vec![], vec![vec![]]);
+        parsed.batches = vec![
+            burst(0, 0, 2000.0, 9800),
+            burst(1, 3, 2000.0, 500),
+            burst(1, 0, 2000.0, 1000),
+            burst(1, 0, 2000.5, 1000),
+            burst(1, 0, 1000.0, 1000),
+        ];
+        let s = super::session(parsed, vec![], 1);
+        assert_eq!(
+            s.gyro_batches.len(),
+            2,
+            "two primary-IMU gyro bursts at 2 kHz"
+        );
+        let b = &s.gyro_batches[0];
+        assert_eq!(b.start_us, 1_000_000);
+        assert_eq!(b.len(), 4);
+        assert!(
+            (b.values.roll[0].0 - RAD_TO_DEG).abs() < 1e-9,
+            "1000 / 1000 rad/s"
+        );
+        assert!((b.values.yaw[0].0 + RAD_TO_DEG).abs() < 1e-9);
     }
 
     /// `bug_019`: consecutive duplicate MODE samples must collapse to one

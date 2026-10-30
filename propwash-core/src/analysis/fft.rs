@@ -4,6 +4,7 @@ use rustfft::FftPlanner;
 use serde::Serialize;
 
 use super::events::{EventKind, FlightEvent};
+use crate::session::SampleBatch;
 use crate::types::{Axis, Session};
 use crate::units::DegPerSec;
 
@@ -99,36 +100,53 @@ pub fn compute_spectrum_from_samples(
     sample_rate: f64,
     axis: Axis,
 ) -> FrequencySpectrum {
+    compute_spectrum_from_segments(&[samples], sample_rate, axis)
+}
+
+/// Welch-averaged magnitude spectrum over every full window inside each
+/// segment. Windows never span two segments, so non-contiguous bursts
+/// (`ArduPilot`'s batch sampler) average without seams. Segments shorter
+/// than one window contribute nothing; with no full window at all, every
+/// bin reads -120 dB.
+pub fn compute_spectrum_from_segments(
+    segments: &[&[f64]],
+    sample_rate: f64,
+    axis: Axis,
+) -> FrequencySpectrum {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(FFT_WINDOW_SIZE);
 
     let hann = hann_window(FFT_WINDOW_SIZE);
-    let n_windows = (samples.len() - FFT_WINDOW_SIZE) / (FFT_WINDOW_SIZE - FFT_OVERLAP) + 1;
     let n_bins = FFT_WINDOW_SIZE / 2;
 
     let mut avg_magnitudes = vec![0.0_f64; n_bins];
+    let mut n_windows = 0_usize;
 
-    for w in 0..n_windows {
-        let start = w * (FFT_WINDOW_SIZE - FFT_OVERLAP);
-        let window_samples = &samples[start..start + FFT_WINDOW_SIZE];
+    for segment in segments.iter().filter(|s| s.len() >= FFT_WINDOW_SIZE) {
+        for start in (0..=segment.len() - FFT_WINDOW_SIZE).step_by(FFT_WINDOW_SIZE - FFT_OVERLAP) {
+            let window_samples = &segment[start..start + FFT_WINDOW_SIZE];
 
-        let mut buffer: Vec<Complex<f64>> = window_samples
-            .iter()
-            .zip(hann.iter())
-            .map(|(&s, &h)| Complex::new(s * h, 0.0))
-            .collect();
+            let mut buffer: Vec<Complex<f64>> = window_samples
+                .iter()
+                .zip(hann.iter())
+                .map(|(&s, &h)| Complex::new(s * h, 0.0))
+                .collect();
 
-        fft.process(&mut buffer);
+            fft.process(&mut buffer);
 
-        for (i, mag) in avg_magnitudes.iter_mut().enumerate() {
-            let c = buffer[i];
-            *mag += c.re.hypot(c.im);
+            for (i, mag) in avg_magnitudes.iter_mut().enumerate() {
+                let c = buffer[i];
+                *mag += c.re.hypot(c.im);
+            }
+            n_windows += 1;
         }
     }
 
-    let scale = 1.0 / n_windows.az::<f64>();
-    for mag in &mut avg_magnitudes {
-        *mag *= scale;
+    if n_windows > 0 {
+        let scale = 1.0 / n_windows.az::<f64>();
+        for mag in &mut avg_magnitudes {
+            *mag *= scale;
+        }
     }
 
     let freq_resolution = sample_rate / FFT_WINDOW_SIZE.az::<f64>();
@@ -269,12 +287,20 @@ pub fn analyze_vibration_unified(
     // reasonable number on those formats.
     let motor_poles: u32 = unified.meta.motor_poles.unwrap_or(14);
 
+    let full_rate = full_rate_gyro(unified);
     let mut spectra = Vec::new();
 
     for axis in Axis::ALL {
-        let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
-        if gyro.len() >= FFT_WINDOW_SIZE {
-            spectra.push(compute_spectrum_from_samples(gyro, sample_rate, axis));
+        if let Some((bursts, rate)) = full_rate {
+            let segments = burst_segments(bursts.iter(), axis);
+            if segments.iter().any(|s| s.len() >= FFT_WINDOW_SIZE) {
+                spectra.push(compute_spectrum_from_segments(&segments, rate, axis));
+            }
+        } else {
+            let gyro: &[f64] = bytemuck::cast_slice(unified.gyro.values.get(axis).as_slice());
+            if gyro.len() >= FFT_WINDOW_SIZE {
+                spectra.push(compute_spectrum_from_samples(gyro, sample_rate, axis));
+            }
         }
     }
 
@@ -288,39 +314,21 @@ pub fn analyze_vibration_unified(
             .map_or(-120.0, |s| compute_noise_floor(&s.magnitudes_db))
     });
 
-    let throttle_bands = compute_throttle_bands_unified(unified, sample_rate, motor_poles);
+    let erpm_data = erpm_on_gyro_axis(unified);
+    let throttle_bands = match full_rate {
+        Some((bursts, rate)) => {
+            compute_throttle_bands_from_bursts(unified, bursts, rate, &erpm_data, motor_poles)
+        }
+        None => compute_throttle_bands_unified(unified, sample_rate, &erpm_data, motor_poles),
+    };
     let accel = analyze_accel_unified(unified, sample_rate);
 
     classify_peaks(&mut spectra, &throttle_bands);
 
     let propwash = analyze_propwash(unified, events, sample_rate);
 
-    // Compute overall average motor RPM from all eRPM data, resampled
-    // onto the gyro time axis so that `all_indices` (gyro frame count)
-    // refer to corresponding ESC samples — without this, BF "works"
-    // because main+esc share an axis but AP/PX4 silently misindex.
+    // eRPM is held onto the gyro axis, so gyro frame indices address it.
     let all_indices: Vec<usize> = (0..unified.frame_count()).collect();
-    let erpm_data: Vec<Vec<f64>> = if let Some(esc) = unified.motors.esc.as_ref() {
-        let target_axis = &unified.gyro.time_us;
-        (0..esc.erpm.len())
-            .map(|i| {
-                let col = &esc.erpm[i];
-                if col.is_empty() {
-                    return Vec::new();
-                }
-                let view = super::util::TimeSeriesView {
-                    time_us: &esc.time_us,
-                    values: col.as_slice(),
-                };
-                super::util::resample_zoh_view(view, target_axis)
-                    .into_iter()
-                    .map(|r| f64::from(r.0))
-                    .collect()
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
     let avg_motor_hz = if erpm_data.iter().any(|e| !e.is_empty()) {
         compute_avg_motor_hz(&erpm_data, &all_indices, motor_poles)
     } else {
@@ -337,9 +345,158 @@ pub fn analyze_vibration_unified(
     })
 }
 
+/// The full-rate gyro bursts and their shared rate, when the log has a burst
+/// long enough for one FFT window (`ArduPilot`'s batch sampler).
+fn full_rate_gyro(session: &Session) -> Option<(&[SampleBatch<DegPerSec>], f64)> {
+    let bursts = session.gyro_batches.as_slice();
+    let rate = bursts
+        .iter()
+        .find(|b| b.len() >= FFT_WINDOW_SIZE)?
+        .sample_rate_hz;
+    (rate > 0.0).then_some((bursts, rate))
+}
+
+/// One axis of each burst, as FFT segments.
+fn burst_segments<'a>(
+    bursts: impl Iterator<Item = &'a SampleBatch<DegPerSec>>,
+    axis: Axis,
+) -> Vec<&'a [f64]> {
+    bursts
+        .map(|b| bytemuck::cast_slice::<DegPerSec, f64>(b.values.get(axis).as_slice()))
+        .collect()
+}
+
+/// eRPM per motor, held onto the main gyro time axis so that gyro sample
+/// indices also index eRPM. Motors without telemetry yield empty columns.
+fn erpm_on_gyro_axis(session: &Session) -> Vec<Vec<f64>> {
+    let Some(esc) = session.motors.esc.as_ref() else {
+        return Vec::new();
+    };
+    esc.erpm
+        .iter()
+        .map(|col| {
+            if col.is_empty() {
+                return Vec::new();
+            }
+            let view = super::util::TimeSeriesView {
+                time_us: &esc.time_us,
+                values: col.as_slice(),
+            };
+            super::util::resample_zoh_view(view, &session.gyro.time_us)
+                .into_iter()
+                .map(|r| f64::from(r.0))
+                .collect()
+        })
+        .collect()
+}
+
+/// Throttle as a percentage above the flight's lowest throttle. Throttle is
+/// already normalized to 0-1, so flooring the range at 1.0 keeps the scale
+/// absolute (a flight spanning 30-60% stays 0-30, not 0-100).
+fn throttle_percent(throttle: &[f64]) -> Vec<f64> {
+    let t_min = throttle.iter().copied().fold(f64::MAX, f64::min);
+    let t_max = throttle.iter().copied().fold(f64::MIN, f64::max);
+    let t_range = (t_max - t_min).max(1.0);
+    throttle
+        .iter()
+        .map(|&v| (v - t_min) / t_range * 100.0)
+        .collect()
+}
+
+/// Throttle bands from full-rate bursts. A burst lasts a fraction of a
+/// second, so it joins the band of its mean throttle whole, and each band's
+/// spectrum averages windows inside its own bursts only.
+fn compute_throttle_bands_from_bursts(
+    session: &Session,
+    bursts: &[SampleBatch<DegPerSec>],
+    rate: f64,
+    erpm_data: &[Vec<f64>],
+    motor_poles: u32,
+) -> Vec<ThrottleBand> {
+    let rc = &session.rc_command;
+    let throttle: Vec<f64> = rc.throttle.iter().map(|n| f64::from(n.0)).collect();
+    if throttle.is_empty() || throttle.len() != rc.time_us.len() {
+        return Vec::new();
+    }
+    let pct = throttle_percent(&throttle);
+    let span =
+        |b: &SampleBatch<DegPerSec>| (b.start_us, b.start_us.saturating_add(b.duration_us()));
+    let burst_pct: Vec<f64> = bursts
+        .iter()
+        .map(|b| {
+            let (start, end) = span(b);
+            let lo = rc.time_us.partition_point(|&t| t < start);
+            let hi = rc.time_us.partition_point(|&t| t < end);
+            match pct.get(lo..hi) {
+                Some(window) if !window.is_empty() => {
+                    window.iter().sum::<f64>() / window.len().az::<f64>()
+                }
+                // No RC sample inside the burst: hold the last one before it.
+                _ => pct.get(lo.saturating_sub(1)).copied().unwrap_or(0.0),
+            }
+        })
+        .collect();
+
+    let gyro_time = &session.gyro.time_us;
+    let has_erpm = erpm_data.iter().any(|e| !e.is_empty());
+    let mut bands = Vec::new();
+
+    for &(band_min, band_max, label) in &THROTTLE_BANDS {
+        let members: Vec<&SampleBatch<DegPerSec>> = bursts
+            .iter()
+            .zip(&burst_pct)
+            .filter(|(_, &p)| p >= band_min && p < band_max)
+            .map(|(b, _)| b)
+            .collect();
+        let frame_count: usize = members.iter().map(|b| b.len()).sum();
+        if frame_count < FFT_WINDOW_SIZE {
+            continue;
+        }
+
+        let spectra = Axis::ALL
+            .iter()
+            .filter_map(|&axis| {
+                let segments = burst_segments(members.iter().copied(), axis);
+                segments
+                    .iter()
+                    .any(|s| s.len() >= FFT_WINDOW_SIZE)
+                    .then(|| compute_spectrum_from_segments(&segments, rate, axis))
+            })
+            .collect();
+
+        // eRPM lives on the main gyro axis: average it over the gyro
+        // samples that fall inside this band's bursts.
+        let avg_motor_hz = if has_erpm {
+            let gyro_indices: Vec<usize> = members
+                .iter()
+                .flat_map(|b| {
+                    let (start, end) = span(b);
+                    gyro_time.partition_point(|&t| t < start)
+                        ..gyro_time.partition_point(|&t| t < end)
+                })
+                .collect();
+            compute_avg_motor_hz(erpm_data, &gyro_indices, motor_poles)
+        } else {
+            None
+        };
+
+        bands.push(ThrottleBand {
+            label: label.to_string(),
+            throttle_min: band_min,
+            throttle_max: band_max,
+            frame_count,
+            spectra,
+            avg_motor_hz,
+        });
+    }
+
+    bands
+}
+
 fn compute_throttle_bands_unified(
     unified: &Session,
     sample_rate: f64,
+    erpm_data: &[Vec<f64>],
     motor_poles: u32,
 ) -> Vec<ThrottleBand> {
     if unified.rc_command.throttle.is_empty() {
@@ -362,14 +519,7 @@ fn compute_throttle_bands_unified(
         .map(|n| f64::from(n.0))
         .collect();
 
-    // Normalize throttle to percentage using its own data range
-    let t_min_val = throttle.iter().copied().fold(f64::MAX, f64::min);
-    let t_max_val = throttle.iter().copied().fold(f64::MIN, f64::max);
-    let t_range = (t_max_val - t_min_val).max(1.0);
-    let throttle_pct: Vec<f64> = throttle
-        .iter()
-        .map(|&v| (v - t_min_val) / t_range * 100.0)
-        .collect();
+    let throttle_pct = throttle_percent(&throttle);
 
     let gyro_data: Vec<Vec<f64>> = Axis::ALL
         .iter()
@@ -378,27 +528,6 @@ fn compute_throttle_bands_unified(
         })
         .collect();
 
-    // eRPM resampled onto the gyro axis too.
-    let erpm_data: Vec<Vec<f64>> = if let Some(esc) = unified.motors.esc.as_ref() {
-        (0..esc.erpm.len())
-            .map(|i| {
-                let col = &esc.erpm[i];
-                if col.is_empty() {
-                    return Vec::new();
-                }
-                let view = super::util::TimeSeriesView {
-                    time_us: &esc.time_us,
-                    values: col.as_slice(),
-                };
-                super::util::resample_zoh_view(view, target_axis)
-                    .into_iter()
-                    .map(|r| f64::from(r.0))
-                    .collect()
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
     let has_erpm = erpm_data.iter().any(|e| !e.is_empty());
 
     let mut bands = Vec::new();
@@ -436,7 +565,7 @@ fn compute_throttle_bands_unified(
 
         // Compute average motor RPM in this throttle band
         let avg_motor_hz = if has_erpm {
-            compute_avg_motor_hz(&erpm_data, &band_indices, motor_poles)
+            compute_avg_motor_hz(erpm_data, &band_indices, motor_poles)
         } else {
             None
         };
@@ -793,6 +922,41 @@ pub fn compute_spectrogram(
 mod tests {
     use super::*;
 
+    /// A tone split across non-contiguous bursts with phase jumps between
+    /// them still peaks at its frequency: windows stay inside each burst.
+    /// A segment shorter than one window is skipped, not a panic.
+    #[test]
+    fn segments_average_within_bursts() {
+        let rate = 2000.0;
+        let burst = |phase: f64| -> Vec<f64> {
+            (0..FFT_WINDOW_SIZE)
+                .map(|i| {
+                    (2.0 * std::f64::consts::PI * 300.0 * i.az::<f64>() / rate + phase).sin()
+                        * 100.0
+                })
+                .collect()
+        };
+        let (a, b, c) = (burst(0.0), burst(1.3), burst(2.9));
+        let short = vec![1.0; 100];
+        let spectrum = compute_spectrum_from_segments(&[&a, &short, &b, &c], rate, Axis::Roll);
+        let top = spectrum
+            .peaks
+            .first()
+            .expect("the tone should produce a peak");
+        let bin = rate / FFT_WINDOW_SIZE.az::<f64>();
+        assert!(
+            (top.frequency_hz - 300.0).abs() <= bin,
+            "expected 300 Hz, got {}",
+            top.frequency_hz
+        );
+    }
+
+    #[test]
+    fn segments_without_a_full_window_read_as_silence() {
+        let spectrum = compute_spectrum_from_segments(&[&[1.0; 10]], 1000.0, Axis::Roll);
+        assert!(spectrum.magnitudes_db.iter().all(|&m| m <= -119.0));
+    }
+
     /// Generate a pure sine wave at the given frequency and sample rate.
     fn sine_wave(freq_hz: f64, sample_rate: f64, n_samples: usize) -> Vec<f64> {
         (0..n_samples)
@@ -1010,7 +1174,8 @@ mod tests {
             throttle,
         };
 
-        let bands = super::compute_throttle_bands_unified(&s, 4_000.0, 14);
+        let erpm = super::erpm_on_gyro_axis(&s);
+        let bands = super::compute_throttle_bands_unified(&s, 4_000.0, &erpm, 14);
         // Each band's frame_count must reflect membership of gyro
         // samples (which span the full ~4000), not the raw 50
         // throttle samples. Sum across bands ≥ FFT_WINDOW_SIZE means

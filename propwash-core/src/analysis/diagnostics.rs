@@ -246,8 +246,8 @@ fn diagnose_gyro_spikes(events: &[FlightEvent]) -> Vec<Diagnostic> {
 
 /// A spectrum reaches only half the gyro sample rate. Below 200 Hz that
 /// ceiling sits under 100 Hz, beneath where motor noise and frame resonance
-/// appear. Low-rate logs are common on `ArduPilot` (IMU message rate follows
-/// the log settings) and in `MAVLink` telemetry.
+/// appear. Low-rate logs are common on `ArduPilot` without the batch sampler
+/// (the IMU message rate follows the log settings) and in `MAVLink` telemetry.
 const MIN_VIBRATION_SAMPLE_RATE_HZ: f64 = 200.0;
 
 fn diagnose_low_sample_rate(vib: &VibrationAnalysis) -> Option<Diagnostic> {
@@ -262,7 +262,8 @@ fn diagnose_low_sample_rate(vib: &VibrationAnalysis) -> Option<Diagnostic> {
         detail: format!(
             "A log can only show frequencies up to half its sample rate, so this spectrum stops at {:.1} Hz. \
              Motor noise and frame resonance appear above that, so vibration checks are skipped for this log. \
-             Log the gyro at {MIN_VIBRATION_SAMPLE_RATE_HZ:.0} Hz or faster to analyze vibration.",
+             Log the gyro at {MIN_VIBRATION_SAMPLE_RATE_HZ:.0} Hz or faster to analyze vibration; \
+             on ArduPilot, set INS_LOG_BAT_MASK to record full-rate gyro bursts with the batch sampler.",
             rate / 2.0
         ),
     })
