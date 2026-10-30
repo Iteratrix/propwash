@@ -87,7 +87,7 @@ export function renderSpectraEcharts(vibration: VibrationAnalysis | null): void 
         },
         iconStyle: { borderColor: "#8888a0" },
       },
-      xAxis: { type: "value", name: "Hz", nameLocation: "center", nameGap: 25, min: 0, max: maxFreq, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
+      xAxis: { type: "value", name: "Hz", nameLocation: "center", nameGap: 25, min: 0, max: maxFreq, axisLabel: { color: "#8888a0", fontSize: 10, formatter: (v: number) => v.toFixed(0) }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
       yAxis: { type: "value", name: "dB", nameLocation: "center", nameGap: 35, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
       tooltip: { trigger: "axis", backgroundColor: "#1a1d27", borderColor: "#2a2d3a", textStyle: { color: "#e0e0e6", fontFamily: "JetBrains Mono, monospace", fontSize: 11 } },
       dataZoom: [
@@ -205,7 +205,7 @@ export function renderThrottleBandsEcharts(vibration: VibrationAnalysis | null):
           },
           iconStyle: { borderColor: "#8888a0" },
         },
-        xAxis: { type: "value", name: "Hz", nameLocation: "center", nameGap: 25, min: 0, max: maxFreq, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
+        xAxis: { type: "value", name: "Hz", nameLocation: "center", nameGap: 25, min: 0, max: maxFreq, axisLabel: { color: "#8888a0", fontSize: 10, formatter: (v: number) => v.toFixed(0) }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
         yAxis: { type: "value", name: "dB", nameLocation: "center", nameGap: 35, axisLabel: { color: "#8888a0", fontSize: 10 }, splitLine: { lineStyle: { color: "rgba(42,45,58,0.6)" } } },
         tooltip: { trigger: "axis", backgroundColor: "#1a1d27", borderColor: "#2a2d3a", textStyle: { color: "#e0e0e6", fontFamily: "JetBrains Mono, monospace", fontSize: 11 } },
         dataZoom: [{ type: "inside", xAxisIndex: 0 }],
