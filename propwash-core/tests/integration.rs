@@ -8,9 +8,9 @@
 //! preserved at `tests/integration.rs.bak` and can be selectively
 //! ported as needed.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use propwash_core::session::{Format, Session};
+use propwash_core::session::{Format, Session, Triaxial};
 
 fn fixture(rel: &str) -> Vec<u8> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -294,6 +294,173 @@ fn sanity_check_session(s: &Session, label: &str) {
             );
         }
     }
+}
+
+/// A column is either absent (empty) or carries one value per timestamp.
+fn assert_aligned(label: &str, stream: &str, axis_len: usize, len: usize) {
+    assert!(
+        len == 0 || len == axis_len,
+        "{label}: {stream} has {len} values for {axis_len} timestamps"
+    );
+}
+
+fn assert_triaxial_aligned<T>(label: &str, stream: &str, axis_len: usize, t: &Triaxial<Vec<T>>) {
+    for (axis, col) in [("roll", &t.roll), ("pitch", &t.pitch), ("yaw", &t.yaw)] {
+        assert_aligned(label, &format!("{stream}.{axis}"), axis_len, col.len());
+    }
+}
+
+/// Every stream in a Session lines up with its own time axis. A column
+/// shorter than its axis crashed `analyze()` in 0.13.0 (AP ESC telemetry).
+fn assert_streams_aligned(s: &Session, label: &str) {
+    for (name, series) in [
+        ("gyro", &s.gyro),
+        ("setpoint", &s.setpoint),
+        ("pid_err", &s.pid_err),
+    ] {
+        assert_triaxial_aligned(label, name, series.time_us.len(), &series.values);
+    }
+    assert_triaxial_aligned(label, "accel", s.accel.time_us.len(), &s.accel.values);
+    assert_triaxial_aligned(
+        label,
+        "attitude",
+        s.attitude.time_us.len(),
+        &s.attitude.values,
+    );
+
+    let pid = &s.pid_terms;
+    for (name, term) in [
+        ("pid.p", &pid.p),
+        ("pid.i", &pid.i),
+        ("pid.d", &pid.d),
+        ("pid.f", &pid.f),
+    ] {
+        assert_triaxial_aligned(label, name, pid.time_us.len(), term);
+    }
+
+    let rc = &s.rc_command;
+    assert_triaxial_aligned(label, "rc.sticks", rc.time_us.len(), &rc.sticks);
+    assert_aligned(label, "rc.throttle", rc.time_us.len(), rc.throttle.len());
+
+    for (i, m) in s.motors.commands.iter().enumerate() {
+        assert_aligned(
+            label,
+            &format!("motor[{i}]"),
+            s.motors.time_us.len(),
+            m.len(),
+        );
+    }
+    if let Some(esc) = &s.motors.esc {
+        let n = esc.time_us.len();
+        for (i, c) in esc.erpm.iter().enumerate() {
+            assert_aligned(label, &format!("esc.erpm[{i}]"), n, c.len());
+        }
+        for (i, c) in esc.temperature.iter().enumerate() {
+            assert_aligned(label, &format!("esc.temperature[{i}]"), n, c.len());
+        }
+        for (i, c) in esc.voltage.iter().enumerate() {
+            assert_aligned(label, &format!("esc.voltage[{i}]"), n, c.len());
+        }
+        for (i, c) in esc.current.iter().enumerate() {
+            assert_aligned(label, &format!("esc.current[{i}]"), n, c.len());
+        }
+    }
+
+    assert_aligned(label, "armed", s.armed.time_us.len(), s.armed.values.len());
+    assert_aligned(
+        label,
+        "flight_mode",
+        s.flight_mode.time_us.len(),
+        s.flight_mode.values.len(),
+    );
+    assert_aligned(label, "vbat", s.vbat.time_us.len(), s.vbat.values.len());
+    assert_aligned(
+        label,
+        "current",
+        s.current.time_us.len(),
+        s.current.values.len(),
+    );
+    assert_aligned(label, "rssi", s.rssi.time_us.len(), s.rssi.values.len());
+    for (name, ts) in &s.extras {
+        assert_aligned(label, name, ts.time_us.len(), ts.values.len());
+    }
+
+    if let Some(gps) = &s.gps {
+        let n = gps.time_us.len();
+        for (name, len) in [
+            ("gps.lat", gps.lat.len()),
+            ("gps.lng", gps.lng.len()),
+            ("gps.alt", gps.alt.len()),
+            ("gps.speed", gps.speed.len()),
+            ("gps.heading", gps.heading.len()),
+            ("gps.sats", gps.sats.len()),
+        ] {
+            assert_aligned(label, name, n, len);
+        }
+    }
+}
+
+/// Every log file under `dir`, recursively (fixture metadata excluded).
+fn fixture_logs(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).expect("fixtures dir is readable") {
+        let path = entry.expect("fixture entry").path();
+        if path.is_dir() {
+            out.extend(fixture_logs(&path));
+        } else if !matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("json" | "md") | None
+        ) {
+            out.push(path);
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Every committed fixture must decode and analyze without panicking, with
+/// every stream aligned to its time axis and units in plausible ranges. The
+/// per-format smoke tests above decode only; 0.13.0 shipped an `analyze()`
+/// crash on a fixture they never analyzed.
+#[test]
+fn every_fixture_analyzes_with_aligned_streams() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let logs = fixture_logs(&root);
+    assert!(
+        logs.len() >= 30,
+        "expected the full fixture set, found {}",
+        logs.len()
+    );
+    for path in logs {
+        let label = path
+            .strip_prefix(&root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let log = propwash_core::decode_file(&path).unwrap_or_else(|e| panic!("{label}: {e}"));
+        for s in &log.sessions {
+            assert_streams_aligned(s, &label);
+            sanity_check_session(s, &label);
+            let _ = propwash_core::analysis::analyze(s);
+        }
+    }
+}
+
+/// eRPM must reach the spectrum's motor-frequency estimate. From the typed
+/// Session refactor until 0.13.1 the BF ESC time axis was left empty, so
+/// every RPM-filtered log lost its motor lines.
+#[test]
+fn bf_rpm_telemetry_yields_motor_frequency() {
+    let sessions = decode("fc-blackbox/btfl_035.bbl");
+    let analysis = propwash_core::analysis::analyze(&sessions[0]);
+    let hz = analysis
+        .vibration
+        .and_then(|v| v.avg_motor_hz)
+        .expect("btfl_035 logs eRPM, so motor frequency should be known");
+    assert!(
+        (50.0..500.0).contains(&hz),
+        "motor frequency {hz} Hz is implausible"
+    );
 }
 
 #[test]

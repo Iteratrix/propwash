@@ -328,6 +328,12 @@ pub(crate) fn session_from_frames(
         s.pid_terms.time_us = main_time_us.clone();
     }
     s.motors.time_us = main_time_us.clone();
+    // BF logs eRPM in the main frame, so ESC telemetry shares its axis.
+    // Without it the spectrum resampled eRPM onto nothing and lost its
+    // motor-frequency lines on every RPM-filtered log.
+    if let Some(esc) = s.motors.esc.as_mut() {
+        esc.time_us = main_time_us.clone();
+    }
     s.rc_command.time_us = main_time_us;
 
     // Populate metadata.
