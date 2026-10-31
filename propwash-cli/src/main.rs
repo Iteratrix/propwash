@@ -14,7 +14,7 @@ enum OutputFormat {
 }
 
 #[derive(Parser)]
-#[command(name = "propwash", about = "Flight log vibration analyzer")]
+#[command(name = "propwash", version, about = "Flight log vibration analyzer")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
