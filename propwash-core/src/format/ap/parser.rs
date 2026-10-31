@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use az::Az;
+use az::{Az, SaturatingAs};
 
 use crate::types::Warning;
 
-use super::types::{ApMsgDef, ApParseStats, FieldType, MsgColumns};
+use super::types::{ApMsgDef, ApParseStats, FieldType, IsbBatch, MsgColumns};
 
 /// Output of the AP parser: just the columnar intermediate that
 /// [`super::build`] folds into a typed Session.
@@ -14,6 +14,8 @@ pub(crate) struct ApParsed {
     pub firmware_version: String,
     pub vehicle_name: String,
     pub params: HashMap<String, f64>,
+    /// Complete batch-sampler bursts, in log order.
+    pub batches: Vec<IsbBatch>,
     pub stats: ApParseStats,
 }
 
@@ -96,6 +98,7 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApParsed {
     let mut params: HashMap<String, f64> = HashMap::new();
     let mut firmware_version = String::new();
     let mut vehicle_name = String::new();
+    let mut batches = BatchAssembler::default();
     let mut stats = ApParseStats::default();
 
     let mut row_buf: Vec<f64> = Vec::new();
@@ -190,6 +193,14 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApParsed {
             if let Some(layout) = layouts.get(&msg_type) {
                 extract_version(payload, def, layout, &mut firmware_version);
             }
+        } else if def.name == "ISBH" {
+            if let Some(layout) = layouts.get(&msg_type) {
+                batches.header(payload, def, layout);
+            }
+        } else if def.name == "ISBD" {
+            if let Some(layout) = layouts.get(&msg_type) {
+                batches.chunk(payload, def, layout);
+            }
         }
 
         pos += msg_len;
@@ -208,7 +219,140 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> ApParsed {
         firmware_version,
         vehicle_name,
         params,
+        batches: batches.into_batches(),
         stats,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Batch sampler (ISBH + ISBD)
+// ---------------------------------------------------------------------------
+
+/// `ISBD` carries 32 samples per axis per message.
+const ISBD_SAMPLES: usize = 32;
+
+/// Raw bytes of one named field, if the message defines it and the payload
+/// is long enough to hold it.
+fn field_bytes<'a>(
+    payload: &'a [u8],
+    def: &ApMsgDef,
+    layout: &MsgLayout,
+    name: &str,
+) -> Option<(&'a [u8], FieldType)> {
+    let idx = def.field_names.iter().position(|n| n == name)?;
+    let ft = *def.field_types.get(idx)?;
+    let offset = *layout.all_offsets.get(idx)?;
+    Some((payload.get(offset..offset + ft.wire_size())?, ft))
+}
+
+fn field_f64(payload: &[u8], def: &ApMsgDef, layout: &MsgLayout, name: &str) -> Option<f64> {
+    field_bytes(payload, def, layout, name).map(|(bytes, ft)| decode_f64(ft, bytes))
+}
+
+struct OpenBatch {
+    /// `ISBH.N`, which its `ISBD` chunks repeat.
+    number: u16,
+    expected: usize,
+    next_seqno: u16,
+    batch: IsbBatch,
+}
+
+/// Stitches `ISBH` headers and their `ISBD` chunks into [`IsbBatch`]es in
+/// log order. `N` is a u16 that wraps on long logs, so chunks are matched to
+/// the header that precedes them, not by number alone. A burst with a
+/// missing chunk or cut short by the end of the log is dropped: shifting
+/// later samples into the gap would corrupt its spectrum.
+#[derive(Default)]
+struct BatchAssembler {
+    open: Option<OpenBatch>,
+    done: Vec<IsbBatch>,
+}
+
+impl BatchAssembler {
+    fn header(&mut self, payload: &[u8], def: &ApMsgDef, layout: &MsgLayout) {
+        self.finish();
+        let field = |name| field_f64(payload, def, layout, name);
+        let (Some(number), Some(sensor_type), Some(instance), Some(mul), Some(count), Some(rate)) = (
+            field("N"),
+            field("type"),
+            field("instance"),
+            field("mul"),
+            field("smp_cnt"),
+            field("smp_rate"),
+        ) else {
+            return;
+        };
+        let Some((start, FieldType::U64)) = field_bytes(payload, def, layout, "SampleUS") else {
+            return;
+        };
+        if mul <= 0.0 || !rate.is_finite() || rate <= 0.0 {
+            return;
+        }
+        let expected = count.saturating_as::<usize>();
+        self.open = Some(OpenBatch {
+            number: number.saturating_as::<u16>(),
+            expected,
+            next_seqno: 0,
+            batch: IsbBatch {
+                sensor_type: sensor_type.saturating_as::<u8>(),
+                instance: instance.saturating_as::<u8>(),
+                multiplier: mul,
+                sample_us: decode_u64(start, 0, FieldType::U64),
+                sample_rate_hz: rate,
+                samples: std::array::from_fn(|_| Vec::with_capacity(expected)),
+            },
+        });
+    }
+
+    fn chunk(&mut self, payload: &[u8], def: &ApMsgDef, layout: &MsgLayout) {
+        let Some(open) = self.open.as_mut() else {
+            return;
+        };
+        let field = |name| field_f64(payload, def, layout, name);
+        let (Some(number), Some(seqno)) = (field("N"), field("seqno")) else {
+            return;
+        };
+        if number.saturating_as::<u16>() != open.number {
+            return;
+        }
+        if seqno.saturating_as::<u16>() != open.next_seqno {
+            self.open = None;
+            return;
+        }
+        for (axis, name) in open.batch.samples.iter_mut().zip(["x", "y", "z"]) {
+            let Some((bytes, FieldType::I16Array32)) = field_bytes(payload, def, layout, name)
+            else {
+                self.open = None;
+                return;
+            };
+            axis.extend(
+                bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .take(ISBD_SAMPLES)
+                    .map(|&b| i16::from_le_bytes(b)),
+            );
+        }
+        open.next_seqno = open.next_seqno.wrapping_add(1);
+    }
+
+    fn finish(&mut self) {
+        let Some(mut open) = self.open.take() else {
+            return;
+        };
+        if open.expected == 0 || open.batch.samples[0].len() < open.expected {
+            return;
+        }
+        for axis in &mut open.batch.samples {
+            axis.truncate(open.expected);
+        }
+        self.done.push(open.batch);
+    }
+
+    fn into_batches(mut self) -> Vec<IsbBatch> {
+        self.finish();
+        self.done
     }
 }
 
@@ -466,5 +610,131 @@ mod tests {
         let bytes = (-1234_i16).to_le_bytes();
         let v = decode_f64(h_type, &bytes);
         assert!((v - (-1234.0)).abs() < 1e-9, "got {v}");
+    }
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+
+    const ISBH_TYPE: u8 = 200;
+    const ISBD_TYPE: u8 = 201;
+
+    fn fmt_record(msg_type: u8, name: &str, format: &str, labels: &str) -> Vec<u8> {
+        let payload_len: usize = format
+            .bytes()
+            .map(|c| FieldType::from_format_char(c).wire_size())
+            .sum();
+        let mut out = vec![
+            HEAD1,
+            HEAD2,
+            FMT_TYPE,
+            msg_type,
+            (payload_len + 3).saturating_as::<u8>(),
+        ];
+        for (text, width) in [(name, 4), (format, 16), (labels, 64)] {
+            let mut field = text.as_bytes().to_vec();
+            field.resize(width, 0);
+            out.extend(field);
+        }
+        out
+    }
+
+    fn header_defs() -> Vec<u8> {
+        let mut out = fmt_record(
+            ISBH_TYPE,
+            "ISBH",
+            "QHBBHHQf",
+            "TimeUS,N,type,instance,mul,smp_cnt,SampleUS,smp_rate",
+        );
+        out.extend(fmt_record(
+            ISBD_TYPE,
+            "ISBD",
+            "QHHaaa",
+            "TimeUS,N,seqno,x,y,z",
+        ));
+        out
+    }
+
+    fn isbh(number: u16, sensor_type: u8, instance: u8, mul: u16, count: u16) -> Vec<u8> {
+        let mut out = vec![HEAD1, HEAD2, ISBH_TYPE];
+        out.extend(1_000_u64.to_le_bytes());
+        out.extend(number.to_le_bytes());
+        out.extend([sensor_type, instance]);
+        out.extend(mul.to_le_bytes());
+        out.extend(count.to_le_bytes());
+        out.extend(5_000_000_u64.to_le_bytes());
+        out.extend(1000.0_f32.to_le_bytes());
+        out
+    }
+
+    /// One chunk whose x samples are `base..base + 32` (y = -x, z = 0).
+    fn isbd(number: u16, seqno: u16, base: i16) -> Vec<u8> {
+        let mut out = vec![HEAD1, HEAD2, ISBD_TYPE];
+        out.extend(2_000_u64.to_le_bytes());
+        out.extend(number.to_le_bytes());
+        out.extend(seqno.to_le_bytes());
+        let x: Vec<i16> = (0..32).map(|i| base + i).collect();
+        for axis in [x.clone(), x.iter().map(|v| -v).collect(), vec![0; 32]] {
+            out.extend(axis.iter().flat_map(|v| v.to_le_bytes()));
+        }
+        out
+    }
+
+    fn parse_bytes(parts: &[Vec<u8>]) -> ApParsed {
+        parse(&parts.concat(), &mut Vec::new())
+    }
+
+    #[test]
+    fn stitches_chunks_and_trims_to_sample_count() {
+        let parsed = parse_bytes(&[
+            header_defs(),
+            isbh(7, 1, 2, 938, 40),
+            isbd(7, 0, 0),
+            isbd(7, 1, 32),
+        ]);
+        assert_eq!(parsed.batches.len(), 1);
+        let b = &parsed.batches[0];
+        assert_eq!((b.sensor_type, b.instance), (1, 2));
+        assert_eq!(b.sample_us, 5_000_000);
+        assert!((b.multiplier - 938.0).abs() < f64::EPSILON);
+        assert!((b.sample_rate_hz - 1000.0).abs() < f64::EPSILON);
+        assert_eq!(b.samples[0], (0..40).collect::<Vec<i16>>());
+        assert_eq!(b.samples[1][39], -39);
+    }
+
+    /// A lost chunk would shift every later sample, so the burst is dropped.
+    #[test]
+    fn drops_burst_with_missing_chunk() {
+        let parsed = parse_bytes(&[
+            header_defs(),
+            isbh(7, 1, 0, 938, 64),
+            isbd(7, 0, 0),
+            isbd(7, 2, 64),
+        ]);
+        assert!(parsed.batches.is_empty());
+    }
+
+    #[test]
+    fn drops_burst_cut_short_by_end_of_log() {
+        let parsed = parse_bytes(&[header_defs(), isbh(7, 1, 0, 938, 64), isbd(7, 0, 0)]);
+        assert!(parsed.batches.is_empty());
+    }
+
+    /// `N` wraps on long logs; chunks belong to the header right before them.
+    #[test]
+    fn ignores_chunks_for_another_burst() {
+        let parsed = parse_bytes(&[
+            header_defs(),
+            isbh(7, 1, 0, 938, 32),
+            isbd(6, 0, 100),
+            isbd(7, 0, 0),
+            isbh(8, 0, 0, 104, 32),
+            isbd(8, 0, 5),
+        ]);
+        assert_eq!(parsed.batches.len(), 2);
+        assert_eq!(parsed.batches[0].samples[0][0], 0);
+        assert_eq!(parsed.batches[1].sensor_type, 0);
+        assert_eq!(parsed.batches[1].samples[0][0], 5);
     }
 }

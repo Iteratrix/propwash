@@ -385,6 +385,15 @@ fn assert_streams_aligned(s: &Session, label: &str) {
         assert_aligned(label, name, ts.time_us.len(), ts.values.len());
     }
 
+    for (i, burst) in s.gyro_batches.iter().enumerate() {
+        assert_triaxial_aligned(
+            label,
+            &format!("gyro_batches[{i}]"),
+            burst.len(),
+            &burst.values,
+        );
+    }
+
     if let Some(gps) = &s.gps {
         let n = gps.time_us.len();
         for (name, len) in [
@@ -444,6 +453,38 @@ fn every_fixture_analyzes_with_aligned_streams() {
             let _ = propwash_core::analysis::analyze(s);
         }
     }
+}
+
+/// `ArduPilot`'s IMU message on this Pixhawk 6X log is 25 Hz, far too slow
+/// for vibration; its batch sampler records ~2 kHz bursts. Spectra must
+/// come from the bursts and show the rotor harmonics, not near-Nyquist noise.
+#[test]
+fn ap_batch_sampler_drives_vibration_spectra() {
+    let sessions = decode("ardupilot/methodic-copter-tarot-x4.bin");
+    let s = &sessions[0];
+    assert!(
+        s.gyro_batches.len() >= 50,
+        "found {} gyro bursts",
+        s.gyro_batches.len()
+    );
+    assert!(s.gyro_batches.iter().all(|b| b.len() == 1024));
+
+    let analysis = propwash_core::analysis::analyze(s);
+    let vib = analysis.vibration.expect("bursts give a spectrum");
+    let rate = vib.sample_rate_hz().expect("spectra exist");
+    assert!((2000.0..2050.0).contains(&rate), "spectrum rate {rate} Hz");
+    let pitch_peak = vib.spectra[1].peaks[0].frequency_hz;
+    assert!(
+        (50.0..250.0).contains(&pitch_peak),
+        "pitch peak {pitch_peak} Hz should be a rotor harmonic"
+    );
+    assert!(
+        !analysis
+            .diagnostics
+            .iter()
+            .any(|d| d.message.contains("too slow")),
+        "full-rate bursts must not trip the low-rate diagnostic"
+    );
 }
 
 /// eRPM must reach the spectrum's motor-frequency estimate. From the typed

@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use az::Az;
+use az::{Az, SaturatingAs};
 use serde::Serialize;
 
 use crate::types::{Axis, FilterConfig, MotorIndex, PidGains, RcChannel, SensorField, Warning};
@@ -177,6 +177,36 @@ impl<T> TriaxialSeries<T> {
     /// Borrow the column for one axis as a slice.
     pub fn axis(&self, axis: Axis) -> &[T] {
         self.values.get(axis)
+    }
+}
+
+/// A burst of evenly spaced sensor-rate samples, logged apart from the main
+/// stream (`ArduPilot`'s batch sampler). Sample `i` was taken at
+/// `start_us + i / sample_rate_hz` seconds; bursts are not contiguous with
+/// one another, so spectra average within each burst and never across.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SampleBatch<T> {
+    pub start_us: u64,
+    pub sample_rate_hz: f64,
+    pub values: Triaxial<Vec<T>>,
+}
+
+impl<T> SampleBatch<T> {
+    /// Samples per axis.
+    pub fn len(&self) -> usize {
+        self.values.roll.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.roll.is_empty()
+    }
+
+    /// Time span covered, in microseconds.
+    pub fn duration_us(&self) -> u64 {
+        if self.sample_rate_hz <= 0.0 {
+            return 0;
+        }
+        (self.len().az::<f64>() / self.sample_rate_hz * 1e6).saturating_as::<u64>()
     }
 }
 
@@ -491,6 +521,9 @@ impl Default for SessionMeta {
 pub struct Session {
     // Sensors
     pub gyro: TriaxialSeries<DegPerSec>,
+    /// Full-rate gyro bursts for spectra, when the format logs them
+    /// separately from `gyro` (`ArduPilot`'s batch sampler). Empty otherwise.
+    pub gyro_batches: Vec<SampleBatch<DegPerSec>>,
     pub accel: TriaxialSeries<MetersPerSec2>,
     pub setpoint: TriaxialSeries<DegPerSec>,
     pub pid_err: TriaxialSeries<DegPerSec>,

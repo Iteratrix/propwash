@@ -104,6 +104,23 @@ pub struct ApMsgDef {
 
 pub use crate::format::common::MsgColumns;
 
+/// One burst from `ArduPilot`'s batch sampler: an `ISBH` header plus the
+/// raw samples of its `ISBD` chunks, still in wire units (`value =
+/// raw / multiplier`). Consecutive samples are `1 / sample_rate_hz` apart
+/// from `sample_us`.
+#[derive(Debug, Clone)]
+pub struct IsbBatch {
+    /// `ISBH.type`: 0 accelerometer, 1 gyro.
+    pub sensor_type: u8,
+    /// `ISBH.instance`: which IMU.
+    pub instance: u8,
+    pub multiplier: f64,
+    pub sample_us: u64,
+    pub sample_rate_hz: f64,
+    /// x, y, z samples in body frame (already board-rotated by AP).
+    pub samples: [Vec<i16>; 3],
+}
+
 /// Per-session parse statistics.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ApParseStats {
