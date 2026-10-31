@@ -45,7 +45,9 @@ jobs:
       - run: cargo fmt --all -- --check
 
   web:
-    name: WASM Build & Web Tests
+    # Keep this name: branch protection on main requires a check called "WASM Build".
+    # The job also typechecks and tests the web app, which need the WASM build first.
+    name: WASM Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
