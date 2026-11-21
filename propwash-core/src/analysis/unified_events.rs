@@ -268,8 +268,7 @@ fn detect_desync(unified: &Session, events: &mut Vec<FlightEvent>) {
                 .motors
                 .commands
                 .get(i)
-                .map(|col| col.iter().map(|n| f64::from(n.0)).collect())
-                .unwrap_or_default()
+                .map_or_default(|col| col.iter().map(|n| f64::from(n.0)).collect())
         })
         .collect();
 
