@@ -9,6 +9,7 @@ license = "MIT"
 [dependencies]
 az = "1"
 bytemuck = { version = "1", features = ["derive"] }
+mavlink-tlog = { version = "0.1.3", default-features = false }
 memchr = "2"
 rustfft = "6"
 serde = { version = "1", features = ["derive"] }
