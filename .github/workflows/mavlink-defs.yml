@@ -1,0 +1,65 @@
+name: MAVLink definitions
+
+# Weekly: regenerate the CRC_EXTRA table from mavlink/mavlink master. If it
+# changed, open (or update) a PR, run CI on it and turn on auto-merge, so the
+# update lands on main by itself once the required checks pass.
+#
+# Events made with GITHUB_TOKEN don't start other workflows, except
+# workflow_dispatch. So CI is started on the PR branch explicitly below; its
+# check runs land on the PR's head commit and satisfy branch protection.
+#
+# Needs "Allow GitHub Actions to create and approve pull requests" in
+# Settings > Actions > General, and "Allow auto-merge" in Settings > General.
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Weekly Monday 7am UTC, after CI
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: mavlink-defs
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  BRANCH: mavlink-defs-update
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: mavlink/mavlink
+          path: .mavlink
+          sparse-checkout: message_definitions
+      - run: python3 scripts/gen_mavlink_crc.py .mavlink
+      - run: rm -rf .mavlink
+      - id: cpr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: ${{ env.BRANCH }}
+          delete-branch: true
+          title: "mavlink: update CRC_EXTRA table from upstream definitions"
+          commit-message: "mavlink: regenerate CRC_EXTRA table from mavlink/mavlink"
+          body: |
+            Regenerated `propwash-core/src/format/mavlink/crc_extra.rs` from mavlink/mavlink master by the weekly MAVLink definitions workflow.
+
+            New ids are new messages. A changed value means a message's core fields were redefined upstream (usually in development.xml).
+
+            Merges itself once the required checks pass.
+          add-paths: propwash-core/src/format/mavlink/crc_extra.rs
+      - name: Run CI on the PR and enable auto-merge
+        if: steps.cpr.outputs.pull-request-operation == 'created' || steps.cpr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ steps.cpr.outputs.pull-request-number }}
+        run: |
+          gh workflow run ci.yml --ref "$BRANCH"
+          gh pr merge "$PR" --auto --squash

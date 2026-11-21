@@ -4,6 +4,7 @@ use az::Az;
 
 use crate::types::Warning;
 
+use super::crc_extra::CRC_EXTRA;
 use super::types::{MavType, MavlinkParseStats, MsgColumns, Severity, StatusMessage};
 
 const MARKER_V1: u8 = 0xFE;
@@ -28,47 +29,14 @@ fn mavlink_crc(data: &[u8], crc_extra: u8) -> u16 {
 }
 
 // ---------------------------------------------------------------------------
-// CRC-extra lookup — covers all standard + ArduPilot MAVLink v1 messages
+// CRC-extra lookup: every message in MAVLink's all.xml (see crc_extra.rs)
 // ---------------------------------------------------------------------------
 
-/// CRC-extra for each `MAVLink` message ID (0-255). 0 = unknown/unused.
-const CRC_EXTRA: [u8; 256] = [
-    /*   0 */ 50, 124, 137, 0, 237, 217, 104, 119, 0, 0, 0, 89, 0, 0, 0, 0, /*  16 */ 0,
-    0, 0, 0, 214, 159, 220, 168, 24, 23, 170, 144, 67, 115, 39, 246, /*  32 */ 185, 104, 237,
-    244, 222, 212, 9, 254, 230, 28, 28, 132, 221, 232, 11, 153, /*  48 */ 41, 39, 78, 196, 0,
-    0, 15, 3, 0, 0, 0, 0, 0, 167, 183, 119, /*  64 */ 191, 118, 148, 21, 0, 243, 124, 0, 0,
-    38, 20, 158, 152, 143, 0, 0, /*  80 */ 0, 106, 49, 22, 143, 140, 5, 150, 0, 231, 183, 63,
-    54, 47, 0, 0, /*  96 */ 0, 0, 0, 0, 175, 102, 158, 208, 56, 93, 138, 108, 32, 185, 84, 34,
-    /* 112 */ 174, 124, 237, 4, 76, 128, 56, 116, 134, 237, 203, 250, 87, 203, 220, 25,
-    /* 128 */ 226, 46, 29, 223, 85, 6, 229, 203, 1, 195, 109, 168, 181, 47, 72, 131,
-    /* 144 */ 127, 0, 103, 154, 178, 200, 134, 219, 208, 188, 84, 22, 19, 21, 134, 0,
-    /* 160 */ 78, 68, 189, 127, 154, 21, 21, 144, 1, 234, 73, 181, 22, 83, 167, 138,
-    /* 176 */ 234, 240, 47, 189, 52, 174, 229, 85, 159, 186, 72, 0, 0, 0, 0, 92,
-    /* 192 */ 36, 71, 98, 120, 0, 0, 0, 0, 134, 205, 0, 0, 0, 0, 0, 0, /* 208 */ 0, 0, 0,
-    0, 0, 0, 69, 101, 50, 202, 17, 162, 0, 0, 0, 0, /* 224 */ 0, 208, 207, 0, 0, 0, 163, 105,
-    151, 35, 150, 179, 0, 0, 0, 0, /* 240 */ 0, 90, 104, 85, 95, 130, 184, 81, 8, 204, 49,
-    170, 44, 83, 46, 0,
-];
-
-/// Bitmap of which message IDs (0-255) have a known CRC extra.
-const CRC_KNOWN: [u64; 4] = [
-    0xE0CF_FFFF_FFFF_08F7,
-    0xFFFF_FFF0_3EFE_3E6F,
-    0x87FF_FFFF_7FFD_FFFF,
-    0x7FFE_0FC6_0FC0_030F,
-];
-
 fn crc_extra_for(msg_id: u32) -> Option<u8> {
-    if msg_id >= 256 {
-        return None;
-    }
-    let idx = msg_id as usize;
-    let word = CRC_KNOWN[idx / 64];
-    if word & (1u64 << (idx % 64)) != 0 {
-        Some(CRC_EXTRA[idx])
-    } else {
-        None
-    }
+    CRC_EXTRA
+        .binary_search_by_key(&msg_id, |&(id, _)| id)
+        .ok()
+        .map(|i| CRC_EXTRA[i].1)
 }
 
 // ---------------------------------------------------------------------------
@@ -473,13 +441,13 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> MavlinkParsed {
                 }
                 let crc_received = u16::from_le_bytes([data[frame_end - 2], data[frame_end - 1]]);
                 let msg_id = u32::from(data[frame_start + 5]);
-                if let Some(extra) = crc_extra_for(msg_id) {
-                    let crc = mavlink_crc(&data[frame_start + 1..frame_end - 2], extra);
-                    if crc != crc_received {
-                        stats.crc_errors += 1;
-                        pos += 1;
-                        continue;
-                    }
+                let crc_ok = crc_extra_for(msg_id).is_some_and(|extra| {
+                    mavlink_crc(&data[frame_start + 1..frame_end - 2], extra) == crc_received
+                });
+                if !crc_ok {
+                    stats.crc_errors += 1;
+                    pos += 1;
+                    continue;
                 }
                 let payload = &data[frame_start + 6..frame_end - 2];
                 (payload, frame_end, data[frame_start + 3], msg_id, false)
@@ -505,13 +473,13 @@ pub(crate) fn parse(data: &[u8], warnings: &mut Vec<Warning>) -> MavlinkParsed {
                 ]);
                 let crc_off = frame_start + 10 + payload_len;
                 let crc_received = u16::from_le_bytes([data[crc_off], data[crc_off + 1]]);
-                if let Some(extra) = crc_extra_for(msg_id) {
-                    let crc = mavlink_crc(&data[frame_start + 1..crc_off], extra);
-                    if crc != crc_received {
-                        stats.crc_errors += 1;
-                        pos += 1;
-                        continue;
-                    }
+                let crc_ok = crc_extra_for(msg_id).is_some_and(|extra| {
+                    mavlink_crc(&data[frame_start + 1..crc_off], extra) == crc_received
+                });
+                if !crc_ok {
+                    stats.crc_errors += 1;
+                    pos += 1;
+                    continue;
                 }
                 let payload = &data[frame_start + 10..frame_start + 10 + payload_len];
                 (payload, frame_end, data[frame_start + 5], msg_id, true)
@@ -607,7 +575,7 @@ mod tests {
             0x03, // mavlink_version
         ];
         let expected_crc = u16::from_le_bytes([0xA1, 0xDF]);
-        let crc = mavlink_crc(header_and_payload, CRC_EXTRA[0]);
+        let crc = mavlink_crc(header_and_payload, crc_extra_for(0).unwrap());
         assert_eq!(
             crc, expected_crc,
             "CRC mismatch: got {crc:#06X}, expected {expected_crc:#06X}"
@@ -620,6 +588,31 @@ mod tests {
         assert_eq!(crc_extra_for(30), Some(39)); // ATTITUDE
         assert_eq!(crc_extra_for(253), Some(83)); // STATUSTEXT
         assert_eq!(crc_extra_for(3), None); // unused ID
-        assert_eq!(crc_extra_for(256), None); // out of range
+        assert_eq!(crc_extra_for(147), Some(154)); // BATTERY_STATUS
+        assert_eq!(crc_extra_for(291), Some(10)); // ESC_STATUS (MAVLink 2 only)
+        assert_eq!(crc_extra_for(11030), Some(144)); // ESC_TELEMETRY_1_TO_4 (ArduPilot)
+        assert_eq!(crc_extra_for(0x00AB_CDEF), None); // undefined id
+    }
+
+    #[test]
+    fn crc_extra_table_is_sorted_and_unique() {
+        assert!(super::CRC_EXTRA.windows(2).all(|w| w[0].0 < w[1].0));
+    }
+
+    #[test]
+    fn stray_v2_marker_with_undefined_id_does_not_swallow_next_frame() {
+        let mut data = vec![0u8; 8];
+        // Damaged bytes that look like a v2 header: 20-byte payload, msg id 0xABCDEF.
+        // Its claimed frame end lands inside the real HEARTBEAT record below.
+        data.extend_from_slice(&[0xFD, 20, 0, 0, 0, 1, 1, 0xEF, 0xCD, 0xAB]);
+        data.extend_from_slice(&[0u8; 8]);
+        data.extend_from_slice(&[
+            0xFE, 0x09, 0x00, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x08, 0x00, 0x00,
+            0x03, 0xA1, 0xDF,
+        ]);
+        let parsed = parse(&data, &mut Vec::new());
+        assert_eq!(parsed.stats.total_packets, 1);
+        assert_eq!(parsed.stats.v1_packets, 1);
+        assert_eq!(parsed.stats.v2_packets, 0);
     }
 }
