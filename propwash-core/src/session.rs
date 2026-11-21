@@ -727,29 +727,25 @@ impl Session {
                 bytemuck::cast_slice::<MetersPerSec2, f64>(self.accel.values.get(*axis).as_slice())
                     .to_vec()
             }
-            SensorField::Motor(MotorIndex(i)) => self
-                .motors
-                .commands
-                .get(*i)
-                .map(|col| {
+            SensorField::Motor(MotorIndex(i)) => {
+                self.motors.commands.get(*i).map_or_default(|col| {
                     bytemuck::cast_slice::<Normalized01, f32>(col)
                         .iter()
                         .map(|&v| f64::from(v))
                         .collect()
                 })
-                .unwrap_or_default(),
+            }
             SensorField::ERpm(MotorIndex(i)) => self
                 .motors
                 .esc
                 .as_ref()
                 .and_then(|e| e.erpm.get(*i))
-                .map(|col| {
+                .map_or_default(|col| {
                     bytemuck::cast_slice::<Erpm, u32>(col)
                         .iter()
                         .map(|&v| f64::from(v))
                         .collect()
-                })
-                .unwrap_or_default(),
+                }),
             SensorField::Rc(RcChannel::Roll) => self
                 .rc_command
                 .sticks
@@ -791,8 +787,7 @@ impl Session {
                 if self.attitude.values.yaw.is_empty() {
                     self.gps
                         .as_ref()
-                        .map(|g| g.heading.iter().map(|&v| f64::from(v)).collect())
-                        .unwrap_or_default()
+                        .map_or_default(|g| g.heading.iter().map(|&v| f64::from(v)).collect())
                 } else {
                     self.attitude
                         .values
@@ -805,33 +800,23 @@ impl Session {
             SensorField::GpsLat => self
                 .gps
                 .as_ref()
-                .map(|g| bytemuck::cast_slice::<DecimalDegrees, f64>(&g.lat).to_vec())
-                .unwrap_or_default(),
+                .map_or_default(|g| bytemuck::cast_slice::<DecimalDegrees, f64>(&g.lat).to_vec()),
             SensorField::GpsLng => self
                 .gps
                 .as_ref()
-                .map(|g| bytemuck::cast_slice::<DecimalDegrees, f64>(&g.lng).to_vec())
-                .unwrap_or_default(),
-            SensorField::Altitude => self
-                .gps
-                .as_ref()
-                .map(|g| {
-                    bytemuck::cast_slice::<Meters, f32>(&g.alt)
-                        .iter()
-                        .map(|&v| f64::from(v))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            SensorField::GpsSpeed => self
-                .gps
-                .as_ref()
-                .map(|g| {
-                    bytemuck::cast_slice::<MetersPerSec, f32>(&g.speed)
-                        .iter()
-                        .map(|&v| f64::from(v))
-                        .collect()
-                })
-                .unwrap_or_default(),
+                .map_or_default(|g| bytemuck::cast_slice::<DecimalDegrees, f64>(&g.lng).to_vec()),
+            SensorField::Altitude => self.gps.as_ref().map_or_default(|g| {
+                bytemuck::cast_slice::<Meters, f32>(&g.alt)
+                    .iter()
+                    .map(|&v| f64::from(v))
+                    .collect()
+            }),
+            SensorField::GpsSpeed => self.gps.as_ref().map_or_default(|g| {
+                bytemuck::cast_slice::<MetersPerSec, f32>(&g.speed)
+                    .iter()
+                    .map(|&v| f64::from(v))
+                    .collect()
+            }),
             SensorField::PidP(axis) => self
                 .pid_terms
                 .p
@@ -860,11 +845,9 @@ impl Session {
                 .iter()
                 .map(|&v| f64::from(v))
                 .collect(),
-            SensorField::Unknown(name) => self
-                .extras
-                .get(name)
-                .map(|ts| ts.values.clone())
-                .unwrap_or_default(),
+            SensorField::Unknown(name) => {
+                self.extras.get(name).map_or_default(|ts| ts.values.clone())
+            }
         }
     }
 
