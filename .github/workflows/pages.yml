@@ -22,7 +22,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -40,7 +40,7 @@ jobs:
 
       # Node 24 ships npm 11, the npm Dependabot writes lockfiles with; npm 10's
       # `npm ci` rejects those lockfiles (optional peer deps it expects listed).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -48,7 +48,7 @@ jobs:
         run: cd web && npm ci && npm run typecheck && npm run build
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: web/out
 
