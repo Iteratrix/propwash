@@ -60,9 +60,11 @@ jobs:
           tool: wasm-pack
       # The TypeScript imports the generated bindings, so typechecking needs the WASM build first.
       - run: wasm-pack build propwash-web --target web --out-dir ../web/pkg
+      # Node 24 ships npm 11, the npm Dependabot writes lockfiles with; npm 10's
+      # `npm ci` rejects those lockfiles (optional peer deps it expects listed).
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - run: npm ci
         working-directory: web
       - run: npm run typecheck
