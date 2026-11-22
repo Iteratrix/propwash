@@ -7,6 +7,7 @@
 //!    [`crate::session::Session`], applying all unit conversions.
 
 mod build;
+mod crc_extra;
 mod parser;
 pub mod types;
 
