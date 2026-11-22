@@ -1,0 +1,15 @@
+# cargo-deny configuration. Only the advisories check is configured:
+# `cargo deny check advisories` (RustSec advisories and yanked crates).
+
+[advisories]
+yanked = "deny"
+# Report unmaintained and unsound advisories for every crate in the
+# lockfile, not only direct dependencies (cargo-deny's default scope).
+unmaintained = "all"
+unsound = "all"
+ignore = [
+    # tsify-next is unmaintained (no vulnerability reported). Moving to its
+    # successor, tsify, is a code change, not a bump. Remove this entry once
+    # propwash-web is off tsify-next.
+    "RUSTSEC-2025-0048",
+]
