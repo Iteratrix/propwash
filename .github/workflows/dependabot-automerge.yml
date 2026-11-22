@@ -1,0 +1,28 @@
+name: Dependabot auto-merge
+
+# Turns on auto-merge for Dependabot's patch-level PRs (and GitHub Actions
+# bumps), so they land by themselves once the required checks pass. Anything
+# bigger waits for a human. Needs "Allow auto-merge" in Settings > General and
+# branch protection with required checks on the default branch; without
+# required checks, auto-merge would merge immediately.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+      - if: >-
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.package-ecosystem == 'github_actions'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
